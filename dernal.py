@@ -3,9 +3,10 @@ from datetime import datetime
 import time
 from dateutil.relativedelta import relativedelta as rd
 
-# TODO: cool embed, basically copy boxfot or whatver it is. also maybe make it a bot or sum
+# TODO: maybe make it a bot or sum; write in code that fixes the code maybe breaking if 2 or more terrs was taken within 1 check.
 
 guildPrefix = "" #self explanatory
+initTerrMessae = True # incase you want to turn off the first message you get when starting.
 pingRoleID = "" # needs to be a role, a person could be used but that is dumb and requires change, also remove if you dont want pings
 webhookURL = "" #discord webhook URL
 
@@ -13,11 +14,45 @@ webhookURL = "" #discord webhook URL
 untainteddata = []
 intervals = ['days','hours','minutes','seconds']
 
-def storeteritories(jsondata, guildPrefix, firstTime):
+def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter):
+    data = { # we need it sadly i think idk i ripped this code off someones github
+    "content" : "",
+    }
+    if attacker == guildPrefix:
+        data["embeds"] = [
+            {
+                "title" : "🟢 **Gained Territory!**", 
+                "description" : "  **"+terrInQuestion+"**\nAttacker: **"+attacker+"** ("+attackerTerrBefore+" -> "+attackerTerrAfter+")\nDefender: **"+defender+"** ("+defenderTerrBefore+" -> "+defenderTerrAfter+")\n\nThe territory lasted "+timeLasted+".",
+                "footer": {
+                    "text": "https://github.com/badpinghere/dernal  •  "+datetime.now().strftime("%m/%d/%Y, %I:%M %p")+"" # i didnt like working with timestamp for embed so here is better way
+                },
+                "color": "5763719",
+            }
+        ]
+        requests.post(webhookURL, json=data)
+    else:
+        data["embeds"] = [
+            {
+                "title" : "🔴 **Lost Territory!**", 
+                "description" : " **"+terrInQuestion+"**\nAttacker: **"+attacker+"** ("+attackerTerrBefore+" -> "+attackerTerrAfter+")\nDefender: **"+defender+"** ("+defenderTerrBefore+" -> "+defenderTerrAfter+")\n\nThe territory lasted "+timeLasted+".",
+                "footer": {
+                    "text": "https://github.com/badpinghere/dernal  •  "+datetime.now().strftime("%m/%d/%Y, %I:%M %p")+""
+                },
+                "color": "15548997",
+            }
+        ]
+        requests.post(webhookURL, json=data)
+        print()
+    if pingRoleID:
+        requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+    
+        
+
+def storeteritories(jsondata, guildPrefix, resetdata):
     global territoryInfoVariable
     global territoryInfo
     territoryInfoVariable = []
-    if firstTime == True:
+    if resetdata == True:
         territoryInfo = []
         for terrname, inner in jsondata.items():
             if inner['guild']['prefix'] == guildPrefix:
@@ -45,9 +80,9 @@ def getTerrData(firstTime):
     storeteritories(r.json(), guildPrefix, firstTime)
     return stringdata
 
-def checkterritories():
+def checkterritories(): # im about 95% sure this will break if a guild took or lost 2 territories within a check, so i would advise not losing 2+ territories within 11s. i also cant check it because its rare.
     global expectedterrcount
-    time.sleep(15) # waits 15s, not tryna get ratelimited
+    time.sleep(11) # waits 11s, not tryna get ratelimited
     terrcount = getTerrData(False).count(guildPrefix)
     if expectedterrcount > terrcount: # lost a territory
         set1 = set(tuple(item) for item in territoryInfo)
@@ -59,10 +94,9 @@ def checkterritories():
             timestamp = reworkedDate.timestamp() 
             elapsed_time = int(timestamp) - int(float(i[1]))
             x = rd(seconds=elapsed_time)
-            data = {"content": ""+i[0]+" was taken by "+untainteddata[i[0]]['guild']['name']+" ("+untainteddata[i[0]]['guild']['prefix']+")! "+i[0]+" lasted "+' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k))+"."}
-            requests.post(webhookURL, json=data)
-            if pingRoleID:
-                requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddata[i[0]]['guild']['prefix'])
+            opponentTerrCountAfter = str(untainteddata).count(untainteddata[i[0]]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            sendEmbed(untainteddata[i[0]]['guild']['prefix'], guildPrefix, i[0], ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
         expectedterrcount = getTerrData(True).count(guildPrefix)
         
     elif expectedterrcount < terrcount: #gained a territory
@@ -75,10 +109,9 @@ def checkterritories():
             timestamp = reworkedDate.timestamp() 
             elapsed_time = int(float(i[1])) - int(timestamp)
             x = rd(seconds=elapsed_time)
-            data = {"content": ""+untainteddata[i[0]]['guild']['name']+" ("+guildPrefix+") has taken control of "+i[0]+"! "+i[0]+" lasted "+' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k))+"."}
-            requests.post(webhookURL, json=data)
-            if pingRoleID:
-                requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[i[0]]['guild']['prefix'])
+            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[i[0]]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            sendEmbed(guildPrefix, untainteddataOLD[i[0]]['guild']['prefix'], i[0], ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
         expectedterrcount = getTerrData(True).count(guildPrefix)
 
 def split_message(message, limit=2000): # chatgpt is #thegoat but i will be pissed when it takes my job
@@ -102,9 +135,10 @@ for i in territoryInfo:
 realmessagetho = "Dernal.py is set up! Here are your guild's current territories:"+message
 printthing = split_message(realmessagetho)
 print("Everything is likely working!")
-for x in printthing:
-    data = {"content": x}
-    requests.post(webhookURL, json=data)
+if initTerrMessae == True:
+    for x in printthing:
+        data = {"content": x}
+        requests.post(webhookURL, json=data)
 
 
 while True:
