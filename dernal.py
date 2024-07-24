@@ -2,13 +2,17 @@ import requests
 from datetime import datetime
 import time
 from dateutil.relativedelta import relativedelta as rd
+import configparser
 
 # TODO: maybe make it a bot or sum; write in code that fixes the code maybe breaking if 2 or more terrs was taken within 1 check.
 
-guildPrefix = "" #self explanatory
-initTerrMessae = True # incase you want to turn off the first message you get when starting.
-pingRoleID = "" # needs to be a role, a person could be used but that is dumb and requires change, also remove if you dont want pings
-webhookURL = "" #discord webhook URL
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+guildPrefix = config['SETTINGS']['guildPrefix'] 
+initTerrMessae = config['SETTINGS']['initTerrMessae'] 
+pingRoleID = config['SETTINGS']['pingRoleID']
+webhookURL = config['SETTINGS']['webhookURL']
 timesinceping = 0
 
 
@@ -16,6 +20,7 @@ untainteddata = []
 intervals = ['days','hours','minutes','seconds']
 
 def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter):
+    global timesinceping
     data = { # we need it sadly i think idk i ripped this code off someones github
     "content" : "",
     }
@@ -44,8 +49,9 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
         ]
         requests.post(webhookURL, json=data)
         if pingRoleID:
-            if int(time.time()) - int(timesinceping) >= 900:
-                timesinceping = time.time()
+            current_time = time.time()
+            if current_time  - int(timesinceping) >= 900:
+                timesinceping = current_time
                 requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
     
         
@@ -137,11 +143,10 @@ for i in territoryInfo:
 realmessagetho = "Dernal.py is set up! Here are your guild's current territories:"+message
 printthing = split_message(realmessagetho)
 print("Everything is likely working!")
-if initTerrMessae == True:
+if initTerrMessae == "True": # .ini cant do true or false values so gotta be string
     for x in printthing:
         data = {"content": x}
         requests.post(webhookURL, json=data)
-
 
 while True:
     checkterritories()
