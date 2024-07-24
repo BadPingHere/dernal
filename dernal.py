@@ -9,6 +9,7 @@ guildPrefix = "" #self explanatory
 initTerrMessae = True # incase you want to turn off the first message you get when starting.
 pingRoleID = "" # needs to be a role, a person could be used but that is dumb and requires change, also remove if you dont want pings
 webhookURL = "" #discord webhook URL
+timesinceping = 0
 
 
 untainteddata = []
@@ -42,9 +43,10 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
             }
         ]
         requests.post(webhookURL, json=data)
-        print()
-    if pingRoleID:
-        requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+        if pingRoleID:
+            if datetime.now() - timesinceping >= 900:
+                timesinceping = datetime.now()
+                requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
     
         
 
