@@ -44,8 +44,8 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
         ]
         requests.post(webhookURL, json=data)
         if pingRoleID:
-            if int(time.time) - timesinceping >= 900:
-                timesinceping = datetime.now()
+            if int(time.time()) - int(timesinceping) >= 900:
+                timesinceping = time.time()
                 requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
     
         
