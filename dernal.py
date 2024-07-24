@@ -5,10 +5,10 @@ from dateutil.relativedelta import relativedelta as rd
 
 # TODO: maybe make it a bot or sum; write in code that fixes the code maybe breaking if 2 or more terrs was taken within 1 check.
 
-guildPrefix = "" #self explanatory
+guildPrefix = "FUB" #self explanatory
 initTerrMessae = True # incase you want to turn off the first message you get when starting.
-pingRoleID = "" # needs to be a role, a person could be used but that is dumb and requires change, also remove if you dont want pings
-webhookURL = "" #discord webhook URL
+pingRoleID = "1181028659780399144" # needs to be a role, a person could be used but that is dumb and requires change, also remove if you dont want pings
+webhookURL = "https://discord.com/api/webhooks/1264772391960055829/vo6zvQo3EZjn1NSt2_R4o8lF2qr3K6O7MDQwbALarSk0eBLMT81d1Ofa3zqN_Qt46FIz" #discord webhook URL
 timesinceping = 0
 
 
@@ -44,7 +44,7 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
         ]
         requests.post(webhookURL, json=data)
         if pingRoleID:
-            if datetime.now() - timesinceping >= 900:
+            if int(time.time) - timesinceping >= 900:
                 timesinceping = datetime.now()
                 requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
     
