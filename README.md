@@ -1,8 +1,5 @@
 <h1 align="center">
-  <br>
-  <br>
   Dernal.py
-  <br>
 </h1>
 
 <h4 align="center">A lightweight and easy-to-use python script to track a guild's territories in <a href="https://wynncraft.com/" target="_blank">Wynncraft</a>.</h4>
