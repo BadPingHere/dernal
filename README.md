@@ -57,6 +57,6 @@ GPLv3
 
 ---
 
-> [badpinghere.live](https://badpinghere.live) &nbsp;&middot;&nbsp;
+> [badpinghere.tech](https://badpinghere.tech) &nbsp;&middot;&nbsp;
 > GitHub [@BadPingHere](https://github.com/BadPingHere)&nbsp;&middot;&nbsp;
 > Discord [Ping#6175](https://discord.com/users/736028271153512489)
