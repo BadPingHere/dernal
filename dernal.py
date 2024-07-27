@@ -4,7 +4,7 @@ import time
 from dateutil.relativedelta import relativedelta as rd
 import configparser
 
-# TODO: maybe make it a bot or sum; write in code that fixes the code maybe breaking if 2 or more terrs was taken within 1 check.
+# TODO: maybe make it a bot or sum; fix it saying like (40 -> 38)  (40 -> 38)  instead of (40 -> 39) (39 -> 38) 
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -16,7 +16,8 @@ webhookURL = config['SETTINGS']['webhookURL']
 timesinceping = 0
 
 
-untainteddata = []
+untainteddata = {}
+untainteddataOLD = {}
 intervals = ['days','hours','minutes','seconds']
 
 def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter):
@@ -88,38 +89,46 @@ def getTerrData(firstTime):
     storeteritories(r.json(), guildPrefix, firstTime)
     return stringdata
 
-def checkterritories(): # im about 95% sure this will break if a guild took or lost 2 territories within a check, so i would advise not losing 2+ territories within 11s. i also cant check it because its rare.
+def checkterritories():
     global expectedterrcount
-    time.sleep(11) # waits 11s, not tryna get ratelimited
-    terrcount = getTerrData(False).count(guildPrefix)
-    if expectedterrcount > terrcount: # lost a territory
-        set1 = set(tuple(item) for item in territoryInfo)
-        set2 = set(tuple(item) for item in territoryInfoVariable)
-        lostTerritoriesDiff = set1.symmetric_difference(set2)
-        lostTerritoriesList = [list(item) for item in lostTerritoriesDiff]
-        for i in lostTerritoriesList:
-            reworkedDate = datetime.fromisoformat(untainteddata[i[0]]['acquired'].replace("Z", "+00:00"))
-            timestamp = reworkedDate.timestamp() 
-            elapsed_time = int(timestamp) - int(float(i[1]))
+    time.sleep(500)  # Waits 10s to avoid rate-limiting
+    getTerrData(False) # gets untainteddataOLD with info
+    gainedTerritories = {}
+    lostTerritories = {}
+    for territory, data in untainteddata.items():
+        old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
+        new_guild = data['guild']['prefix']
+        if old_guild == guildPrefix and new_guild != guildPrefix:
+            lostTerritories[territory] = data
+        elif old_guild != guildPrefix and new_guild == guildPrefix:
+            gainedTerritories[territory] = data
+    print("Gained Territories: ", gainedTerritories)
+    print("Lost Territories: ", lostTerritories)
+    if lostTerritories: # checks if its empty, no need to run if it is
+        for i in lostTerritories:
+            reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
+            timestamp = reworkedDate.timestamp()
+            reworkedDateNew = datetime.fromisoformat(lostTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
+            timestampNew = reworkedDateNew.timestamp() 
+            elapsed_time = int(timestampNew) - int(timestamp)
             x = rd(seconds=elapsed_time)
-            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddata[i[0]]['guild']['prefix'])
-            opponentTerrCountAfter = str(untainteddata).count(untainteddata[i[0]]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            sendEmbed(untainteddata[i[0]]['guild']['prefix'], guildPrefix, i[0], ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
-        expectedterrcount = getTerrData(True).count(guildPrefix)
-        
-    elif expectedterrcount < terrcount: #gained a territory
-        set1 = set(tuple(item) for item in territoryInfo)
-        set2 = set(tuple(item) for item in territoryInfoVariable)
-        gainedTerritoriesDiff = set1.symmetric_difference(set2)
-        gainedTerritoriesList = [list(item) for item in gainedTerritoriesDiff]
-        for i in gainedTerritoriesList:
-            reworkedDate = datetime.fromisoformat(untainteddataOLD[i[0]]['acquired'].replace("Z", "+00:00"))
-            timestamp = reworkedDate.timestamp() 
-            elapsed_time = int(float(i[1])) - int(timestamp)
+            opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
+            opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            terrcount = expectedterrcount - int(str(lostTerritories).count("name':"))
+            sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
+    if gainedTerritories: # checks if its empty, no need to run if it is
+        for i in gainedTerritories:
+            reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
+            timestamp = reworkedDate.timestamp()
+            reworkedDateNew = datetime.fromisoformat(gainedTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
+            timestampNew = reworkedDateNew.timestamp() 
+            elapsed_time = int(timestampNew)- int(timestamp)
             x = rd(seconds=elapsed_time)
-            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[i[0]]['guild']['prefix'])
-            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[i[0]]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            sendEmbed(guildPrefix, untainteddataOLD[i[0]]['guild']['prefix'], i[0], ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
+            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
+            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            terrcount = expectedterrcount + int(str(gainedTerritories).count("name':"))
+            sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)),str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
+    if gainedTerritories or lostTerritories: # just for resetting our variables
         expectedterrcount = getTerrData(True).count(guildPrefix)
 
 def split_message(message, limit=2000): # chatgpt is #thegoat but i will be pissed when it takes my job
