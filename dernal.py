@@ -4,7 +4,7 @@ import time
 from dateutil.relativedelta import relativedelta as rd
 import configparser
 
-# TODO: maybe make it a bot or sum; fix it saying like (40 -> 38)  (40 -> 38)  instead of (40 -> 39) (39 -> 38); check if days or similar is '1' because 1 days is improper grammar
+# TODO: maybe make it a bot or sum; fix it saying like (40 -> 38)  (40 -> 38)  instead of (40 -> 39) (39 -> 38) for opponents. its good for us; check if days or similar is '1' because 1 days is improper grammar
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -91,7 +91,7 @@ def getTerrData(firstTime):
 
 def checkterritories():
     global expectedterrcount
-    time.sleep(60)  # Waits 10s to avoid rate-limiting
+    time.sleep(10)  # Waits 10s to avoid rate-limiting
     getTerrData(False) # gets untainteddataOLD with info
     gainedTerritories = {}
     lostTerritories = {}
