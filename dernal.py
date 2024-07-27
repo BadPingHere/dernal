@@ -4,7 +4,7 @@ import time
 from dateutil.relativedelta import relativedelta as rd
 import configparser
 
-# TODO: maybe make it a bot or sum; fix it saying like (40 -> 38)  (40 -> 38)  instead of (40 -> 39) (39 -> 38) 
+# TODO: maybe make it a bot or sum; fix it saying like (40 -> 38)  (40 -> 38)  instead of (40 -> 39) (39 -> 38); check if days or similar is '1' because 1 days is improper grammar
 
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -91,7 +91,7 @@ def getTerrData(firstTime):
 
 def checkterritories():
     global expectedterrcount
-    time.sleep(500)  # Waits 10s to avoid rate-limiting
+    time.sleep(60)  # Waits 10s to avoid rate-limiting
     getTerrData(False) # gets untainteddataOLD with info
     gainedTerritories = {}
     lostTerritories = {}
@@ -102,8 +102,9 @@ def checkterritories():
             lostTerritories[territory] = data
         elif old_guild != guildPrefix and new_guild == guildPrefix:
             gainedTerritories[territory] = data
-    print("Gained Territories: ", gainedTerritories)
-    print("Lost Territories: ", lostTerritories)
+    #print("Gained Territories: ", gainedTerritories)
+    #print("Lost Territories: ", lostTerritories)
+    terrcount = expectedterrcount # this is what will fix (40 -> 38)
     if lostTerritories: # checks if its empty, no need to run if it is
         for i in lostTerritories:
             reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
@@ -112,10 +113,12 @@ def checkterritories():
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew) - int(timestamp)
             x = rd(seconds=elapsed_time)
+            
             opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            terrcount = expectedterrcount - int(str(lostTerritories).count("name':"))
+            terrcount -= 1
             sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
+            expectedterrcount = terrcount
     if gainedTerritories: # checks if its empty, no need to run if it is
         for i in gainedTerritories:
             reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
@@ -124,10 +127,12 @@ def checkterritories():
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew)- int(timestamp)
             x = rd(seconds=elapsed_time)
-            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
-            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            terrcount = expectedterrcount + int(str(gainedTerritories).count("name':"))
+            
+            #opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
+            #opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            terrcount+=1
             sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)),str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
+            expectedterrcount = terrcount
     if gainedTerritories or lostTerritories: # just for resetting our variables
         expectedterrcount = getTerrData(True).count(guildPrefix)
 
