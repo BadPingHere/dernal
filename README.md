@@ -21,7 +21,7 @@ This is a quite versitile script, so it tracks many things, like:
 - How many territories you hold, and how long each of them are held.
 - When and who takes your territory, and at what time.
 - When you take someone eles's territory.
-- And
+- And much much more!
 
 ## How To Use
 
