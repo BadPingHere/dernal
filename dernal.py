@@ -13,12 +13,31 @@ guildPrefix = config['SETTINGS']['guildPrefix']
 initTerrMessae = config['SETTINGS']['initTerrMessae'] 
 pingRoleID = config['SETTINGS']['pingRoleID']
 webhookURL = config['SETTINGS']['webhookURL']
+if len(webhookURL) == 0 or len(guildPrefix) == 0:
+    print("Config.ini is either not present or not set up correctly!")
+    exit()
 timesinceping = 0
 
 
 untainteddata = {}
 untainteddataOLD = {}
-intervals = ['days','hours','minutes','seconds']
+TIME_DURATION_UNITS = (
+    ('week', 60*60*24*7),
+    ('day', 60*60*24),
+    ('hour', 60*60),
+    ('minute', 60),
+    ('second', 1)
+)
+
+def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
+    if seconds == 0:
+        return 'Error while getting time! Report this to my github.' # it shouldnt ever be 0, but better safe than sorry
+    parts = []
+    for unit, div in TIME_DURATION_UNITS:
+        amount, seconds = divmod(int(seconds), div)
+        if amount > 0:
+            parts.append('{} {}{}'.format(amount, unit, "" if amount == 1 else "s"))
+    return ' '.join(parts)
 
 def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter):
     global timesinceping
@@ -36,7 +55,10 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
                 "color": "5763719",
             }
         ]
-        requests.post(webhookURL, json=data)
+        try:
+            requests.post(webhookURL, json=data)
+        except requests.exceptions.HTTPError as err:
+            print(err)
     else:
         data["embeds"] = [
             {
@@ -48,12 +70,18 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
                 "color": "15548997",
             }
         ]
-        requests.post(webhookURL, json=data)
+        try:
+            requests.post(webhookURL, json=data)
+        except requests.exceptions.HTTPError as err:
+            print(err)
         if pingRoleID:
             current_time = time.time()
             if current_time  - int(timesinceping) >= 900:
                 timesinceping = current_time
-                requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+                try:
+                    requests.post(webhookURL, json={"content": "<@&"+pingRoleID+">"})
+                except requests.exceptions.HTTPError as err:
+                    print(err)
     
         
 
@@ -81,7 +109,10 @@ def getTerrData(firstTime):
     global untainteddata
     global untainteddataOLD
     URL = "https://api.wynncraft.com/v3/guild/list/territory"
-    r = requests.get(URL)
+    try:
+        r = requests.get(URL)
+    except requests.exceptions.HTTPError as err:
+        print(err)
     stringdata = str(r.json())
     if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
         untainteddataOLD = untainteddata
@@ -91,7 +122,7 @@ def getTerrData(firstTime):
 
 def checkterritories():
     global expectedterrcount
-    time.sleep(10)  # Waits 10s to avoid rate-limiting
+    time.sleep(15)  # Waits 15s to avoid rate-limiting
     getTerrData(False) # gets untainteddataOLD with info
     gainedTerritories = {}
     lostTerritories = {}
@@ -112,12 +143,11 @@ def checkterritories():
             reworkedDateNew = datetime.fromisoformat(lostTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew) - int(timestamp)
-            x = rd(seconds=elapsed_time)
             
             opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount -= 1
-            sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
+            sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount), str(terrcount))
             expectedterrcount = terrcount
     if gainedTerritories: # checks if its empty, no need to run if it is
         for i in gainedTerritories:
@@ -126,12 +156,11 @@ def checkterritories():
             reworkedDateNew = datetime.fromisoformat(gainedTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew)- int(timestamp)
-            x = rd(seconds=elapsed_time)
             
-            #opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
-            #opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
+            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount+=1
-            sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, ' '.join('{} {}'.format(getattr(x,k),k) for k in intervals if getattr(x,k)),str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
+            sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount), str(terrcount), str(opponentTerrCountBefore), str(opponentTerrCountAfter))
             expectedterrcount = terrcount
     if gainedTerritories or lostTerritories: # just for resetting our variables
         expectedterrcount = getTerrData(True).count(guildPrefix)
@@ -160,7 +189,10 @@ print("Everything is likely working!")
 if initTerrMessae == "True": # .ini cant do true or false values so gotta be string
     for x in printthing:
         data = {"content": x}
-        requests.post(webhookURL, json=data)
+        try:
+            requests.post(webhookURL, json=data)
+        except requests.exceptions.HTTPError as err:
+            print(err)
 
 while True:
     checkterritories()

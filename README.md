@@ -37,6 +37,10 @@ $ cd dernal
 # Install dependencies
 $ pip install requirements.txt
 
+# Rename and edit config_template.ini
+$ mv config_template.ini config.ini
+$ nano config.ini
+
 # Run the app
 $ python dernal.py
 ```
@@ -47,7 +51,7 @@ You can [download](https://github.com/BadPingHere/dernal/releases/latest) the la
 
 ## Credits
 
-This software uses some of the following open source packages:
+This software was inspired by:
 
 - BoxFot
 
