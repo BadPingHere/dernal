@@ -34,6 +34,8 @@ To use this discord bot, you need to either pick the legacy, webhook version, or
 
 #### Discord bot
 
+If you trust the hosting to us, you can simply invite the bot [here](https://discord.com/oauth2/authorize?client_id=1270960638382051368), but you can always host the bot yourself. For those inclined to follow hosting, I give no guarantee to reliability, but in terms of safety, this bot has very barebones permissions, only allowing it to read all channels and send messages, along with reactions for future updates. You can always tweak these to your needs, as the only _truly_ required permission is slash commands and sending messages.
+
 To clone and run this discord bot, you'll need [Git](https://git-scm.com), [Python](https://www.python.org/downloads/) and [Pip](https://nodejs.org/en/download/) installed on your computer. From your command line:
 
 ```bash
