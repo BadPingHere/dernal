@@ -76,7 +76,7 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
                 logger.error(f"Error sending ping: {err}")
 
 async def getTerrData(untainteddata, untainteddataOLD):
-    URL = "https://api.wynncraft.com/v3/guild/list/territory"
+    URL = "https://beta-api.wynncraft.com/v3/guild/list/territory"
     try:
         r = requests.get(URL)
     except requests.exceptions.HTTPError as err:
@@ -297,9 +297,9 @@ async def guild(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - guildLookupCooldown} seconds.", ephemeral=True)
     
     if len(name) >= 5: # this is checking if its a name
-        URL = "https://api.wynncraft.com/v3/guild/"+str(name)
+        URL = "https://beta-api.wynncraft.com/v3/guild/"+str(name)
     else:
-        URL = "https://api.wynncraft.com/v3/guild/prefix/"+str(name)
+        URL = "https://beta-api.wynncraft.com/v3/guild/prefix/"+str(name)
     try:
         request = requests.get(URL)
     except requests.exceptions.HTTPError as err:

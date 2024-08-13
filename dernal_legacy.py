@@ -108,7 +108,7 @@ def storeteritories(jsondata, guildPrefix, resetdata):
 def getTerrData(firstTime):
     global untainteddata
     global untainteddataOLD
-    URL = "https://api.wynncraft.com/v3/guild/list/territory"
+    URL = "https://beta-api.wynncraft.com/v3/guild/list/territory"
     try:
         r = requests.get(URL)
     except requests.exceptions.HTTPError as err:
