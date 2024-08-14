@@ -28,6 +28,9 @@ This is a quite versitile discord bot, with a few commands, like:
   - Current territory count and war count
   - Top Season rankings and top contributing members
 
+> [!NOTE]  
+> If you want a role to be pinged with detector, due to it's locked down nature, you either have to allow that role to be pinged by everyone, or give the bot permissions to ping every role, including @everyone and @here. If you are self hosting, or trust our hosting, do the latter. If you dont trust our hosting do the former.
+
 ## How To Use
 
 To use this discord bot, you need to either pick the legacy, webhook version, or the supported discord bot.
