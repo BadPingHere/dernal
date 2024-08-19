@@ -376,3 +376,5 @@ async def guild(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(embed=await guildLookup(name, r))
     else:
         await interaction.response.send_message(f"'{name}' is a unknown prefix or guild name.", ephemeral=True)
+
+client.run('Bot Token Here') 
