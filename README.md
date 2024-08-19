@@ -21,6 +21,7 @@ This is a quite versitile discord bot, with a few commands, like:
 - **Detector**, a background task you can set up to passively track all things guild wars, including:
   - When and who takes your territory, at what time, and how long it lasted
   - When you take someone eles's territory, how long it lasted, and who it was taken from.
+  - A somewhat accurate list of attacking members, and what world they were on.
   - Pings for when you lose a territory, and a customizable cooldown
   - Compatability with running with multiple guilds at once.
 - **Guild Lookup**, a self explanatory command that allows you to have information about a guild, including:

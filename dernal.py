@@ -6,6 +6,7 @@ import asyncio
 import discord
 import logging.handlers
 from discord import app_commands
+from collections import Counter
 
 logger = logging.getLogger('discord')
 logger.setLevel(logging.INFO)
@@ -22,7 +23,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-# TODO: slash command that shows the territory hitory of your guild, sum like 'August 9th: 🔴 X was taken by SEQ newline here  🟢 X was taken from SEQ'
+# TODO: slash command that shows the territory history of your guild, sum like 'August 9th: 🔴 X was taken by SEQ newline here  🟢 X was taken from SEQ'
 # TODO: store data on all guilds, and like have stats on them (Daily active users, Wars won, etc) available from a slash command 
 
 background_task: Optional[asyncio.Task] = None
@@ -30,6 +31,36 @@ stop_event = asyncio.Event()
 guildsBeingTracked = {}
 timesinceping = {}
 guildLookupCooldown = 0
+ratelimitmultiplier = 1
+ratelimitwait = 0.1
+
+async def makeRequest(URL): # the world is built on nested if else statements.
+    global ratelimitmultiplier
+    global ratelimitwait
+    try:
+        r = requests.get(URL)
+    except requests.exceptions.HTTPError as err:
+        logger.error("Error getting request:", err)
+    if int(r.headers['RateLimit-Remaining']) > 60:
+        ratelimitmultiplier = 1
+        ratelimitwait = 0.25
+    else:
+        if r.headers['RateLimit-Remaining'] < 60: # We making too many requests, slow it down
+            ratelimitmultiplier = 1.5
+            ratelimitwait = 0.70
+        if r.headers['RateLimit-Remaining'] < 30: # We making too many requests, slow it down
+            ratelimitmultiplier = 2
+            ratelimitwait = 1.25
+        if r.headers['RateLimit-Remaining'] < 10: # We making too many requests, slow it down
+            ratelimitmultiplier = 4
+            ratelimitwait = 3
+    if r.ok:
+        return r
+    else:
+        logger.error("Error making request:", err)
+        return None
+    
+
 
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
@@ -48,13 +79,55 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
             parts.append('{} {}{}'.format(amount, unit, "" if amount == 1 else "s"))
     return ' '.join(parts)
 
+async def findAttackingMembers(attacker):
+    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/prefix/"+str(attacker))
+    await asyncio.sleep(ratelimitwait)
+    jsonData = r.json()
+    onlineMembers = []
+    warringMembers = []
+    attackingMembers = []
+
+    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+        if isinstance(jsonData["members"][rank], dict):
+            for member in jsonData["members"][rank].values(): 
+                if member['online']: # checks if online is set to true or false
+                    onlineMembers.append([member['uuid'], member['server']])
+                    
+    for i in onlineMembers:
+        r = await makeRequest("https://beta-api.wynncraft.com/v3/player/"+str(i[0]))
+        json = r.json()
+        if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+            warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+    
+    worldStrings = [sublist[1] for sublist in warringMembers]
+    mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
+
+    if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
+        # no majority world, so we just send who has the most amount of wars
+        highestWars = max(warringMembers, key=lambda x: x[2])
+        attackingMembers = [highestWars]
+    else:
+        # majority world, just chop shit up and whatnot
+        string = mostCommonWorld[0][0]
+        attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
+    if not attackingMembers: # if for some reason this comes back with no one (offline or sum)
+        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+    return attackingMembers
+        
+    
+
 async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, channelForMessages, intervalForPing):
     global timesinceping
     if guildPrefix not in timesinceping:
         timesinceping[guildPrefix] = 0  # setup 0 first, never again
+        
+    if attacker != guildPrefix: # lost territory, so try to find attackers
+        attackingMembers = await findAttackingMembers(attacker)
+        world = attackingMembers[0][1]
+        username = [item[0] for item in attackingMembers]
     embed = discord.Embed(
         title="🟢 **Gained Territory!**" if attacker == guildPrefix else "🔴 **Lost Territory!**",
-        description=f"**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}.",
+            description=f"**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}." + ("" if attacker == guildPrefix else f"\n{world}: **{'**, **'.join(username)}**"),
         color=0x00FF00 if attacker == guildPrefix else 0xFF0000  # Green for gain, red for loss
     )
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
@@ -76,11 +149,8 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
                 logger.error(f"Error sending ping: {err}")
 
 async def getTerrData(untainteddata, untainteddataOLD):
-    URL = "https://beta-api.wynncraft.com/v3/guild/list/territory"
-    try:
-        r = requests.get(URL)
-    except requests.exceptions.HTTPError as err:
-        logger.error("Error getting request:", err)
+    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
+    await asyncio.sleep(ratelimitwait)
     #print("status", r.status_code)
     stringdata = str(r.json())
     if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
@@ -154,8 +224,7 @@ async def printTop3(list, word, word2):
         output += f"{i}.{word} {sublist[1]}: **{sublist[0]}** {word2}\n"
     return output
 
-async def guildLookup(guildPrefixorName, request):
-    r = request
+async def guildLookup(guildPrefixorName, r):
     jsonData = r.json()
     online_count = 0 # default
     ratingList = [] 
@@ -240,7 +309,7 @@ class MyClient(discord.Client):
             #print(guild_prefix)
             #print(expectedterrcount)
             await checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran) # this changes back to false to simulate change becuase this wasnt complicated enough
-            await asyncio.sleep(20/len(guilds_to_check)) # this will make it so EVERY guild is checked every 30s. max requests a minute is 180 for api
+            await asyncio.sleep((20/len(guilds_to_check))*int(ratelimitmultiplier)) # this will make it so EVERY guild is 20/How many guilds * ratelimit, so 4 guilds with less a ratelimit of 2 is a sleep of 10s
 
 
         
@@ -300,13 +369,10 @@ async def guild(interaction: discord.Interaction, name: str):
         URL = "https://beta-api.wynncraft.com/v3/guild/"+str(name)
     else:
         URL = "https://beta-api.wynncraft.com/v3/guild/prefix/"+str(name)
-    try:
-        request = requests.get(URL)
-    except requests.exceptions.HTTPError as err:
-        logger.error("Error getting request:", err)
-    if request.ok: # real guild
-        await interaction.response.send_message(embed=await guildLookup(name, request))
+    
+    r = await makeRequest(URL)
+    await asyncio.sleep(ratelimitwait)
+    if r.ok: # real guild
+        await interaction.response.send_message(embed=await guildLookup(name, r))
     else:
         await interaction.response.send_message(f"'{name}' is a unknown prefix or guild name.", ephemeral=True)
-
-client.run('Bot Token Here')
