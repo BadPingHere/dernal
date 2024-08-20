@@ -24,6 +24,7 @@ This is a quite versitile discord bot, with a few commands, like:
   - A somewhat accurate list of attacking members, and what world they were on.
   - Pings for when you lose a territory, and a customizable cooldown
   - Compatability with running with multiple guilds at once.
+  - A command which auto-fills what you are detecting, and allows you to remove it.
 - **Guild Lookup**, a self explanatory command that allows you to have information about a guild, including:
   - Owner, Online players, and guild level
   - Current territory count and war count
@@ -90,7 +91,7 @@ You can [download](https://github.com/BadPingHere/dernal/releases/latest) the la
 This software was inspired by:
 
 - BoxFot
-- Nori
+- [Nori](https://nori.fish)
 
 ## License
 

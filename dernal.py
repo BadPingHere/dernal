@@ -322,39 +322,6 @@ async def on_ready():
     print('------')
 
 
-@client.tree.command(description="Configuration for the Dernal War Detector.")
-@app_commands.describe(
-    channel='Channel to set',
-    guild_prefix='Prefix of the guild to track Ex: SEQ, ICo.',
-    role='Role to be pinged (optional)',
-    interval='The cooldown on the pings in minutes (optional)',
-)
-async def detector(interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
-    global guildsBeingTracked
-    message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
-    if len(guildsBeingTracked) > 15: # this is a number out of my ass, just makes sense that we shouldnt have 15+ guilds being tracked, as that would use a lot of our ratelimit of 120 a minute.
-        message = (f'You have too many guilds being tracked with Detector! The maximum limit you can have is 15. There is no way to delete them right now besides restarting the bot. So tough shit I guess.')
-        success = False
-    elif role and interval: # This is for when both are present
-        message = (f'<#{channel.id}> now set! Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.')
-        success = True
-    else: # success, but also yknow no role
-        message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
-        success = True
-    
-    if success: # With this we should proceed with adding it to the queue.
-        #print(guildsBeingTracked)
-        guildsBeingTracked[guild_prefix] = {'channelForMessages': channel, 'pingRoleID': str(role.id) if role else "", 'intervalForPing': interval if interval else ""}
-        #print(guildsBeingTracked)
-        if 'task' in globals() and task and not task.done(): # all to restart when detector is running
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                logger.error("Task was cancelled. Not sure how.")
-        task = asyncio.create_task(client.runBackgroundDetector(guildsBeingTracked, guild_prefix))
-        await interaction.response.send_message(message)
-
 @client.tree.command(description="Shows stats and information about the selected guild")
 @app_commands.describe(
     name='Prefix or Name of the guild search Ex: TAq, Calvish.',
@@ -376,5 +343,75 @@ async def guild(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(embed=await guildLookup(name, r))
     else:
         await interaction.response.send_message(f"'{name}' is a unknown prefix or guild name.", ephemeral=True)
+
+class detectorClass(discord.app_commands.Group):
+    @discord.app_commands.command(name="remove", description="Remove a guild from being detected.")
+    async def remove(self, interaction: discord.Interaction, prefix: str):
+        if prefix in guildsBeingTracked:
+            del guildsBeingTracked[prefix] # clip it and ship it
+            await interaction.response.send_message(f"{prefix} is no longer being detected.")
+            logger.info(f"{prefix} was removed from detection.")
+        else:
+            await interaction.response.send_message(f"{prefix} not found.", ephemeral=True) # legit shouldnt happen because of autocomplete
+            logger.info(f"Could not find {prefix} for remove command.")
+            
+    @remove.autocomplete('prefix')
+    async def autoCompleteAndWhatNotNoOneSeesThisSoThisCanBeNamedAnything(self, interaction: discord.Interaction, real: str):
+        guild = interaction.guild
+        choices = []
+        for key, value in guildsBeingTracked.items():
+            if real.lower() in key.lower():
+                # could be a oneliner if ROLE WAS SAVED AS THE NAME!!!
+                role = guild.get_role(int(value['pingRoleID']))
+                roleName = role.name if role else "No Role"
+                interval = value['intervalForPing'] if value['intervalForPing'] else "No Interval"
+                choices.append(
+                    discord.app_commands.Choice(
+                        name=f"Guild: {key} | Channel: {value['channelForMessages']} | Role: {roleName} | Interval: {interval}",
+                        value=key
+                    )
+                )
+        return choices
+    @discord.app_commands.command(description="Add a guild to detect.")
+    @app_commands.describe(
+        channel='Channel to set',
+        guild_prefix='Prefix of the guild to track Ex: SEQ, ICo.',
+        role='Role to be pinged (optional)',
+        interval='The cooldown on the pings in minutes (optional)',
+    )
+    async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
+        global guildsBeingTracked
+        message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
+        if guild_prefix in guildsBeingTracked.keys(): # for the edge case where you want to change a config, or just forget you have it running already.
+            if role and interval: # This is for when both are present
+                message = (f'This guild is already being detected, so we will change its configurations.\n<#{channel.id}> now set! Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.')
+            else:
+                message = (f'This guild is already being detected, so we will change its configurations.\n<#{channel.id}> now set! No role will be pinged when territory is lost.')
+            success = True
+        elif len(guildsBeingTracked) > 15: # this is a number out of my ass, just makes sense that we shouldnt have 15+ guilds being tracked, as that would use a lot of our ratelimit of 120 a minute.
+            message = (f'You have too many guilds being tracked with Detector! The maximum limit you can have is 15. You can remove tracked guilds with /detector remove.')
+            success = False
+        elif role and interval: # This is for when both are present
+            message = (f'<#{channel.id}> now set! Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.')
+            success = True
+        else: # success, but also yknow no role
+            message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
+            success = True
+        
+        if success: # With this we should proceed with adding it to the queue.
+            #print(guildsBeingTracked)
+            guildsBeingTracked[guild_prefix] = {'channelForMessages': channel, 'pingRoleID': str(role.id) if role else "", 'intervalForPing': interval if interval else ""}
+            #print(guildsBeingTracked)
+            if 'task' in globals() and task and not task.done(): # all to restart when detector is running
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    logger.error("Task was cancelled. Not sure how.")
+            task = asyncio.create_task(client.runBackgroundDetector(guildsBeingTracked, guild_prefix))
+        await interaction.response.send_message(message)
+
+pingGroup = detectorClass(name="detector", description="Configuration for the Dernal War Detector.")
+client.tree.add_command(pingGroup)
 
 client.run('Bot Token Here') 
