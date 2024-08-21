@@ -99,6 +99,10 @@ async def findAttackingMembers(attacker):
         if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
             warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
     
+    if not warringMembers: # if for some reason this comes back with no one (offline or sum)
+        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+        return attackingMembers
+
     worldStrings = [sublist[1] for sublist in warringMembers]
     mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
 
@@ -110,8 +114,6 @@ async def findAttackingMembers(attacker):
         # majority world, just chop shit up and whatnot
         string = mostCommonWorld[0][0]
         attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-    if not attackingMembers: # if for some reason this comes back with no one (offline or sum)
-        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
     return attackingMembers
         
     
