@@ -351,6 +351,12 @@ class detectorClass(discord.app_commands.Group):
     async def remove(self, interaction: discord.Interaction, prefix: str):
         if prefix in guildsBeingTracked:
             del guildsBeingTracked[prefix] # clip it and ship it
+            if 'task' in globals() and task and not task.done(): # all to restart when detector is running
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    logger.debug("Task was cancelled from remove command.")
             await interaction.response.send_message(f"{prefix} is no longer being detected.")
             logger.info(f"{prefix} was removed from detection.")
         else:
@@ -364,8 +370,12 @@ class detectorClass(discord.app_commands.Group):
         for key, value in guildsBeingTracked.items():
             if real.lower() in key.lower():
                 # could be a oneliner if ROLE WAS SAVED AS THE NAME!!!
-                role = guild.get_role(int(value['pingRoleID']))
-                roleName = role.name if role else "No Role"
+                roleID = value['pingRoleID'] if value['pingRoleID'] else "No Role"
+                if roleID != "No Role":
+                    role = guild.get_role(int(roleID))
+                    roleName = role.name if role else "No Role"
+                else:
+                    roleName = "No Role"
                 interval = value['intervalForPing'] if value['intervalForPing'] else "No Interval"
                 choices.append(
                     discord.app_commands.Choice(
@@ -383,6 +393,7 @@ class detectorClass(discord.app_commands.Group):
     )
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
         global guildsBeingTracked
+        global task
         message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
         if guild_prefix in guildsBeingTracked.keys(): # for the edge case where you want to change a config, or just forget you have it running already.
             if role and interval: # This is for when both are present
@@ -409,7 +420,7 @@ class detectorClass(discord.app_commands.Group):
                 try:
                     await task
                 except asyncio.CancelledError:
-                    logger.error("Task was cancelled. Not sure how.")
+                    logger.debug("Task was cancelled from add command.")
             task = asyncio.create_task(client.runBackgroundDetector(guildsBeingTracked, guild_prefix))
         await interaction.response.send_message(message)
 
