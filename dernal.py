@@ -6,6 +6,7 @@ import asyncio
 import discord
 import logging.handlers
 from discord import app_commands
+from discord.ext import tasks
 from collections import Counter
 
 logger = logging.getLogger('discord')
@@ -26,10 +27,13 @@ logger.addHandler(handler)
 # TODO: slash command that shows the territory history of your guild, sum like 'August 9th: 🔴 X was taken by SEQ newline here  🟢 X was taken from SEQ'
 # TODO: store data on all guilds, and like have stats on them (Daily active users, Wars won, etc) available from a slash command 
 
-background_task: Optional[asyncio.Task] = None
-stop_event = asyncio.Event()
 guildsBeingTracked = {}
 timesinceping = {}
+hasbeenran =  {}
+expectedterrcount = {}
+guildsBeingTracked = {}
+untainteddata = {}
+untainteddataOLD = {}
 guildLookupCooldown = 0
 ratelimitmultiplier = 1
 ratelimitwait = 0.1
@@ -39,8 +43,10 @@ async def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitwait
     try:
         r = requests.get(URL)
-    except requests.exceptions.HTTPError as err:
-        logger.error("Error getting request:", err)
+        r.raise_for_status()
+    except requests.exceptions.RequestException as err:
+        logger.error(f"Error getting request: {err}")
+        return None
     if int(r.headers['RateLimit-Remaining']) > 60:
         ratelimitmultiplier = 1
         ratelimitwait = 0.25
@@ -57,7 +63,7 @@ async def makeRequest(URL): # the world is built on nested if else statements.
     if r.ok:
         return r
     else:
-        logger.error("Error making request:", err)
+        logger.error("Error making request.")
         return None
     
 
@@ -82,6 +88,9 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
 async def findAttackingMembers(attacker):
     r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/prefix/"+str(attacker))
     await asyncio.sleep(ratelimitwait)
+    if r is None:
+        return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
+
     jsonData = r.json()
     onlineMembers = []
     warringMembers = []
@@ -92,17 +101,19 @@ async def findAttackingMembers(attacker):
             for member in jsonData["members"][rank].values(): 
                 if member['online']: # checks if online is set to true or false
                     onlineMembers.append([member['uuid'], member['server']])
-                    
+    #logger.info(f"Online Members: {onlineMembers}")
     for i in onlineMembers:
         r = await makeRequest("https://beta-api.wynncraft.com/v3/player/"+str(i[0]))
         json = r.json()
         if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
             warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
-    
+    #logger.info(f"Warring Members: {warringMembers}")
+
     if not warringMembers: # if for some reason this comes back with no one (offline or sum)
         attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+        #logger.info(f"Attacking Members: {attackingMembers}")
         return attackingMembers
-
+    
     worldStrings = [sublist[1] for sublist in warringMembers]
     mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
 
@@ -114,6 +125,7 @@ async def findAttackingMembers(attacker):
         # majority world, just chop shit up and whatnot
         string = mostCommonWorld[0][0]
         attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
+    #logger.info(f"Attacking Members: {attackingMembers}")
     return attackingMembers
         
     
@@ -135,8 +147,7 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
     
     try:
-        logger.info("Sending embed.")
-        logger.debug(embed)
+        logger.debug(f"Embed: {embed.to_dict()}")
         await channelForMessages.send(embed=embed)
     except discord.DiscordException as err:
         logger.error(f"Error sending message: {err}")
@@ -175,8 +186,8 @@ async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butit
             lostTerritories[territory] = data
         elif old_guild != guildPrefix and new_guild == guildPrefix:
             gainedTerritories[territory] = data
-    #print("Gained Territories: ", gainedTerritories)
-    #print("Lost Territories: ", lostTerritories)
+    #logger.info(f"Gained Territories: {gainedTerritories}")
+    #logger.info(f"Lost Territories: {lostTerritories}")
     terrcount[guildPrefix] = expectedterrcount[guildPrefix] # this is what will fix (40 -> 38)
     if lostTerritories: # checks if its empty, no need to run if it is
         for i in lostTerritories:
@@ -282,47 +293,46 @@ class MyClient(discord.Client):
         await self.tree.sync()
         print("Command Tree is synced.")
 
-
-    async def runBackgroundDetector(self, guildsBeingTracked, guild_prefix):
-        logger.info(f"War detector now running in background for guild {guild_prefix}.")
-
-        guildPrefix = guild_prefix 
-        pingRoleID = guildsBeingTracked[guild_prefix]["pingRoleID"]
-        channelForMessages = guildsBeingTracked[guild_prefix]["channelForMessages"]
-        intervalForPing = guildsBeingTracked[guild_prefix]["intervalForPing"]
-        untainteddata = {}
-        untainteddataOLD = {}
-        hasbeenran =  {}
-        expectedterrcount = {}
-
-        while True:
-            guilds_to_check = list(guildsBeingTracked.keys())
-            for guild_prefix in guilds_to_check:
-                if guild_prefix in guildsBeingTracked:
-                    if hasbeenran.get(guild_prefix):
-                        pass
-                    else:
-                        returnData = await getTerrData(untainteddata, untainteddataOLD)
-                        expectedterrcount[guild_prefix] = returnData["stringdata"].count(guild_prefix)
-                        untainteddata = returnData["untainteddata"]
-                        untainteddataOLD = returnData["untainteddataOLD"]
-                        hasbeenran[guild_prefix] = True
-            #print("---------------------")
-            #print(guild_prefix)
-            #print(expectedterrcount)
-            await checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran) # this changes back to false to simulate change becuase this wasnt complicated enough
-            await asyncio.sleep((20/len(guilds_to_check))*int(ratelimitmultiplier)) # this will make it so EVERY guild is 20/How many guilds * ratelimit, so 4 guilds with less a ratelimit of 2 is a sleep of 10s
-
-
         
 intents = discord.Intents.default()
 client = MyClient(intents=intents)
+
+@tasks.loop(seconds = 20) # repeat after every 20 seconds
+async def backgroundDetector():
+    global hasbeenran
+    global expectedterrcount
+    global guildsBeingTracked
+    global untainteddata
+    global untainteddataOLD
+    
+    if not guildsBeingTracked:
+        return # everything is empty, so 
+    
+    guilds_to_check = list(guildsBeingTracked.keys())
+    for guildPrefix in guilds_to_check:
+        pingRoleID = guildsBeingTracked[guildPrefix]["pingRoleID"]
+        channelForMessages = guildsBeingTracked[guildPrefix]["channelForMessages"]
+        intervalForPing = guildsBeingTracked[guildPrefix]["intervalForPing"]
+        if guildPrefix in guildsBeingTracked:
+            if hasbeenran.get(guildPrefix):
+                pass
+            else:
+                returnData = await getTerrData(untainteddata, untainteddataOLD)
+                expectedterrcount[guildPrefix] = returnData["stringdata"].count(guildPrefix)
+                untainteddata = returnData["untainteddata"]
+                untainteddataOLD = returnData["untainteddataOLD"]
+                #logger.info(f"returnData[untainteddata]: {untainteddata}")
+                hasbeenran[guildPrefix] = True
+            #logger.info(f"guildPrefix: {guildPrefix}")
+            #logger.info(f"expectedterrcount: {expectedterrcount[guildPrefix]}")
+            #logger.info(f"hasbeenran: {hasbeenran[guildPrefix]}")
+            await checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran)
 
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user} (ID: {client.user.id})')
     print('------')
-
+    backgroundDetector.start() # factory settings
 
 @client.tree.command(description="Shows stats and information about the selected guild")
 @app_commands.describe(
@@ -351,12 +361,6 @@ class detectorClass(discord.app_commands.Group):
     async def remove(self, interaction: discord.Interaction, prefix: str):
         if prefix in guildsBeingTracked:
             del guildsBeingTracked[prefix] # clip it and ship it
-            if 'task' in globals() and task and not task.done(): # all to restart when detector is running
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    logger.debug("Task was cancelled from remove command.")
             await interaction.response.send_message(f"{prefix} is no longer being detected.")
             logger.info(f"{prefix} was removed from detection.")
         else:
@@ -393,7 +397,6 @@ class detectorClass(discord.app_commands.Group):
     )
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
         global guildsBeingTracked
-        global task
         message = (f'<#{channel.id}> now set! No role will be pinged when territory is lost.')
         if guild_prefix in guildsBeingTracked.keys(): # for the edge case where you want to change a config, or just forget you have it running already.
             if role and interval: # This is for when both are present
@@ -414,17 +417,10 @@ class detectorClass(discord.app_commands.Group):
         if success: # With this we should proceed with adding it to the queue.
             #print(guildsBeingTracked)
             guildsBeingTracked[guild_prefix] = {'channelForMessages': channel, 'pingRoleID': str(role.id) if role else "", 'intervalForPing': interval if interval else ""}
-            #print(guildsBeingTracked)
-            if 'task' in globals() and task and not task.done(): # all to restart when detector is running
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    logger.debug("Task was cancelled from add command.")
-            task = asyncio.create_task(client.runBackgroundDetector(guildsBeingTracked, guild_prefix))
+            logger.info(f"War detector now running in background for guild prefix {guild_prefix}")
         await interaction.response.send_message(message)
 
 pingGroup = detectorClass(name="detector", description="Configuration for the Dernal War Detector.")
 client.tree.add_command(pingGroup)
 
-client.run('Bot Token Here') 
+client.run('Bot Token Here')
