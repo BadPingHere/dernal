@@ -162,14 +162,17 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
                 logger.error(f"Error sending ping: {err}")
 
 async def getTerrData(untainteddata, untainteddataOLD):
-    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
-    await asyncio.sleep(ratelimitwait)
-    #print("status", r.status_code)
-    stringdata = str(r.json())
-    if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
-        untainteddataOLD = untainteddata
-    untainteddata = r.json()
-    return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
+    while True:
+        r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
+        await asyncio.sleep(ratelimitwait)
+        #print("status", r.status_code)
+
+        if not (r is None):
+            stringdata = str(r.json())
+            if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
+                untainteddataOLD = untainteddata
+            untainteddata = r.json()
+            return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
 
 async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butitchangestho, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran):
     returnData = await getTerrData(untainteddata_butitchangestho, untainteddataOLD_butitchangestho) # gets untainteddataOLD with info
