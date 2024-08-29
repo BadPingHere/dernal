@@ -41,34 +41,40 @@ ratelimitwait = 0.1
 async def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitmultiplier
     global ratelimitwait
-    try:
-        r = requests.get(URL)
-        r.raise_for_status()
-    except requests.exceptions.RequestException as err:
-        logger.error(f"Error getting request: {err}")
-        return None
-    if int(r.headers['RateLimit-Remaining']) > 60:
-        ratelimitmultiplier = 1
-        ratelimitwait = 0.25
-    else:
-        if r.headers['RateLimit-Remaining'] < 60: # We making too many requests, slow it down
-            ratelimitmultiplier = 1.5
-            ratelimitwait = 0.70
-        if r.headers['RateLimit-Remaining'] < 30: # We making too many requests, slow it down
-            ratelimitmultiplier = 2
-            ratelimitwait = 1.25
-        if r.headers['RateLimit-Remaining'] < 10: # We making too many requests, slow it down
-            ratelimitmultiplier = 4
-            ratelimitwait = 3
-    if r.ok:
-        return r
-    else:
-        logger.error("Error making request.")
-        return None
+    while True:
+        try:
+            session = requests.Session()
+            session.trust_env = False
+            
+            r = session.get(URL)
+            r.raise_for_status()
+        except requests.exceptions.RequestException as err:
+            logger.error(f"Error getting request: {err}")
+            await asyncio.sleep(3)
+            continue
+        if r.ok:
+            if int(r.headers['RateLimit-Remaining']) > 60:
+                ratelimitmultiplier = 1
+                ratelimitwait = 0.25
+            else:
+                if int(r.headers['RateLimit-Remaining']) < 60: # We making too many requests, slow it down
+                    ratelimitmultiplier = 1.5
+                    ratelimitwait = 0.70
+                if int(r.headers['RateLimit-Remaining']) < 30: # We making too many requests, slow it down
+                    ratelimitmultiplier = 2
+                    ratelimitwait = 1.25
+                if int(r.headers['RateLimit-Remaining']) < 10: # We making too many requests, slow it down
+                    ratelimitmultiplier = 4
+                    ratelimitwait = 3
+            return r
+        else:
+            logger.error("Error making request.")
+            await asyncio.sleep(3)
+            continue
     
 
 
-def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
+async def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
         ('week', 60*60*24*7),
         ('day', 60*60*24),
@@ -147,7 +153,7 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
     
     try:
-        logger.debug(f"Embed: {embed.to_dict()}")
+        logger.info(f"Embed: {embed.to_dict()}")
         await channelForMessages.send(embed=embed)
     except discord.DiscordException as err:
         logger.error(f"Error sending message: {err}")
@@ -162,17 +168,14 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
                 logger.error(f"Error sending ping: {err}")
 
 async def getTerrData(untainteddata, untainteddataOLD):
-    while True:
-        r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
-        await asyncio.sleep(ratelimitwait)
-        #print("status", r.status_code)
-
-        if not (r is None):
-            stringdata = str(r.json())
-            if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
-                untainteddataOLD = untainteddata
-            untainteddata = r.json()
-            return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
+    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
+    await asyncio.sleep(ratelimitwait)
+    #print("status", r.status_code)
+    stringdata = str(r.json())
+    if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
+        untainteddataOLD = untainteddata
+    untainteddata = r.json()
+    return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
 
 async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butitchangestho, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran):
     returnData = await getTerrData(untainteddata_butitchangestho, untainteddataOLD_butitchangestho) # gets untainteddataOLD with info
@@ -203,7 +206,7 @@ async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butit
             opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix] -= 1
-            await sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, channelForMessages, intervalForPing)
+            await sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, await human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, channelForMessages, intervalForPing)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories: # checks if its empty, no need to run if it is
         for i in gainedTerritories:
@@ -216,23 +219,12 @@ async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butit
             opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix]+=1
-            await sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, channelForMessages, intervalForPing)
+            await sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, await human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, channelForMessages, intervalForPing)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories or lostTerritories: # just for resetting our variables
         hasbeenran[guildPrefix] = False
     else:
         hasbeenran[guildPrefix] = True
-
-def split_message(message, limit=2000): # chatgpt is #thegoat but i will be pissed when it takes my job
-    parts = []
-    while len(message) > limit:
-        split_pos = message.rfind('\n', 0, limit)
-        if split_pos == -1:
-            split_pos = limit
-        parts.append(message[:split_pos])
-        message = message[split_pos:].lstrip()
-    parts.append(message)
-    return parts     
 
 async def printTop3(list, word, word2):
     output = ""

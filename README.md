@@ -51,7 +51,7 @@ $ git clone https://github.com/badpinghere/dernal
 $ cd dernal
 
 # Install dependencies
-$ pip install requirements.txt
+$ pip install -r requirements.txt
 
 # Add your bot token to client.run('Bot Token Here')
 $ nano dernal.py
@@ -72,7 +72,7 @@ $ git clone https://github.com/badpinghere/dernal
 $ cd dernal
 
 # Install dependencies
-$ pip install requirements_legacy.txt
+$ pip install -r requirements_legacy.txt
 
 # Rename and edit config_template.ini
 $ mv config_template.ini config.ini
