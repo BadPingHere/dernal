@@ -92,7 +92,7 @@ async def human_time_duration(seconds): # thanks guy from github https://gist.gi
     return ' '.join(parts)
 
 async def findAttackingMembers(attacker):
-    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/prefix/"+str(attacker))
+    r = await makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker))
     await asyncio.sleep(ratelimitwait)
     if r is None:
         return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
@@ -109,7 +109,7 @@ async def findAttackingMembers(attacker):
                     onlineMembers.append([member['uuid'], member['server']])
     #logger.info(f"Online Members: {onlineMembers}")
     for i in onlineMembers:
-        r = await makeRequest("https://beta-api.wynncraft.com/v3/player/"+str(i[0]))
+        r = await makeRequest("https://api.wynncraft.com/v3/player/"+str(i[0]))
         json = r.json()
         if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
             warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
@@ -168,7 +168,7 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
                 logger.error(f"Error sending ping: {err}")
 
 async def getTerrData(untainteddata, untainteddataOLD):
-    r = await makeRequest("https://beta-api.wynncraft.com/v3/guild/list/territory")
+    r = await makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
     await asyncio.sleep(ratelimitwait)
     #print("status", r.status_code)
     stringdata = str(r.json())
@@ -340,9 +340,9 @@ async def guild(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - guildLookupCooldown} seconds.", ephemeral=True)
     
     if len(name) >= 5: # this is checking if its a name
-        URL = "https://beta-api.wynncraft.com/v3/guild/"+str(name)
+        URL = "https://api.wynncraft.com/v3/guild/"+str(name)
     else:
-        URL = "https://beta-api.wynncraft.com/v3/guild/prefix/"+str(name)
+        URL = "https://api.wynncraft.com/v3/guild/prefix/"+str(name)
     
     r = await makeRequest(URL)
     await asyncio.sleep(ratelimitwait)
