@@ -39,7 +39,7 @@ To use this discord bot, you need to either pick the legacy, webhook version, or
 
 #### Discord bot
 
-If you trust the hosting to us, you can simply invite the bot [here](https://discord.com/oauth2/authorize?client_id=1270960638382051368), but you can always host the bot yourself. For those inclined to follow hosting, I give no guarantee to reliability, but in terms of safety, this bot has very barebones permissions, only allowing it to read all channels and send messages, along with reactions for future updates. You can always tweak these to your needs, as the only _truly_ required permission is slash commands and sending messages.
+We will not be hosting the bot for other guilds, meaning we cannot simply give out bot invite links. This is due to the api limits of wynncraft being 120 requests per minute, and having multiple servers using the same ip for requests means servers would have to allocated to 10 requests per minute, which would not be enough. In the event that the api changes, and we can do more than 120 requests per minute, we will host the bot for everyone, but until then, you will need to host the bot yourself
 
 To clone and run this discord bot, you'll need [Git](https://git-scm.com), [Python](https://www.python.org/downloads/) and [Pip](https://nodejs.org/en/download/) installed on your computer. From your command line:
 
