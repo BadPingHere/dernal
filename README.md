@@ -29,6 +29,8 @@ This is a quite versitile discord bot, with a few commands, like:
   - Owner, Online players, and guild level
   - Current territory count and war count
   - Top Season rankings and top contributing members
+- **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
+  - Based on what your guild owns, or can be switched for the best hq in the whole map.
 
 > [!NOTE]  
 > If you want a role to be pinged with detector, due to it's locked down nature, you either have to allow that role to be pinged by everyone, or give the bot permissions to ping every role, including @everyone and @here. If you are self hosting, or trust our hosting, do the latter. If you dont trust our hosting do the former.
@@ -92,6 +94,7 @@ This software was inspired by:
 
 - BoxFot
 - [Nori](https://nori.fish)
+- [Wynncraft-Territory-Info](https://github.com/jakematt123/Wynncraft-Territory-Info)
 
 ## License
 

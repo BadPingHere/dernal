@@ -8,6 +8,7 @@ import logging.handlers
 from discord import app_commands
 from discord.ext import tasks
 from collections import Counter
+import json
 
 logger = logging.getLogger('discord')
 logger.setLevel(logging.INFO)
@@ -49,6 +50,10 @@ async def makeRequest(URL): # the world is built on nested if else statements.
             r = session.get(URL)
             r.raise_for_status()
         except requests.exceptions.RequestException as err:
+            if r.status_code == 404: # dont repeat 404's cause they wont be there.
+                logger.error("404 not found i guess.")
+                await asyncio.sleep(3)
+                return r
             logger.error(f"Error getting request: {err}")
             await asyncio.sleep(3)
             continue
@@ -72,8 +77,6 @@ async def makeRequest(URL): # the world is built on nested if else statements.
             await asyncio.sleep(3)
             continue
     
-
-
 async def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
         ('week', 60*60*24*7),
@@ -134,8 +137,6 @@ async def findAttackingMembers(attacker):
     #logger.info(f"Attacking Members: {attackingMembers}")
     return attackingMembers
         
-    
-
 async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, channelForMessages, intervalForPing):
     global timesinceping
     if guildPrefix not in timesinceping:
@@ -145,9 +146,10 @@ async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerr
         attackingMembers = await findAttackingMembers(attacker)
         world = attackingMembers[0][1]
         username = [item[0] for item in attackingMembers]
+    description = "### 🟢 **Gained Territory!**" if attacker == guildPrefix else "### 🔴 **Lost Territory!**"
+    description += f"\n\n**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}." + ("" if attacker == guildPrefix else f"\n{world}: **{'**, **'.join(username)}**")
     embed = discord.Embed(
-        title="🟢 **Gained Territory!**" if attacker == guildPrefix else "🔴 **Lost Territory!**",
-            description=f"**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}." + ("" if attacker == guildPrefix else f"\n{world}: **{'**, **'.join(username)}**"),
+        description=description,
         color=0x00FF00 if attacker == guildPrefix else 0xFF0000  # Green for gain, red for loss
     )
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
@@ -260,9 +262,9 @@ async def guildLookup(guildPrefixorName, r):
     formattedcontributingList = [[f"{x:,}", y] for x, y in contributingList]
 
     embed = discord.Embed(
-        title=f"{'🐝 **Fruman Bee (FUB)** 🐝' if jsonData['prefix'] == 'FUB' else '**'+jsonData['name']+' ('+jsonData['prefix']+')**'}",
         description=f"""
-        Owned By: **{list(jsonData["members"]["owner"].keys())[0]}**
+        {"## "+'🐝 **Fruman Bee (FUB)** 🐝' if jsonData['prefix'] == 'FUB' else '**'+jsonData['name']+' ('+jsonData['prefix']+')**'}
+        \n‎\nOwned By: **{list(jsonData["members"]["owner"].keys())[0]}**
         Online: **{online_count}**/**{jsonData["members"]["total"]}**
         Guild Level: **{jsonData["level"]}** (**{jsonData["xpPercent"]}**% until {int(jsonData["level"])+1})\n
         Territory Count: **{jsonData["territories"]}**
@@ -278,6 +280,60 @@ async def guildLookup(guildPrefixorName, r):
     logger.info(f"Print for {guildPrefixorName} was a success!")
     return(embed)
 
+async def getTerritoryNames(untainteddata, guildPrefix):
+    with open('territories.json') as a:
+        territoryData = json.load(a)
+
+    ownedTerritories = {}
+    if guildPrefix == None: # they want all territories
+        ownedTerritories = territoryData
+    else:
+        for territory, data in untainteddata.items():
+            ownerOfTerritory = data['guild']['prefix']
+            if ownerOfTerritory is None: # sometimes shit be null idk
+                ownerOfTerritory = "qwdiqwidjqwiodjqiodj" # garbage code btw
+            if ownerOfTerritory == guildPrefix: # if the guild owns it, add to the dict
+                ownedTerritories[territory] = data
+    scorelist = {}
+    for hqCandidate in ownedTerritories:
+        connections = []
+        externals = []
+        for territories in list(territoryData[hqCandidate]["Trading Routes"]):
+            if territories in ownedTerritories:
+                connections.append(territories)
+                externals.append(territories)
+        lookedAt = set(externals)
+
+        for _ in range(2): #run twice, first run is conns
+            newExternals = []  # Temporary list to store new connections
+            for territory in externals:
+                for newConnections in territoryData[territory]["Trading Routes"]:
+                    if newConnections in lookedAt or newConnections == hqCandidate or newConnections not in ownedTerritories: # skips if its hq canidate or is already in list, also if its owned by us
+                        continue
+                    newExternals.append(newConnections)
+                    lookedAt.add(newConnections)
+            externals.extend(newExternals)
+
+        score = int((1 + (len(connections) * 0.30))*(1.5 + (len(externals)  * 0.25))*100)
+        scorelist[hqCandidate] = int(score)
+        externals = []
+    scorelist = dict(reversed(sorted(scorelist.items(), key=lambda item: item[1]))) # sorts on top
+    
+    description = "## Best HQ Location:\n‎\n"
+    for i, (location, score) in enumerate(scorelist.items()):
+        if i >= 5:  # max 5 entries
+            break
+        description += f"{i + 1}. **{location}**: {score}%\n"
+    description += "\n-# Note: HQ calculations are purely based on headquarter\n-# strength, not importance of territories or queue times."
+    
+    embed = discord.Embed(
+        #title="# Best HQ location",
+        description=description,
+        color=0x3457D5,
+        )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else "NONE!!"}.")
+    return (embed)
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -316,7 +372,7 @@ async def backgroundDetector():
                 expectedterrcount[guildPrefix] = returnData["stringdata"].count(guildPrefix)
                 untainteddata = returnData["untainteddata"]
                 untainteddataOLD = returnData["untainteddataOLD"]
-                #logger.info(f"returnData[untainteddata]: {untainteddata}")
+                #logger.info(f"guildPrefix: {guildPrefix}")
                 hasbeenran[guildPrefix] = True
             #logger.info(f"guildPrefix: {guildPrefix}")
             #logger.info(f"expectedterrcount: {expectedterrcount[guildPrefix]}")
@@ -350,6 +406,17 @@ async def guild(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(embed=await guildLookup(name, r))
     else:
         await interaction.response.send_message(f"'{name}' is a unknown prefix or guild name.", ephemeral=True)
+
+@client.tree.command(description="Outputs the top hq locations.")
+@app_commands.describe(
+    guild='Prefix of the guild Ex: TAq, ICo.',
+)
+async def hq(interaction: discord.Interaction, guild: Optional[str]):
+    URL = "https://api.wynncraft.com/v3/guild/list/territory"
+    r = await makeRequest(URL)  # request should always be good because it's handled by makeRequest
+    await asyncio.sleep(ratelimitwait)
+    untainteddata = r.json()
+    await interaction.response.send_message(embed=await getTerritoryNames(untainteddata, guild if guild else None))
 
 class detectorClass(discord.app_commands.Group):
     @discord.app_commands.command(name="remove", description="Remove a guild from being detected.")
