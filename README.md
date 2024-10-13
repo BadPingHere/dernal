@@ -29,6 +29,7 @@ This is a quite versitile discord bot, with a few commands, like:
   - Owner, Online players, and guild level
   - Current territory count and war count
   - Top Season rankings and top contributing members
+  - Inactivity of the members of the guild
 - **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
   - Based on what your guild owns, or can be switched for the best hq in the whole map.
 
@@ -55,8 +56,9 @@ $ cd dernal
 # Install dependencies
 $ pip install -r requirements.txt
 
-# Add your bot token to client.run('Bot Token Here')
-$ nano dernal.py
+# Rename env file and add your bot token
+$ mv .env.example .env
+$ nano .env
 
 # Run the app
 $ python dernal.py
