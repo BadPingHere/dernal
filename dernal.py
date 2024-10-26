@@ -25,7 +25,6 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=None, intents=intents)
 
 # TODO: slash command that shows the territory history of your guild, sum like 'August 9th: 🔴 X was taken by SEQ newline here  🟢 X was taken from SEQ'
-# TODO: store data on all guilds, and like have stats on them (Daily active users, Wars won, etc) available from a slash command 
 
 @bot.event
 async def on_ready():
@@ -41,7 +40,7 @@ async def on_ready():
         guild = discord.Object(id=guild_id) 
         #bot.tree.clear_commands(guild=guild) # this is legit only for one reason. because discord bots suck.
         await bot.tree.sync(guild=guild)
-        print(f"Command Tree is synced to your server with id {os.getenv("SERVER_ID")}!")
+        print(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
 
     print('------')
     logger.info(f"Logged in as {bot.user.name}")

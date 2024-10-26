@@ -6,6 +6,13 @@ import json
 from collections import Counter
 import logging
 import time
+import sqlite3
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib.dates import MinuteLocator, DateFormatter
+from collections import defaultdict, deque
+from datetime import timedelta
+import io
 
 logger = logging.getLogger('discord')
 
@@ -304,9 +311,8 @@ async def getTerritoryNames(untainteddata, guildPrefix):
         color=0x3457D5,
         )
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
-    logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else "NONE!!"}.")
+    logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'NONE!!'}.")
     return (embed)
-
 
 async def lookupUser(memberList):
     inactivityDict = {
@@ -357,3 +363,788 @@ async def lookupGuild(prefix):
             for member, value in jsonData["members"][rank].items(): 
                 memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
     return await lookupUser(memberList)
+
+# because not everything happens in a second.
+async def intvervalGrouping(timestamps):
+    interval_seconds=30
+    groups = deque()
+    for ts in timestamps:
+        if not groups or (ts - groups[-1][0]).total_seconds() > interval_seconds:
+            groups.append([ts])
+        else:
+            groups[-1].append(ts)
+    return groups
+
+async def activityPlaytime(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, ActivityPlaytime")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT member_uuid, timestamp, online
+        FROM member_snapshots
+        WHERE guild_uuid = ?
+        AND timestamp >= datetime('now', '-1 day')
+        ORDER BY timestamp
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None, None
+    
+    hourly_data = defaultdict(list)
+    
+    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
+
+    for group in grouped_snapshots:
+        avg_online = sum(
+            snapshot[2] for snapshot in snapshots 
+            if datetime.fromisoformat(snapshot[1]) in group
+        ) / len(group)
+        midpoint_time = group[0] + (group[-1] - group[0]) / 2
+        hourly_data[midpoint_time].append(avg_online)
+
+    times = sorted(hourly_data.keys())
+    averages = [sum(hourly_data[time]) / len(hourly_data[time]) * 100 for time in times]
+    overall_average = sum(averages) / len(averages) if averages else 0
+
+    # you cannot get me to try and understand what is happening here.
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, averages, 'o-', label='20 Minute Average', color='blue')
+    plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f}%')
+    time_formatter = DateFormatter('%H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    minute_locator = MinuteLocator(byminute=[0, 20, 40])
+    plt.gca().xaxis.set_major_locator(minute_locator)
+    plt.title(f'Playtime Activity - {name}')
+    plt.xlabel('Time (UTC)')
+    plt.ylabel('Players Online (%)')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    # Create Discord file and embed
+    file = discord.File(buf, filename='playtime_graph.png')
+    embed = discord.Embed(
+        title=f"Playtime Analysis for {name}",
+        description=f"Maximum player activity: {max(averages):.2f}%\nMinimum player activity: {min(averages):.2f}%\nAverage player activity: {overall_average:.2f}%",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://playtime_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    buf.close()
+    return file, embed
+
+async def activityXP(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, activityXP")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH RECURSIVE dates(date) AS (
+            SELECT date(datetime('now', '-13 days'))
+            UNION ALL
+            SELECT date(datetime(date, '+1 day'))
+            FROM dates
+            WHERE date < date('now')
+        )
+        SELECT 
+            dates.date,
+            COALESCE(SUM(daily_xp), 0) as total_xp
+        FROM dates
+        LEFT JOIN (
+            SELECT 
+                date(timestamp) as day,
+                MAX(contribution) - MIN(contribution) as daily_xp
+            FROM member_snapshots
+            WHERE guild_uuid = ?
+            AND timestamp >= datetime('now', '-14 days')
+            GROUP BY date(timestamp), member_uuid
+        ) xp_data ON dates.date = xp_data.day
+        GROUP BY dates.date
+        ORDER BY dates.date
+    """, (guild_uuid,))
+    
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    dates = []
+    xp_values = []
+    for date_str, xp in snapshots:
+        dates.append(datetime.strptime(date_str, '%Y-%m-%d'))
+        xp_values.append(xp)
+
+    total_xp = sum(xp_values)
+    avg_daily_xp = total_xp / len(dates) if dates else 0
+    max_daily_xp = max(xp_values) if xp_values else 0
+    min_daily_xp = min(xp_values) if xp_values else 0
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(dates, xp_values, width=0.8, color='blue', alpha=0.6)
+    plt.axhline(y=avg_daily_xp, color='r', linestyle='--', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
+    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
+    plt.xticks(dates, rotation=45)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
+    plt.title(f'Daily Guild XP Contribution - {name}')
+    plt.xlabel('Date (UTC)')
+    plt.ylabel('XP Gained')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='xp_graph.png')
+    embed = discord.Embed(
+        title=f"XP Analysis for {name}",
+        description=f"Total XP (14 days): {total_xp:,.0f}\nDaily Average: {avg_daily_xp:,.0f}\nHighest Day: {max_daily_xp:,.0f}\nLowest Day: {min_daily_xp:,.0f}",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://xp_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    conn.close()
+    buf.close()
+    return file, embed
+
+async def activityTerritories(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, activityTerritories")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH RECURSIVE 
+        timepoints AS (
+            SELECT datetime('now', '-3 days') as timepoint
+            UNION ALL
+            SELECT datetime(timepoint, '+15 minutes')
+            FROM timepoints
+            WHERE timepoint < datetime('now')
+        ),
+        snapshots_with_territories AS (
+            SELECT 
+                strftime('%Y-%m-%d %H:%M:00', timestamp) as snap_time,
+                territories
+            FROM guild_snapshots
+            WHERE guild_uuid = ?
+            AND territories IS NOT NULL
+            AND territories > 0
+        )
+        SELECT 
+            timepoints.timepoint,
+            COALESCE(
+                (
+                    SELECT territories
+                    FROM snapshots_with_territories
+                    WHERE snap_time <= timepoints.timepoint
+                    ORDER BY snap_time DESC
+                    LIMIT 1
+                ),
+                0
+            ) as territory_count
+        FROM timepoints
+        ORDER BY timepoint;
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots or all(count == 0 for _, count in snapshots):
+        conn.close()
+        return None, None
+    
+    times = []
+    territory_counts = []
+    for timestamp_str, count in snapshots:
+        try:
+            times.append(datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S'))
+            territory_counts.append(float(count) if count is not None else 0.0)
+        except (ValueError, TypeError) as e: # shouldnt happen, but after the amount of errors i ran from this, idk
+            continue
+
+    if not times or not territory_counts:
+        conn.close()
+        return None, None
+    non_zero_indices = [i for i, count in enumerate(territory_counts) if count > 0]
+    if non_zero_indices:
+        start_idx = non_zero_indices[0]
+        end_idx = non_zero_indices[-1] + 1
+        times = times[start_idx:end_idx]
+        territory_counts = territory_counts[start_idx:end_idx]
+
+    current_territories = territory_counts[-1] if territory_counts else 0
+    max_territories = max(territory_counts) if territory_counts else 0
+    min_territories = min(filter(lambda x: x > 0, territory_counts)) if territory_counts else 0
+    avg_territories = sum(filter(lambda x: x > 0, territory_counts)) / len(list(filter(lambda x: x > 0, territory_counts))) if territory_counts else 0
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, territory_counts, '-', label='Territory Count', color='blue', linewidth=2)
+    plt.axhline(y=avg_territories, color='r', linestyle='--', label=f'Average: {avg_territories:.1f}')
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = max_territories - min_territories
+    min_y = max(0, min_territories - (y_range * 0.1))
+    max_y = max_territories + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'Territory Count History - {name}')
+    plt.xlabel('Date (UTC)')
+    plt.ylabel('Number of Territories')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.margins(x=0.02)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='territory_graph.png')
+    embed = discord.Embed(
+        title=f"Territory Analysis for {name}",
+        description=f"Current territories: {current_territories:.0f}\nMaximum territories: {max_territories:.0f}\nMinimum territories: {min_territories:.0f}\nAverage territories: {avg_territories:.0f}",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://territory_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+
+    buf.close()
+    conn.close()
+    return file, embed
+
+async def activityWars(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, activityWars")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH RECURSIVE 
+        timepoints AS (
+            SELECT datetime('now', '-3 days') as timepoint
+            UNION ALL
+            SELECT datetime(timepoint, '+15 minutes')
+            FROM timepoints
+            WHERE timepoint < datetime('now')
+        ),
+        snapshots_with_wars AS (
+            SELECT 
+                strftime('%Y-%m-%d %H:%M:00', timestamp) as snap_time,
+                wars
+            FROM guild_snapshots
+            WHERE guild_uuid = ?
+            AND wars IS NOT NULL
+            AND wars > 0
+        )
+        SELECT 
+            timepoints.timepoint,
+            COALESCE(
+                (
+                    SELECT wars
+                    FROM snapshots_with_wars
+                    WHERE snap_time <= timepoints.timepoint
+                    ORDER BY snap_time DESC
+                    LIMIT 1
+                ),
+                0
+            ) as wars_count
+        FROM timepoints
+        ORDER BY timepoint;
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots or all(count == 0 for _, count in snapshots):
+        conn.close()
+        return None, None
+    
+    times = []
+    war_counts = []
+    for timestamp_str, count in snapshots:
+        try:
+            times.append(datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S'))
+            war_counts.append(float(count) if count is not None else 0.0)
+        except (ValueError, TypeError) as e: # shouldnt happen, but after the amount of errors i ran from this, idk
+            continue
+
+    if not times or not war_counts:
+        conn.close()
+        return None, None
+    non_zero_indices = [i for i, count in enumerate(war_counts) if count > 0]
+    if non_zero_indices:
+        start_idx = non_zero_indices[0]
+        end_idx = non_zero_indices[-1] + 1
+        times = times[start_idx:end_idx]
+        war_counts = war_counts[start_idx:end_idx]
+
+    current_war = war_counts[-1] if war_counts else 0
+    max_war = max(war_counts) if war_counts else 0
+    min_war = min(filter(lambda x: x > 0, war_counts)) if war_counts else 0
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, war_counts, '-', label='War Count', color='blue', linewidth=2)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = max_war - min_war
+    min_y = max(0, min_war - (y_range * 0.1))
+    max_y = max_war + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'War History - {name}')
+    plt.xlabel('Date (UTC)')
+    plt.ylabel('Number of Wars')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.margins(x=0.02)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='wars_graph.png')
+    embed = discord.Embed(
+        title=f"Warring Analysis for {name}",
+        description=f"Current war count: {current_war:.0f}",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://wars_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+
+    buf.close()
+    conn.close()
+    return file, embed
+
+async def activityOnlineMembers(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, activityOnlineMembers")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT member_uuid, timestamp, online
+        FROM member_snapshots
+        WHERE guild_uuid = ?
+        AND timestamp >= datetime('now', '-1 day')
+        ORDER BY timestamp
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    
+    if not snapshots:
+        conn.close()
+        return None, None
+    
+    hourly_data = defaultdict(list)
+    
+    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
+
+    for group in grouped_snapshots:
+        total_online = sum(snapshot[2] for snapshot in snapshots if datetime.fromisoformat(snapshot[1]) in group)
+        hourly_data[group[0]].append(total_online)
+    times = sorted(hourly_data.keys())
+    raw_numbers = [sum(hourly_data[time]) for time in times]
+    overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, raw_numbers, 'o-', label='20 Minute Average', color='blue')
+    plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f} players')
+    time_formatter = DateFormatter('%H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    minute_locator = MinuteLocator(byminute=[0, 20, 40])
+    plt.gca().xaxis.set_major_locator(minute_locator)
+    plt.title(f'Online Members - {name}')
+    plt.xlabel('Time (UTC)')
+    plt.ylabel('Players Online')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='playtime_graph.png')
+    embed = discord.Embed(
+        title=f"Online Members for {name}",
+        description=(
+            f"Maximum players online: {max(raw_numbers):.0f}\n"
+            f"Minimum players online: {min(raw_numbers):.0f}\n"
+            f"Average players online: {overall_average:.1f}"
+        ),
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://playtime_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    conn.close()
+    buf.close()
+    
+    return file, embed
+
+async def activityTotalMembers(guild_uuid, name):
+    logger.info(f"guild_uuid: {guild_uuid}, activityTotalMembers")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT timestamp, total_members
+        FROM guild_snapshots
+        WHERE guild_uuid = ?
+        AND timestamp >= datetime('now', '-1 day')
+        ORDER BY timestamp
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None, None
+    
+    hourly_data = defaultdict(list)
+    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[0]) for snapshot in snapshots])
+    for group in grouped_snapshots:
+        total_members = sum(snapshot[1] for snapshot in snapshots if datetime.fromisoformat(snapshot[0]) in group)
+        hourly_data[group[0]].append(total_members)
+
+    times = sorted(hourly_data.keys())
+    total_numbers = [sum(hourly_data[time]) for time in times] 
+    overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, total_numbers, 'o-', label='20 Minute Total Members', color='blue')
+    plt.axhline(y=overall_total, color='r', linestyle='--', label=f'24hr Average: {overall_total:.1f} members')
+    time_formatter = DateFormatter('%H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    minute_locator = MinuteLocator(byminute=[0, 20, 40])
+    plt.gca().xaxis.set_major_locator(minute_locator)
+    plt.title(f'Total Members Activity - {name}')
+    plt.xlabel('Time (UTC)')
+    plt.ylabel('Total Members')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='total_members_graph.png')
+    embed = discord.Embed(
+        title=f"Total Members Analysis for {name}",
+        description=(
+            f"Maximum total members: {max(total_numbers):.0f}\n"
+            f"Minimum total members: {min(total_numbers):.0f}\n"
+            f"Average total members: {overall_total:.0f}"
+        ),
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://total_members_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    conn.close()
+    buf.close()
+    return file, embed
+
+async def leaderboardOnlineMembers():
+    logger.info(f"leaderboardOnlineMembers")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    WITH avg_online_members AS (
+        SELECT 
+            g.name as guild_name,
+            g.prefix as guild_prefix,
+            g.uuid as guild_uuid,
+            ROUND(AVG(gs.online_members), 2) as avg_online_members,
+            COUNT(gs.id) as snapshot_count
+        FROM guilds g
+        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+        GROUP BY g.uuid, g.name, g.prefix
+        HAVING snapshot_count > 0
+    )
+    SELECT 
+        CASE 
+            WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
+            ELSE guild_name 
+        END as guild_display_name,
+        avg_online_members,
+        snapshot_count
+    FROM avg_online_members
+    ORDER BY avg_online_members DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    counter = 0
+    max_guild_length = max(len(guild) for guild, _, _ in snapshots)
+    header = "```\n{:<3} {:<{guild_width}} {:<15}\n".format("#", "Guild", "Average Online", guild_width=max_guild_length)
+    separator = "-" * (max_guild_length + 20) + "\n"
+
+    description = header + separator
+    for counter, (guild, avg_online, _) in enumerate(snapshots, 1):
+        description += "{:<3} {:<{guild_width}} {:<15.2f}\n".format(
+            counter,
+            guild,
+            avg_online,
+            guild_width=max_guild_length
+        )
+    description += "```"
+    embed = discord.Embed(
+        title=f"Average Online Members Leaderboard",
+        description=description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    return embed
+
+async def leaderboardTotalMembers():
+    logger.info(f"leaderboardTotalMembers")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    WITH recent_guild_stats AS (
+        SELECT 
+            g.name as guild_name,
+            g.prefix as guild_prefix,
+            g.uuid as guild_uuid,
+            gs.total_members,
+            gs.online_members,
+            gs.timestamp,
+            ROW_NUMBER() OVER (PARTITION BY g.uuid ORDER BY gs.timestamp DESC) as rn
+        FROM guilds g
+        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+        WHERE gs.timestamp >= datetime('now', '-3 hour')
+    )
+    SELECT 
+        CASE 
+            WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
+            ELSE guild_name 
+        END as guild_display_name,
+        total_members,
+        datetime(timestamp) as last_updated
+    FROM recent_guild_stats
+    WHERE rn = 1
+    AND total_members > 0
+    ORDER BY total_members DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+    
+    counter = 0
+    max_guild_length = max(len(guild) for guild, _, _ in snapshots)
+    header = "```\n{:<3} {:<{guild_width}} {:<15}\n".format("#", "Guild", "Total Members", guild_width=max_guild_length)
+    separator = "-" * (max_guild_length + 20) + "\n"
+
+    description = header + separator
+    for counter, (guild, totalMembers, _) in enumerate(snapshots, 1):
+        description += "{:<3} {:<{guild_width}} {:<15.0f}\n".format(
+            counter,
+            guild,
+            totalMembers,
+            guild_width=max_guild_length
+        )
+    description += "```"
+    embed = discord.Embed(
+        title=f"Total Members Leaderboard",
+        description=description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    return embed
+
+async def leaderboardWars():
+    logger.info(f"leaderboardWars")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+            MAX(gs.wars) as total_wars,
+            RANK() OVER (ORDER BY MAX(gs.wars) DESC) as war_rank
+        FROM guilds g
+        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+        GROUP BY g.uuid, g.name, g.prefix
+        ORDER BY total_wars DESC
+        LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "Wars")
+    separator = "-" * 40 + "\n"
+    leaderboard_description += separator
+    for row in snapshots:
+        guild_name = row[0]
+        total_wars = row[1]
+        rank = row[2]
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, guild_name, total_wars)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Guild Wars Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+async def leaderboardXP():
+    logger.info(f"leaderboardXP")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        WITH time_bounds AS (
+            SELECT 
+                guild_uuid,
+                member_uuid,
+                MIN(timestamp) as min_time,
+                MAX(timestamp) as max_time
+            FROM member_snapshots
+            WHERE timestamp >= datetime('now', '-1 day')
+            GROUP BY guild_uuid, member_uuid
+        ),
+        contribution_changes AS (
+            SELECT 
+                t.guild_uuid,
+                t.member_uuid,
+                COALESCE(
+                    (SELECT contribution 
+                     FROM member_snapshots 
+                     WHERE guild_uuid = t.guild_uuid 
+                     AND member_uuid = t.member_uuid 
+                     AND timestamp = t.max_time
+                    ) -
+                    (SELECT contribution 
+                     FROM member_snapshots 
+                     WHERE guild_uuid = t.guild_uuid 
+                     AND member_uuid = t.member_uuid 
+                     AND timestamp = t.min_time
+                    ), 0
+                ) as xp_gained
+            FROM time_bounds t
+        ),
+        guild_totals AS (
+            SELECT 
+                g.uuid as guild_uuid,
+                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+                SUM(c.xp_gained) as xp_gained
+            FROM contribution_changes c
+            JOIN guilds g ON g.uuid = c.guild_uuid
+            GROUP BY g.uuid, g.name, g.prefix
+            HAVING SUM(c.xp_gained) > 0
+        )
+        SELECT
+            guild_name,
+            xp_gained,
+            RANK() OVER (ORDER BY xp_gained DESC) as rank
+        FROM guild_totals
+        ORDER BY xp_gained DESC
+        LIMIT 10;
+    """)
+    
+    snapshot = cursor.fetchall()
+    if not snapshot:
+        conn.close()
+        return None
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "XP Gained")
+    separator = "-" * 40 + "\n"
+    leaderboard_description += separator
+    for row in snapshot:
+        guild_name = row[0]
+        xp_gained = row[1]
+        rank = row[2]
+        leaderboard_description += "{:<3} {:<25} {:<10,d}\n".format(rank, guild_name, xp_gained)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Guild XP Gained Leaderboard (Last 24 Hours)",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+async def leaderboardPlaytime():
+    logger.info(f"leaderboardPlaytime")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        WITH time_grouped_data AS (
+            SELECT 
+                g.uuid as guild_uuid,
+                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+                ms.timestamp,
+                ms.online,
+                datetime(
+                    strftime('%Y-%m-%d %H:', timestamp) || 
+                    (cast(strftime('%M', timestamp) / 5 as int) * 5)
+                ) as interval_start
+            FROM guilds g
+            JOIN member_snapshots ms ON g.uuid = ms.guild_uuid
+            WHERE ms.timestamp >= datetime('now', '-1 day')
+        ),
+        interval_averages AS (
+            SELECT 
+                guild_uuid,
+                guild_name,
+                interval_start,
+                AVG(CAST(online AS FLOAT)) * 100 as interval_avg
+            FROM time_grouped_data
+            GROUP BY guild_uuid, guild_name, interval_start
+        ),
+        guild_averages AS (
+            SELECT 
+                guild_name,
+                AVG(interval_avg) as activity_percentage
+            FROM interval_averages
+            GROUP BY guild_name
+            HAVING activity_percentage > 0
+        )
+        SELECT 
+            guild_name,
+            ROUND(activity_percentage, 2) as activity_percentage,
+            RANK() OVER (ORDER BY activity_percentage DESC) as rank
+        FROM guild_averages
+        ORDER BY activity_percentage DESC
+        LIMIT 10;
+    """)
+    results = cursor.fetchall()
+    conn.close()
+    if not results:
+        return None
+        
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "Activity %")
+    leaderboard_description += "-" * 40 + "\n"
+    for guild_data in results:
+        guild_name, activity, rank = guild_data
+        leaderboard_description += "{:<3} {:<25} {:<10.2f}\n".format(
+            rank, guild_name, activity
+        )
+    leaderboard_description += "```"
+    
+
+    embed = discord.Embed(
+        title="Guild Activity Leaderboard (Last 24 Hours)",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    return embed

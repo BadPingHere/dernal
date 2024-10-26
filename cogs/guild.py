@@ -3,7 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 import time
-from lib.utils import makeRequest, guildLookup, lookupGuild
+from lib.utils import makeRequest, guildLookup, lookupGuild, activityPlaytime, activityXP, activityTerritories, activityWars, activityOnlineMembers, activityTotalMembers, leaderboardOnlineMembers, leaderboardTotalMembers, leaderboardWars, leaderboardXP, leaderboardPlaytime
+import sqlite3
+
 
 class InactivityView(View):
     def __init__(self, inactivityDict):
@@ -32,7 +34,8 @@ class InactivityView(View):
         # Retrieve the list of users in the current category
         users = self.inactivityDict[category]
         if users:
-            return "\n".join([f"**{username.replace('_', '\\_')}** - Last online <t:{timestamp}:F>." for username, timestamp in users])
+            backslashChar = "\\" #because linux is awesome!
+            return "\n".join([f"**{username.replace('_', f'{backslashChar}_')}** - Last online <t:{timestamp}:F>." for username, timestamp in users])
         else:
             return "No users found."
 
@@ -54,16 +57,317 @@ class Guild(commands.GroupCog, name="guild"):
         self.bot = bot
         self.guildLookupCooldown = 0
 
-    @app_commands.command(description="Shows overall stats and information about the selected guild")
-    @app_commands.describe(
-        name='Prefix or Name of the guild search Ex: TAq, Calvish.',
-    )
-    async def lookups(self, interaction: discord.Interaction, name: str):
+    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.")
+    
+    @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of players online over the past day.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityPlaytime(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        self.guildLookupCooldown = current_time
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await activityPlaytime(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 24 hours")
+    
+    @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityXP(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+            
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await activityXP(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 14 days")
+    
+    @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has for the past 3 days.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityTerritories(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+            
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+        file, embed = await activityTerritories(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 3 days")
+
+    @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 3 days.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityWars(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+            
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+        file, embed = await activityWars(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 3 days")
+
+    @activityCommands.command(name="total_members", description="Shows a graph displaying the total members a guild has for the past day.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityTotal_members(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        self.guildLookupCooldown = current_time
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await activityTotalMembers(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 24 hours")
+    
+    @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has for the past day.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def activityOnline_members(self, interaction: discord.Interaction, name: str):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        self.guildLookupCooldown = current_time
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        if len(name) <= 4:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                result = cursor.fetchone()
+        else:
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            result = cursor.fetchone()
+            if not result:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                result = cursor.fetchone()
+        
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await activityOnlineMembers(result[0], name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 24 hours")
+    
+    leaderboardCommands = app_commands.Group(name="leaderboard", description="this is never seen, yet discord flips the fuck out if its not here.")
+
+    @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
+    async def leaderboardOnline_members(self, interaction: discord.Interaction):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+        
+        embed = await leaderboardOnlineMembers()
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+    
+    @leaderboardCommands.command(name="total_members", description="Shows a leaderboard of the top 10 guild's total members.")
+    async def leaderboardTotal_members(self, interaction: discord.Interaction):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+        
+        embed = await leaderboardTotalMembers()
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+    
+    @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 10 guild's war amount.")
+    async def leaderboardWars(self, interaction: discord.Interaction):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+        
+        embed = await leaderboardWars()
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+
+    @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.")
+    async def leaderboardXP(self, interaction: discord.Interaction):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+        
+        embed = await leaderboardXP()
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+
+    # This works, but the server im using to host this bot takes way too long to perform this. So uncomment if you want.
+    @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.")
+    async def leaderboardPlaytime(self, interaction: discord.Interaction):
+        current_time = time.time()
+        if int(current_time - self.guildLookupCooldown) <= 10:
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+            return
+        self.guildLookupCooldown = current_time
+        await interaction.response.defer()
+        
+        embed = await leaderboardPlaytime()
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+
+    @app_commands.command(description="Shows you to get a quick overview of a guild, like level, online members, etc.")
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    async def overview(self, interaction: discord.Interaction, name: str):
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 5:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
             return
-
+        self.guildLookupCooldown = current_time
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -76,18 +380,15 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
 
-        self.guildLookupCooldown = current_time
-    
+        
     @app_commands.command(description="Shows and sorts the player inactivity of a selected guild")
-    @app_commands.describe(
-        name='Prefix or Name of the guild search Ex: TAq, Calvish.',
-    )
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def inactivity(self, interaction: discord.Interaction, name: str):
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 5:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
             return
-
+        self.guildLookupCooldown = current_time
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -106,7 +407,6 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(embed=embed, view=view)
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
-        self.guildLookupCooldown = current_time
-
+        
 async def setup(bot):
     await bot.add_cog(Guild(bot))

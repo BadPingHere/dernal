@@ -3,3 +3,6 @@
 development/
 __pycache__
 config.ini
+guild_activity.db
+guild_activity.db-shm
+guild_activity.db-wal

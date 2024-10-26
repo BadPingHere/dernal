@@ -22,19 +22,30 @@ This is a quite versitile discord bot, with a few commands, like:
   - When and who takes your territory, at what time, and how long it lasted
   - When you take someone eles's territory, how long it lasted, and who it was taken from.
   - A somewhat accurate list of attacking members, and what world they were on.
-  - Pings for when you lose a territory, and a customizable cooldown
+  - Pings for when you lose a territory, and a customizable cooldown.
   - Compatability with running with multiple guilds at once.
   - A command which auto-fills what you are detecting, and allows you to remove it.
-- **Guild Lookup**, a self explanatory command that allows you to have information about a guild, including:
-  - Owner, Online players, and guild level
-  - Current territory count and war count
-  - Top Season rankings and top contributing members
-  - Inactivity of the members of the guild
+- **Guild Commands**, a very expansive amount of commands, like:
+  - Overview: Allows you to get a quick overview of a guild, like level, online members, etc.
+  - Inactivity: A command which shows you the last login date of every single user, and organizes them in pages.
+  - Activity online_members: Shows a graph displaying the average amount of online members a guild has for the past day.
+  - Activity territories: Shows a graph displaying the amount of territories a guild has for the past 3 days.
+  - Activity total_members: Shows a graph displaying the total members a guild has for the past day.
+  - Activity wars: Shows a graph displaying the total amount of wars a guild has done over the past 3 days.
+  - Activity playtime: Shows the graph displaying the average amount of players online over the past day.
+  - Activity xp: Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.
+  - Leaderboard xp: Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.
+  - Leaderboard wars: Shows a leaderboard of the top 10 guild's war amount.
+  - Leaderboard online_members: Shows a leaderboard of the top 10 guild's average amount of online players.
+  - Leaderboard playtime: Shows a leaderboard of the top 10 guild's playtime percentage.
+  - Leaderboard total_members: Shows a leaderboard of the top 10 guild's total members.
 - **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
   - Based on what your guild owns, or can be switched for the best hq in the whole map.
+- **Overview**, a command that shows stats like:
+  - Owner, Online, Total members, Wars and territory count, Top Season Ratings and Top Contributing Members.
 
 > [!NOTE]  
-> If you want a role to be pinged with detector, due to it's locked down nature, you either have to allow that role to be pinged by everyone, or give the bot permissions to ping every role, including @everyone and @here. If you are self hosting, or trust our hosting, do the latter. If you dont trust our hosting do the former.
+> If you want a role to be pinged with detector, due to it's locked down nature, you either have to allow that role to be pinged by everyone, or give the bot permissions to ping every role, including @everyone and @here. If you are self hosting, or trust our hosting, do the latter. If you dont trust our hosting do the former. To add, for any /guild activity and /guild leaderboard commands, you will need generateActivitySQL.py creating the database for it. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
 
 ## How To Use
 
@@ -61,7 +72,7 @@ $ mv .env.example .env
 $ nano .env
 
 # Run the app
-$ python dernal.py
+$ python3 dernal.py
 ```
 
 #### Webhook Script

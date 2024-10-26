@@ -77,8 +77,8 @@ class Detector(commands.GroupCog, name="detector"):
             if role and interval:
                 message += f' Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.'
             success = True
-        elif len(self.guildsBeingTracked) > 15:
-            message = f'You have too many guilds being tracked with Detector! The maximum limit you can have is 15. You can remove tracked guilds with /detector remove.'
+        elif len(self.guildsBeingTracked) > 10:
+            message = f'You have too many guilds being tracked with Detector! The maximum limit you can have is 10. You can remove tracked guilds with /detector remove.'
         else:
             if role and interval:
                 message = f'<#{channel.id}> now set! Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.'
