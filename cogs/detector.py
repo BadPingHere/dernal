@@ -3,9 +3,12 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from typing import Optional, Union
 import logging
+import os
+from dotenv import load_dotenv
 from lib.utils import checkterritories, getTerrData
 
 logger = logging.getLogger('discord')
+load_dotenv()
 
 class Detector(commands.GroupCog, name="detector"):
     def __init__(self, bot):
@@ -16,7 +19,12 @@ class Detector(commands.GroupCog, name="detector"):
         self.expectedterrcount = {}
         self.untainteddata = {}
         self.untainteddataOLD = {}
+        self.roleID = int(os.getenv("ROLE_ID"))
         self.backgroundDetector.start()
+
+    def check_permissions(self, interaction: discord.Interaction) -> bool:
+        member = interaction.user
+        return any(role.id == self.roleID for role in member.roles)
 
     @tasks.loop(seconds=20)
     async def backgroundDetector(self):
@@ -39,6 +47,10 @@ class Detector(commands.GroupCog, name="detector"):
 
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):
+        if not self.check_permissions(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
+        
         if prefix in self.guildsBeingTracked:
             del self.guildsBeingTracked[prefix]
             await interaction.response.send_message(f"{prefix} is no longer being detected.")
@@ -47,6 +59,9 @@ class Detector(commands.GroupCog, name="detector"):
 
     @remove.autocomplete('prefix')
     async def autocomplete_remove(self, interaction: discord.Interaction, current: str):
+        if not self.check_permissions(interaction):
+            return []
+        
         choices = []
         for key, value in self.guildsBeingTracked.items():
             if current.lower() in key.lower():
@@ -69,6 +84,9 @@ class Detector(commands.GroupCog, name="detector"):
         interval='The cooldown on the pings in minutes (optional)',
     )
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
+        if not self.check_permissions(interaction):
+            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+            return
         message = f'<#{channel.id}> now set! No role will be pinged when territory is lost.'
         success = False
 

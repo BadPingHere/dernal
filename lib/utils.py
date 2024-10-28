@@ -9,7 +9,7 @@ import time
 import sqlite3
 from datetime import datetime
 import matplotlib.pyplot as plt
-from matplotlib.dates import MinuteLocator, DateFormatter
+from matplotlib.dates import HourLocator, DateFormatter
 from collections import defaultdict, deque
 from datetime import timedelta
 import io
@@ -414,8 +414,8 @@ async def activityPlaytime(guild_uuid, name):
     plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f}%')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
-    minute_locator = MinuteLocator(byminute=[0, 20, 40])
-    plt.gca().xaxis.set_major_locator(minute_locator)
+    hour_locator = HourLocator()
+    plt.gca().xaxis.set_major_locator(hour_locator)
     plt.title(f'Playtime Activity - {name}')
     plt.xlabel('Time (UTC)')
     plt.ylabel('Players Online (%)')
@@ -755,8 +755,8 @@ async def activityOnlineMembers(guild_uuid, name):
     plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f} players')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
-    minute_locator = MinuteLocator(byminute=[0, 20, 40])
-    plt.gca().xaxis.set_major_locator(minute_locator)
+    hour_locator = HourLocator()
+    plt.gca().xaxis.set_major_locator(hour_locator)
     plt.title(f'Online Members - {name}')
     plt.xlabel('Time (UTC)')
     plt.ylabel('Players Online')
@@ -819,8 +819,8 @@ async def activityTotalMembers(guild_uuid, name):
     plt.axhline(y=overall_total, color='r', linestyle='--', label=f'24hr Average: {overall_total:.1f} members')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
-    minute_locator = MinuteLocator(byminute=[0, 20, 40])
-    plt.gca().xaxis.set_major_locator(minute_locator)
+    hour_locator = HourLocator()
+    plt.gca().xaxis.set_major_locator(hour_locator)
     plt.title(f'Total Members Activity - {name}')
     plt.xlabel('Time (UTC)')
     plt.ylabel('Total Members')
