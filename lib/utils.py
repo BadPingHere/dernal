@@ -428,7 +428,6 @@ async def activityPlaytime(guild_uuid, name):
     buf.seek(0)
     plt.close()
 
-    # Create Discord file and embed
     file = discord.File(buf, filename='playtime_graph.png')
     embed = discord.Embed(
         title=f"Playtime Analysis for {name}",
