@@ -5,8 +5,9 @@ from discord.ui import View, Button
 import time
 from lib.utils import makeRequest, guildLookup, lookupGuild, activityPlaytime, activityXP, activityTerritories, activityWars, activityOnlineMembers, activityTotalMembers, leaderboardOnlineMembers, leaderboardTotalMembers, leaderboardWars, leaderboardXP, leaderboardPlaytime
 import sqlite3
+import logging
 
-
+logger = logging.getLogger('discord')
 class InactivityView(View):
     def __init__(self, inactivityDict):
         super().__init__(timeout=None)
@@ -62,6 +63,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of players online over the past day.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -99,6 +101,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityXP(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -137,6 +140,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has for the past 3 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityTerritories(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -174,6 +178,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 3 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityWars(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -211,6 +216,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="total_members", description="Shows a graph displaying the total members a guild has for the past day.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityTotal_members(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -248,6 +254,7 @@ class Guild(commands.GroupCog, name="guild"):
     @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has for the past day.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityOnline_members(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -286,6 +293,7 @@ class Guild(commands.GroupCog, name="guild"):
 
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
     async def leaderboardOnline_members(self, interaction: discord.Interaction):
+        logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -301,6 +309,7 @@ class Guild(commands.GroupCog, name="guild"):
     
     @leaderboardCommands.command(name="total_members", description="Shows a leaderboard of the top 10 guild's total members.")
     async def leaderboardTotal_members(self, interaction: discord.Interaction):
+        logger.info(f"Command /guild leaderboard total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -316,6 +325,7 @@ class Guild(commands.GroupCog, name="guild"):
     
     @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 10 guild's war amount.")
     async def leaderboardWars(self, interaction: discord.Interaction):
+        logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -331,6 +341,7 @@ class Guild(commands.GroupCog, name="guild"):
 
     @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.")
     async def leaderboardXP(self, interaction: discord.Interaction):
+        logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -347,6 +358,7 @@ class Guild(commands.GroupCog, name="guild"):
     # This works, but the server im using to host this bot takes way too long to perform this. So uncomment if you want.
     @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.")
     async def leaderboardPlaytime(self, interaction: discord.Interaction):
+        logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -363,6 +375,7 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.command(description="Shows you to get a quick overview of a guild, like level, online members, etc.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def overview(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild overview was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 5:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
@@ -379,11 +392,11 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
-
-        
+  
     @app_commands.command(description="Shows and sorts the player inactivity of a selected guild")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def inactivity(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 5:
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)

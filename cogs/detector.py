@@ -47,6 +47,7 @@ class Detector(commands.GroupCog, name="detector"):
 
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):
+        logger.info(f"Command /detector remove was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter prefix is: {prefix}.")
         if not self.check_permissions(interaction):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return
@@ -84,6 +85,7 @@ class Detector(commands.GroupCog, name="detector"):
         interval='The cooldown on the pings in minutes (optional)',
     )
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
+        logger.info(f"Command /detector add was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter channel is: {channel}, guild_prefix is {guild_prefix}, role is {role}, interval is {interval}.")
         if not self.check_permissions(interaction):
             await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
             return

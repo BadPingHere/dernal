@@ -31,10 +31,10 @@ async def makeRequest(URL): # the world is built on nested if else statements.
             r.raise_for_status()
         except requests.exceptions.RequestException as err:
             if r.status_code == 404: # dont repeat 404's cause they wont be there.
-                logger.error("404 not found i guess.")
+                logger.error(f"{URL} returned 404: {err}")
                 await asyncio.sleep(3)
                 return r
-            logger.error(f"Error getting request: {err}")
+            logger.error(f"Error getting {URL}: {err}")
             await asyncio.sleep(3)
             continue
         if r.ok:
@@ -43,17 +43,20 @@ async def makeRequest(URL): # the world is built on nested if else statements.
                 ratelimitwait = 0.25
             else:
                 if int(r.headers['RateLimit-Remaining']) < 60: # We making too many requests, slow it down
+                    logger.info(f"Ratelimit-Remaining is under 60.")
                     ratelimitmultiplier = 1.5
                     ratelimitwait = 0.70
                 if int(r.headers['RateLimit-Remaining']) < 30: # We making too many requests, slow it down
+                    logger.info(f"Ratelimit-Remaining is under 30.")
                     ratelimitmultiplier = 2
                     ratelimitwait = 1.25
                 if int(r.headers['RateLimit-Remaining']) < 10: # We making too many requests, slow it down
+                    logger.info(f"Ratelimit-Remaining is under 10.")
                     ratelimitmultiplier = 4
                     ratelimitwait = 3
             return r
         else:
-            logger.error("Error making request.")
+            logger.error(f"Error getting {URL}. Status code is {r.status_code}")
             await asyncio.sleep(3)
             continue
     
@@ -78,6 +81,7 @@ async def findAttackingMembers(attacker):
     r = await makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker))
     await asyncio.sleep(ratelimitwait)
     if r is None:
+        logger.error(f"R is None in findAttackingMembers. Here is r: {r}.")
         return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
 
     jsonData = r.json()
@@ -311,7 +315,7 @@ async def getTerritoryNames(untainteddata, guildPrefix):
         color=0x3457D5,
         )
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
-    logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'NONE!!'}.")
+    logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
     return (embed)
 
 async def lookupUser(memberList):
