@@ -45,7 +45,7 @@ This is a quite versitile discord bot, with a few commands, like:
   - Owner, Online, Total members, Wars and territory count, Top Season Ratings and Top Contributing Members.
 
 > [!NOTE]  
-> If you want a role to be pinged with detector, due to it's locked down nature, you either have to allow that role to be pinged by everyone, or give the bot permissions to ping every role, including @everyone and @here. If you are self hosting, or trust our hosting, do the latter. If you dont trust our hosting do the former. To add, for any /guild activity and /guild leaderboard commands, you will need generateActivitySQL.py creating the database for it. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
+> Due to limited API usage, if you intend to use Detector, you must self host the bot. To add, for any /guild activity and /guild leaderboard commands, you will need generateActivitySQL.py creating the database for it. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
 
 ## How To Use
 
@@ -53,7 +53,7 @@ To use this discord bot, you need to either pick the legacy, webhook version, or
 
 #### Discord bot
 
-If you use our hosted bot, you can add it to your server via this [link](https://discord.com/oauth2/authorize?client_id=1270960638382051368), but it will not have the full capabilities due to api ratelimits. If you want to use the full capabilities, you should self host the bot.
+If you use our hosted bot, you can add it to your server via this [link](https://discord.com/oauth2/authorize?client_id=1270960638382051368), but it will not have the full capabilities due to api ratelimits, notably losing access to Detector. If you want to use the full capabilities, you should self host the bot.
 
 To clone and run this discord bot, you'll need [Git](https://git-scm.com), [Python](https://www.python.org/downloads/) and [Pip](https://nodejs.org/en/download/) installed on your computer. From your command line:
 

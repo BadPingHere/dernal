@@ -20,11 +20,17 @@ class Detector(commands.GroupCog, name="detector"):
         self.untainteddata = {}
         self.untainteddataOLD = {}
         self.roleID = int(os.getenv("ROLE_ID"))
+        self.serverID = 0 if not int(os.getenv("SERVER_ID")) else int(os.getenv("SERVER_ID"))
         self.backgroundDetector.start()
 
     def check_permissions(self, interaction: discord.Interaction) -> bool:
         member = interaction.user
-        return any(role.id == self.roleID for role in member.roles)
+        if self.serverID != 0: # checks if server_id set
+            if interaction.guild.id != self.serverID: # Checks if not in main server.
+                return "Invalid Server"
+        if not any(role.id == self.roleID for role in member.roles):
+            return "Whitelisted Role"
+            
 
     @tasks.loop(seconds=20)
     async def backgroundDetector(self):
@@ -48,9 +54,14 @@ class Detector(commands.GroupCog, name="detector"):
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):
         logger.info(f"Command /detector remove was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter prefix is: {prefix}.")
-        if not self.check_permissions(interaction):
-            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        responseToCheck = self.check_permissions(interaction)
+        if responseToCheck == "Whitelisted Role":
+            await interaction.response.send_message(f"You don't have the proper role to use this command. You need the role with ID {self.roleID}.", ephemeral=True)
             return
+        if responseToCheck == "Invalid Server":
+            await interaction.response.send_message(f"You are not in the proper server to use this command. You need be in the server with the ID {self.serverID}.", ephemeral=True)
+            return
+
         
         if prefix in self.guildsBeingTracked:
             del self.guildsBeingTracked[prefix]
@@ -60,7 +71,7 @@ class Detector(commands.GroupCog, name="detector"):
 
     @remove.autocomplete('prefix')
     async def autocomplete_remove(self, interaction: discord.Interaction, current: str):
-        if not self.check_permissions(interaction):
+        if self.check_permissions(interaction) == "Whitelisted Role" or self.check_permissions(interaction) == "Invalid Server":
             return []
         
         choices = []
@@ -86,8 +97,12 @@ class Detector(commands.GroupCog, name="detector"):
     )
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
         logger.info(f"Command /detector add was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter channel is: {channel}, guild_prefix is {guild_prefix}, role is {role}, interval is {interval}.")
-        if not self.check_permissions(interaction):
-            await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        responseToCheck = self.check_permissions(interaction)
+        if responseToCheck == "Whitelisted Role":
+            await interaction.response.send_message(f"You don't have the proper role to use this command. You need the role with ID {self.roleID}.", ephemeral=True)
+            return
+        if responseToCheck == "Invalid Server":
+            await interaction.response.send_message(f"You are not in the proper server to use this command. You need be in the server with the ID {self.serverID}.", ephemeral=True)
             return
         message = f'<#{channel.id}> now set! No role will be pinged when territory is lost.'
         success = False
