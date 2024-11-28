@@ -757,7 +757,7 @@ async def guildActivityOnlineMembers(guild_uuid, name):
     overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, raw_numbers, 'o', label='Average Online Member Count', color=blue, lw=3)
+    plt.plot(times, raw_numbers, '-', label='Average Online Member Count', color=blue, lw=3)
     plt.fill_between(times, 0, raw_numbers, alpha=0.3)
     plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
     time_formatter = DateFormatter('%H:%M')
