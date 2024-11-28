@@ -6,6 +6,8 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import platform
+import requests
+import json
 
 # Set up logging
 logger = logging.getLogger('discord')
@@ -24,7 +26,53 @@ logger.addHandler(handler)
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=None, intents=intents)
 
-# TODO: slash command that shows the territory history of your guild, sum like 'August 9th: 🔴 X was taken by SEQ newline here  🟢 X was taken from SEQ'
+def checkUpdates(localVersionFile='version.json'):
+    try:
+        releasesUrl = f"https://api.github.com/repos/badpinghere/dernal/releases/latest"
+        commitsUrl = f"https://api.github.com/repos/badpinghere/dernal/commits/main"
+        try:
+            release_response = requests.get(releasesUrl)
+            release_data = release_response.json()
+            latestVersion = release_data.get('tag_name', 'unknown')
+            releaseUrl = release_data.get('html_url', '')
+        except:
+            commits_response = requests.get(commitsUrl)
+            commits_data = commits_response.json()
+            latestVersion = commits_data.get('sha', 'unknown')[:7] 
+            releaseUrl = f"https://github.com/badpinghere/dernal/commits/main"
+        
+        # Check local version
+        if not os.path.exists(localVersionFile):
+            with open(localVersionFile, 'w') as f:
+                json.dump({"version": latestVersion}, f)
+            return {
+                "is_up_to_date": False,
+                "current_version": "Unknown",
+                "latest_version": latestVersion,
+                "update_available": True,
+                "update_url": releaseUrl
+            }
+        with open(localVersionFile, 'r') as f:
+            localData = json.load(f)
+        
+        currentVersion = localData.get('version', 'unknown')
+        updateAvailable = currentVersion != latestVersion
+        
+        return {
+            "is_up_to_date": not updateAvailable,
+            "current_version": currentVersion,
+            "latest_version": latestVersion,
+            "update_available": updateAvailable,
+            "update_url": releaseUrl
+        }
+    
+    except Exception as e:
+        return {
+            "is_up_to_date": True,
+            "error": str(e),
+            "message": "Could not check for updates"
+        }
+
 
 @bot.event
 async def on_ready():
@@ -43,6 +91,13 @@ async def on_ready():
         print(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
 
     print('------')
+    update_info = checkUpdates()
+    if update_info.get('update_available', False):
+        print(f"Update available! Current version: {update_info['current_version']}, "
+              f"Latest version: {update_info['latest_version']}")
+        print(f"Update URL: {update_info['update_url']}")
+    else:
+        print("Dernal is up to date!")
     logger.info(f"Logged in as {bot.user.name}")
     logger.info(f"Discord.py version: {discord.__version__}")
     logger.info(f"Python version: {platform.python_version()}")
