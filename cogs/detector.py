@@ -4,6 +4,8 @@ from discord import app_commands
 from typing import Optional, Union
 import logging
 import os
+import json
+import shelve
 from dotenv import load_dotenv
 from lib.utils import checkterritories, getTerrData
 
@@ -21,6 +23,10 @@ class Detector(commands.GroupCog, name="detector"):
         self.untainteddataOLD = {}
         self.roleID = int(os.getenv("ROLE_ID") or 0)
         self.serverID = int(os.getenv("SERVER_ID") or 0)
+        rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.detectorFilePath = os.path.join(rootDir, 'database', 'detector')
+        with shelve.open(self.detectorFilePath) as db:
+            self.guildsBeingTracked = dict(db)
         self.backgroundDetector.start()
 
     def check_permissions(self, interaction: discord.Interaction) -> bool:
@@ -39,10 +45,14 @@ class Detector(commands.GroupCog, name="detector"):
         if not self.guildsBeingTracked:
             return
 
+        with shelve.open(self.detectorFilePath) as detectorStorage:
+            self.guildsBeingTracked = dict(detectorStorage)
+    
         guilds_to_check = list(self.guildsBeingTracked.keys())
         for guildPrefix in guilds_to_check:
             pingRoleID = self.guildsBeingTracked[guildPrefix]["pingRoleID"]
-            channelForMessages = self.guildsBeingTracked[guildPrefix]["channelForMessages"]
+            guild = await self.bot.fetch_guild(self.guildsBeingTracked[guildPrefix]['guildForMessages'])
+            channelForMessages = await guild.fetch_channel(self.guildsBeingTracked[guildPrefix]['channelForMessages'])
             intervalForPing = self.guildsBeingTracked[guildPrefix]["intervalForPing"]
             if guildPrefix in self.guildsBeingTracked:
                 if not self.hasbeenran.get(guildPrefix):
@@ -66,6 +76,9 @@ class Detector(commands.GroupCog, name="detector"):
         
         if prefix in self.guildsBeingTracked:
             del self.guildsBeingTracked[prefix]
+            with shelve.open(self.detectorFilePath) as detectorStorage:
+                if prefix in detectorStorage:
+                    del detectorStorage[prefix]
             await interaction.response.send_message(f"{prefix} is no longer being detected.")
         else:
             await interaction.response.send_message(f"{prefix} not found.", ephemeral=True)
@@ -122,10 +135,14 @@ class Detector(commands.GroupCog, name="detector"):
 
         if success:
             self.guildsBeingTracked[guild_prefix] = {
-                'channelForMessages': channel,
+                'channelForMessages': channel.id,
+                'guildForMessages': channel.guild.id,
                 'pingRoleID': str(role.id) if role else "",
                 'intervalForPing': interval if interval else ""
             }
+            logger.info(self.guildsBeingTracked)
+            with shelve.open(self.detectorFilePath) as detectorStorage:
+                detectorStorage[guild_prefix] = self.guildsBeingTracked[guild_prefix]
             logger.info(f"War detector now running in background for guild prefix {guild_prefix}")
 
         await interaction.response.send_message(message)

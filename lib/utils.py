@@ -13,11 +13,15 @@ from matplotlib.dates import HourLocator, DateFormatter
 from collections import defaultdict, deque
 from datetime import timedelta
 import io
+import seaborn as sns
 
 logger = logging.getLogger('discord')
 
 ratelimitmultiplier = 1
 ratelimitwait = 0.1 
+
+sns.set_style("whitegrid")
+blue, = sns.color_palette("muted", 1)
 
 async def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitmultiplier
@@ -379,7 +383,7 @@ async def intvervalGrouping(timestamps):
             groups[-1].append(ts)
     return groups
 
-async def activityPlaytime(guild_uuid, name):
+async def guildActivityPlaytime(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, ActivityPlaytime")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -414,18 +418,18 @@ async def activityPlaytime(guild_uuid, name):
 
     # you cannot get me to try and understand what is happening here.
     plt.figure(figsize=(12, 6))
-    plt.plot(times, averages, 'o-', label='20 Minute Average', color='blue')
-    plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f}%')
+    plt.plot(times, averages, '-', label='Average Activity Playtime', color=blue, lw=3)
+    plt.fill_between(times, 0, averages, alpha=0.3)
+    plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f}%')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
     hour_locator = HourLocator()
     plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Playtime Activity - {name}')
-    plt.xlabel('Time (UTC)')
-    plt.ylabel('Players Online (%)')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'Playtime Activity - {name}', fontsize=14)
+    plt.xlabel('Time (UTC)', fontsize=12)
+    plt.ylabel('Players Online (%)', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
-    plt.xticks(rotation=45)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
@@ -444,7 +448,7 @@ async def activityPlaytime(guild_uuid, name):
     buf.close()
     return file, embed
 
-async def activityXP(guild_uuid, name):
+async def guildActivityXP(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityXP")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -491,15 +495,15 @@ async def activityXP(guild_uuid, name):
     min_daily_xp = min(xp_values) if xp_values else 0
 
     plt.figure(figsize=(12, 6))
-    plt.bar(dates, xp_values, width=0.8, color='blue', alpha=0.6)
-    plt.axhline(y=avg_daily_xp, color='r', linestyle='--', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
+    plt.bar(dates, xp_values, width=0.8, color=blue)
+    plt.axhline(y=avg_daily_xp, color='red', linestyle='-', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
     plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-    plt.xticks(dates, rotation=45)
+    plt.xticks(dates)
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
-    plt.title(f'Daily Guild XP Contribution - {name}')
-    plt.xlabel('Date (UTC)')
-    plt.ylabel('XP Gained')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'Daily Guild XP Contribution - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('XP Gained', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
     buf = io.BytesIO()
@@ -520,7 +524,7 @@ async def activityXP(guild_uuid, name):
     buf.close()
     return file, embed
 
-async def activityTerritories(guild_uuid, name):
+async def guildActivityTerritories(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityTerritories")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -588,8 +592,9 @@ async def activityTerritories(guild_uuid, name):
     avg_territories = sum(filter(lambda x: x > 0, territory_counts)) / len(list(filter(lambda x: x > 0, territory_counts))) if territory_counts else 0
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, territory_counts, '-', label='Territory Count', color='blue', linewidth=2)
-    plt.axhline(y=avg_territories, color='r', linestyle='--', label=f'Average: {avg_territories:.1f}')
+    plt.plot(times, territory_counts, '-', label='Territory Count', color=blue, lw=3)
+    plt.fill_between(times, 0, territory_counts, alpha=0.3)
+    plt.axhline(y=avg_territories, color='red', linestyle='-', label=f'Average: {avg_territories:.1f}')
     time_formatter = DateFormatter('%m/%d %H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
@@ -597,13 +602,12 @@ async def activityTerritories(guild_uuid, name):
     min_y = max(0, min_territories - (y_range * 0.1))
     max_y = max_territories + (y_range * 0.1)
     plt.ylim(min_y, max_y)
-    plt.title(f'Territory Count History - {name}')
-    plt.xlabel('Date (UTC)')
-    plt.ylabel('Number of Territories')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'Territory Count - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of Territories', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
-    plt.xticks(rotation=45)
-    plt.margins(x=0.02)
+    plt.margins(x=0.01)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100)
@@ -623,7 +627,7 @@ async def activityTerritories(guild_uuid, name):
     conn.close()
     return file, embed
 
-async def activityWars(guild_uuid, name):
+async def guildActivityWars(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityWars")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -690,7 +694,7 @@ async def activityWars(guild_uuid, name):
     min_war = min(filter(lambda x: x > 0, war_counts)) if war_counts else 0
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, war_counts, '-', label='War Count', color='blue', linewidth=2)
+    plt.plot(times, war_counts, '-', label='War Count', color=blue, lw=3)
     time_formatter = DateFormatter('%m/%d %H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
@@ -698,13 +702,12 @@ async def activityWars(guild_uuid, name):
     min_y = max(0, min_war - (y_range * 0.1))
     max_y = max_war + (y_range * 0.1)
     plt.ylim(min_y, max_y)
-    plt.title(f'War History - {name}')
-    plt.xlabel('Date (UTC)')
-    plt.ylabel('Number of Wars')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'War History - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of Wars', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
-    plt.xticks(rotation=45)
-    plt.margins(x=0.02)
+    plt.margins(x=0.01)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100)
@@ -724,7 +727,7 @@ async def activityWars(guild_uuid, name):
     conn.close()
     return file, embed
 
-async def activityOnlineMembers(guild_uuid, name):
+async def guildActivityOnlineMembers(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityOnlineMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -754,18 +757,18 @@ async def activityOnlineMembers(guild_uuid, name):
     overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, raw_numbers, 'o-', label='20 Minute Average', color='blue')
-    plt.axhline(y=overall_average, color='r', linestyle='--', label=f'24hr Average: {overall_average:.1f} players')
+    plt.plot(times, raw_numbers, 'o', label='Average Online Member Count', color=blue, lw=3)
+    plt.fill_between(times, 0, raw_numbers, alpha=0.3)
+    plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
     hour_locator = HourLocator()
     plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Online Members - {name}')
-    plt.xlabel('Time (UTC)')
-    plt.ylabel('Players Online')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'Online Members - {name}', fontsize=14)
+    plt.xlabel('Time (UTC)', fontsize=12)
+    plt.ylabel('Players Online', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
-    plt.xticks(rotation=45)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
@@ -790,7 +793,7 @@ async def activityOnlineMembers(guild_uuid, name):
     
     return file, embed
 
-async def activityTotalMembers(guild_uuid, name):
+async def guildActivityTotalMembers(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityTotalMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -818,18 +821,18 @@ async def activityTotalMembers(guild_uuid, name):
     overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, total_numbers, 'o-', label='20 Minute Total Members', color='blue')
-    plt.axhline(y=overall_total, color='r', linestyle='--', label=f'24hr Average: {overall_total:.1f} members')
+    plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
+    plt.fill_between(times, 0, total_numbers, alpha=0.3)
+    plt.axhline(y=overall_total, color='r', linestyle='-', label=f'Average: {overall_total:.1f} members')
     time_formatter = DateFormatter('%H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
     hour_locator = HourLocator()
     plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Total Members Activity - {name}')
-    plt.xlabel('Time (UTC)')
-    plt.ylabel('Total Members')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.title(f'Total Members Activity - {name}', fontsize=14)
+    plt.xlabel('Time (UTC)', fontsize=12)
+    plt.ylabel('Total Members', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
-    plt.xticks(rotation=45)
     plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
@@ -853,7 +856,7 @@ async def activityTotalMembers(guild_uuid, name):
     buf.close()
     return file, embed
 
-async def leaderboardOnlineMembers():
+async def guildLeaderboardOnlineMembers():
     logger.info(f"leaderboardOnlineMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -908,7 +911,7 @@ async def leaderboardOnlineMembers():
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
 
-async def leaderboardTotalMembers():
+async def guildLeaderboardTotalMembers():
     logger.info(f"leaderboardTotalMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -966,7 +969,7 @@ async def leaderboardTotalMembers():
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
 
-async def leaderboardWars():
+async def guildLeaderboardWars():
     logger.info(f"leaderboardWars")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1005,7 +1008,7 @@ async def leaderboardWars():
     conn.close()
     return embed
 
-async def leaderboardXP():
+async def guildLeaderboardXP():
     logger.info(f"leaderboardXP")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1084,7 +1087,7 @@ async def leaderboardXP():
     conn.close()
     return embed
 
-async def leaderboardPlaytime():
+async def guildLeaderboardPlaytime():
     logger.info(f"leaderboardPlaytime")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()

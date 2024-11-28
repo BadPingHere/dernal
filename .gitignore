@@ -6,3 +6,6 @@ config.ini
 guild_activity.db
 guild_activity.db-shm
 guild_activity.db-wal
+*.dir
+*.dat
+*.bak

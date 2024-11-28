@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 import time
-from lib.utils import makeRequest, guildLookup, lookupGuild, activityPlaytime, activityXP, activityTerritories, activityWars, activityOnlineMembers, activityTotalMembers, leaderboardOnlineMembers, leaderboardTotalMembers, leaderboardWars, leaderboardXP, leaderboardPlaytime
+from lib.utils import makeRequest, guildLookup, lookupGuild, guildActivityPlaytime, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardPlaytime
 import sqlite3
 import logging
 
@@ -91,7 +91,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await activityPlaytime(result[0], name)
+        file, embed = await guildActivityPlaytime(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -130,7 +130,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await activityXP(result[0], name)
+        file, embed = await guildActivityXP(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -168,7 +168,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await activityTerritories(result[0], name)
+        file, embed = await guildActivityTerritories(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -206,7 +206,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await activityWars(result[0], name)
+        file, embed = await guildActivityWars(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -244,7 +244,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await activityTotalMembers(result[0], name)
+        file, embed = await guildActivityTotalMembers(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -282,7 +282,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await activityOnlineMembers(result[0], name)
+        file, embed = await guildActivityOnlineMembers(result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -301,7 +301,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await leaderboardOnlineMembers()
+        embed = await guildLeaderboardOnlineMembers()
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -317,7 +317,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await leaderboardTotalMembers()
+        embed = await guildLeaderboardTotalMembers()
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -333,7 +333,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await leaderboardWars()
+        embed = await guildLeaderboardWars()
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -349,7 +349,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await leaderboardXP()
+        embed = await guildLeaderboardXP()
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -366,7 +366,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await leaderboardPlaytime()
+        embed = await guildLeaderboardPlaytime()
         if embed:
             await interaction.followup.send(embed=embed)
         else:
