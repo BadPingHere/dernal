@@ -9,3 +9,4 @@ guild_activity.db-wal
 *.dir
 *.dat
 *.bak
+database/backups
