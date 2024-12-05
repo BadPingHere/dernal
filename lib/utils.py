@@ -431,6 +431,10 @@ async def guildActivityPlaytime(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
@@ -493,7 +497,7 @@ async def guildActivityXP(guild_uuid, name):
     avg_daily_xp = total_xp / len(dates) if dates else 0
     max_daily_xp = max(xp_values) if xp_values else 0
     min_daily_xp = min(xp_values) if xp_values else 0
-
+    
     plt.figure(figsize=(12, 6))
     plt.bar(dates, xp_values, width=0.8, color=blue)
     plt.axhline(y=avg_daily_xp, color='red', linestyle='-', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
@@ -506,11 +510,15 @@ async def guildActivityXP(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+            transform=plt.gca().transAxes, 
+            fontsize=9, verticalalignment='bottom', 
+            horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     plt.close()
-
+    
     file = discord.File(buf, filename='xp_graph.png')
     embed = discord.Embed(
         title=f"XP Analysis for {name}",
@@ -609,6 +617,10 @@ async def guildActivityTerritories(guild_uuid, name):
     plt.legend()
     plt.margins(x=0.01)
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100)
     buf.seek(0)
@@ -709,6 +721,10 @@ async def guildActivityWars(guild_uuid, name):
     plt.legend()
     plt.margins(x=0.01)
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=100)
     buf.seek(0)
@@ -770,6 +786,10 @@ async def guildActivityOnlineMembers(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
@@ -819,7 +839,6 @@ async def guildActivityTotalMembers(guild_uuid, name):
     times = sorted(hourly_data.keys())
     total_numbers = [sum(hourly_data[time]) for time in times] 
     overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
-
     plt.figure(figsize=(12, 6))
     plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
     plt.fill_between(times, 0, total_numbers, alpha=0.3)
@@ -834,6 +853,10 @@ async def guildActivityTotalMembers(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    transform=plt.gca().transAxes, 
+    fontsize=9, verticalalignment='bottom', 
+    horizontalalignment='right',color='gray')
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
