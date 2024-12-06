@@ -11,6 +11,8 @@ class HQ(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @app_commands.allowed_installs(guilds=True, users=True)
+    @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
     @app_commands.command(description="Outputs the top hq locations.")
     @app_commands.describe(
         guild='Prefix of the guild Ex: TAq, ICo.',

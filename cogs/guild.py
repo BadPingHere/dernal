@@ -52,16 +52,16 @@ class InactivityView(View):
         self.update_buttons()
         await self.update_embed(interaction)
 
-
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
 class Guild(commands.GroupCog, name="guild"):
     def __init__(self, bot):
         self.bot = bot
         self.guildLookupCooldown = 0
-
-    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.")
     
+    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.",)
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of players online over the past day.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)  
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -99,7 +99,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available for the last 24 hours")
     
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)   
     async def activityXP(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -176,7 +176,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available for the last 3 days")
 
     @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 3 days.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityWars(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -214,7 +214,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available for the last 3 days")
 
     @activityCommands.command(name="total_members", description="Shows a graph displaying the total members a guild has for the past day.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityTotal_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -289,8 +289,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 24 hours")
     
-    leaderboardCommands = app_commands.Group(name="leaderboard", description="this is never seen, yet discord flips the fuck out if its not here.")
-
+    leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the fuck out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
     async def leaderboardOnline_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
@@ -356,7 +355,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available.")
 
     # This works, but the server im using to host this bot takes way too long to perform this. So uncomment if you want.
-    @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.")
+    @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.") 
     async def leaderboardPlaytime(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         current_time = time.time()
@@ -371,7 +370,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(embed=embed)
         else:
             await interaction.followup.send("No data available.")
-
+            
     @app_commands.command(description="Shows you to get a quick overview of a guild, like level, online members, etc.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def overview(self, interaction: discord.Interaction, name: str):
@@ -392,9 +391,9 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
-  
+
     @app_commands.command(description="Shows and sorts the player inactivity of a selected guild")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def inactivity(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()

@@ -12,6 +12,8 @@ from lib.utils import checkterritories, getTerrData
 logger = logging.getLogger('discord')
 load_dotenv()
 
+@app_commands.allowed_installs(guilds=True, users=False)
+@app_commands.allowed_contexts(guilds=True, dms=False, private_channels=True)
 class Detector(commands.GroupCog, name="detector"):
     def __init__(self, bot):
         self.bot = bot
@@ -108,7 +110,7 @@ class Detector(commands.GroupCog, name="detector"):
         guild_prefix='Prefix of the guild to track Ex: SEQ, ICo.',
         role='Role to be pinged (optional)',
         interval='The cooldown on the pings in minutes (optional)',
-    )
+    )  
     async def add(self, interaction: discord.Interaction, channel: Union[discord.TextChannel], guild_prefix: str, role: Optional[discord.Role] = None, interval: Optional[int] = None):
         logger.info(f"Command /detector add was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter channel is: {channel}, guild_prefix is {guild_prefix}, role is {role}, interval is {interval}.")
         if not self.check_permissions(interaction):
