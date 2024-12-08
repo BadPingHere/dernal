@@ -14,6 +14,7 @@ from collections import defaultdict, deque
 from datetime import timedelta
 import io
 import seaborn as sns
+import pandas as pd
 
 logger = logging.getLogger('discord')
 
@@ -1177,3 +1178,180 @@ async def guildLeaderboardPlaytime():
     )
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
+
+async def playerActivityPlaytime(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    # Fetch snapshots from the last 14 days
+    cursor.execute("""
+        SELECT timestamp, online
+        FROM member_snapshots
+        WHERE member_uuid = ?
+        AND timestamp >= datetime('now', '-14 days')
+        ORDER BY timestamp
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), online) for ts, online in snapshots]
+    #print(parsed_snapshots)
+
+    # Calculate playtime
+    total_playtime_seconds = 0
+    daily_playtimes = defaultdict(int)
+
+    for i in range(len(parsed_snapshots)):
+        timestamp, onlineStatus = parsed_snapshots[i]
+        if onlineStatus == 1:
+            # Get the difference between the timestamp before us (i-1), and the timestamp now (i)
+            if i > 0: # Checks if it exists
+                pastTimestamp, pastOnlineStatus = parsed_snapshots[i-1]
+                timeDifference = timestamp - pastTimestamp
+                secondTimeDifference = timeDifference.total_seconds()
+                total_playtime_seconds += secondTimeDifference
+                daily_playtimes[timestamp.date()] += int(divmod(secondTimeDifference, 60)[0])
+            else: # Doesnt exist, so default to 30.
+                timeDifference = 30
+                total_playtime_seconds += timeDifference * 60
+                daily_playtimes[timestamp.date()] += timeDifference
+        daily_playtimes[timestamp.date()] += 0
+
+    dates = sorted(daily_playtimes.keys())
+    playtime_values = [daily_playtimes[date] for date in dates]
+    total_playtime_minutes = sum(playtime_values)
+
+    averageDailyPlaytime = total_playtime_minutes / len(dates) if dates else 0
+    
+    df = pd.DataFrame(parsed_snapshots, columns=["timestamp", "online"])
+    df['hour'] = df['timestamp'].dt.hour
+    hourly_activity = df.groupby('hour')['online'].sum()
+    peak_hours = hourly_activity[hourly_activity == hourly_activity.max()].index.tolist()
+
+    estimated_timezone = None
+    if peak_hours:
+        avg_peak_hour = sum(peak_hours) / len(peak_hours)
+        utc_offset = round(avg_peak_hour - 20)  # Assuming peaks would be around 8pm, after work and schooling.
+        estimated_timezone = f"UTC{'+' if utc_offset >= 0 else ''}{utc_offset}"
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(dates, playtime_values, width=0.8, color=blue)
+    plt.axhline(y=averageDailyPlaytime, color='red', linestyle='-', 
+                label=f'Daily Average: {averageDailyPlaytime:.2f} minutes')
+    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
+    plt.xticks(dates)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
+    plt.title(f'Daily Playtime - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Minutes Played', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+            transform=plt.gca().transAxes, 
+            fontsize=9, verticalalignment='bottom', 
+            horizontalalignment='right', color='gray')
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='player_playtime_graph.png')
+    embed = discord.Embed(
+        title=f"Playtime Analysis for {name}",
+        description=(
+            f"Daily Average: {averageDailyPlaytime:.0f} min\n"
+            f"Highest Day: {max(playtime_values) if playtime_values else 0} min\n"
+            f"Lowest Day: {min(playtime_values) if playtime_values else 0} min\n"
+            f"Estimated Timezone: {estimated_timezone}"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_playtime_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    conn.close()
+    buf.close()
+    
+    return file, embed
+
+async def playerActivityXP(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityXP")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    # Fetch snapshots from the last 14 days
+    cursor.execute("""
+    SELECT timestamp, contribution
+    FROM member_snapshots
+    WHERE member_uuid = ?
+    AND timestamp >= datetime('now', '-14 days')
+    ORDER BY timestamp
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), xp) for ts, xp in snapshots]
+
+    latest_snapshots_by_day = {}
+    for ts, xp in parsed_snapshots:
+        day = ts.date()
+        if day not in latest_snapshots_by_day or ts > latest_snapshots_by_day[day][0]:
+            latest_snapshots_by_day[day] = (ts, xp)
+
+    filtered_snapshots = sorted([(ts, xp) for ts, xp in latest_snapshots_by_day.values()], key=lambda x: x[0])
+
+    timestamps = [ts for ts, xp in filtered_snapshots]
+    xpValues = [xp for ts, xp in filtered_snapshots]
+    daily_gains = [xpValues[i] - xpValues[i - 1] for i in range(1, len(xpValues))]
+
+
+    totalGained = xpValues[-1] - xpValues[0] if len(xpValues) > 1 else 0
+    average = totalGained / len(daily_gains) if daily_gains else 0
+
+
+    plt.figure(figsize=(12, 6))
+    plt.bar(timestamps[1:], daily_gains, width=0.8, color=blue)
+    plt.axhline(y=average, color='red', linestyle='-', label=f'Daily Average: {average:.2f} XP')
+    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
+    plt.xticks(timestamps[1:])
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
+    plt.title(f'Daily XP Gain - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('XP Gained', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+             transform=plt.gca().transAxes, fontsize=9, verticalalignment='bottom', 
+             horizontalalignment='right', color='gray')
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='player_xp_graph.png')
+    embed = discord.Embed(
+        title=f"XP Gain for {name}",
+        description=(
+            f"Total XP (14 Days): {totalGained:,.0f} xp\n"
+            f"Highest Day: {max(daily_gains) if daily_gains else 0} xp\n"
+            f"Lowest Day: {min(daily_gains) if daily_gains else 0} xp"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_xp_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    conn.close()
+    buf.close()
+    return file, embed

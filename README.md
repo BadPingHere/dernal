@@ -39,6 +39,9 @@ This is a quite versitile discord bot, with a few commands, like:
   - Leaderboard online_members: Shows a leaderboard of the top 10 guild's average amount of online players.
   - Leaderboard playtime: Shows a leaderboard of the top 10 guild's playtime percentage.
   - Leaderboard total_members: Shows a leaderboard of the top 10 guild's total members.
+- **Player Commands**, a couple of commands, like:
+  - Activity playtime: Shows the graph displaying the average amount minutes played every day for the past 2 weeks.
+  - Activity xp: Shows a bar graph displaying the total xp a player gained every day, for the past 2 weeks.
 - **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
   - Based on what your guild owns, or can be switched for the best hq in the whole map.
 - **Overview**, a command that shows stats like:
