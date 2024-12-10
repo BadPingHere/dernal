@@ -361,9 +361,12 @@ async def lookupUser(memberList):
             inactivityDict["Active Users"].append((jsonData["username"], int(epochTime)))
     return inactivityDict
 
-async def lookupGuild(prefix):
+async def lookupGuild(name):
     # All this does is gets all the users in the guild and puts them in a list
-    URL = "https://api.wynncraft.com/v3/guild/prefix/"+str(prefix)
+    if len(name) >= 5:
+        URL = f"https://api.wynncraft.com/v3/guild/{name}"
+    else:
+        URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
     r = await makeRequest(URL)
     jsonData = r.json()
     memberList = []

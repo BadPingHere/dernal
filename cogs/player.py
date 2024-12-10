@@ -18,7 +18,7 @@ class Player(commands.GroupCog, name="player"):
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.")
     
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day over the past two weeks.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -33,7 +33,7 @@ class Player(commands.GroupCog, name="player"):
         cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("SELECT uuid FROM members WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
             result = cursor.fetchone()
     
         if not result:
@@ -49,7 +49,7 @@ class Player(commands.GroupCog, name="player"):
             await interaction.followup.send("No data available for the last 14 days.")
     
     @activityCommands.command(name="xp", description="Shows the graph displaying the average amount of xp gain every day over the past two weeks.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -64,7 +64,7 @@ class Player(commands.GroupCog, name="player"):
         cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("SELECT uuid FROM members WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
             result = cursor.fetchone()
     
         if not result:
