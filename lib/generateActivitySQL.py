@@ -22,7 +22,7 @@ DATABASE_DIR = os.path.join(BASE_DIR, "database")
 BACKUP_DIR = os.path.join(DATABASE_DIR, "backups")
 LOG_FILE = os.path.join(BASE_DIR, "activitySQL.log")
 
-logger = logging.getLogger('discord')
+logger = logging.getLogger('activity')
 logger.setLevel(logging.INFO)
 handler = logging.handlers.RotatingFileHandler(
     filename=LOG_FILE,
@@ -80,32 +80,12 @@ def connect_to_db():
     conn.execute("PRAGMA cache_size=-20000")  # 20MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
 
-    # Add performance indexes
-    add_performance_indexes(conn)
-
     if not check_tables_exist(conn):
         create_tables(conn)
     
     logger.info("Database connection established")
     return conn
 
-def add_performance_indexes(conn):
-    cursor = conn.cursor()
-    indexes = [
-        "CREATE INDEX IF NOT EXISTS idx_guild_members_guild_uuid ON guild_members(guild_uuid)",
-        "CREATE INDEX IF NOT EXISTS idx_guild_members_member_uuid ON guild_members(member_uuid)",
-        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_guild_member ON member_snapshots(guild_uuid, member_uuid)",
-        "CREATE INDEX IF NOT EXISTS idx_guild_snapshots_guild_uuid ON guild_snapshots(guild_uuid)",
-        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp_guild ON member_snapshots(timestamp, guild_uuid)"
-    ]
-    
-    for index in indexes:
-        try:
-            cursor.execute(index)
-        except sqlite3.OperationalError as e:
-            logger.warning(f"Could not create index: {index}. Error: {e}")
-    conn.commit()
-    logger.info("Performance indexes added/verified")
 
 def analyze_database_performance(conn):
     try:

@@ -47,4 +47,6 @@
 
     CREATE INDEX IF NOT EXISTS idx_guild_snapshots_timestamp ON guild_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp ON member_snapshots(timestamp);
-    
+    CREATE INDEX IF NOT EXISTS idx_guild_members_guild_uuid ON guild_members(guild_uuid);
+    CREATE INDEX IF NOT EXISTS idx_guild_members_member_uuid ON guild_members(member_uuid);
+    CREATE INDEX IF NOT EXISTS idx_guild_snapshots_guild_uuid ON guild_snapshots(guild_uuid);
