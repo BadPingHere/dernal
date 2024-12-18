@@ -30,10 +30,10 @@ class Player(commands.GroupCog, name="player"):
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
-        cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
+        cursor.execute("SELECT uuid FROM members WHERE name = ? COLLATE NOCASE", (name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM members WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
     
         if not result:
@@ -50,7 +50,7 @@ class Player(commands.GroupCog, name="player"):
     
     @activityCommands.command(name="xp", description="Shows the graph displaying the average amount of xp gain every day over the past two weeks.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityPlaytime(self, interaction: discord.Interaction, name: str):
+    async def activityXP(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
         if int(current_time - self.guildLookupCooldown) <= 10:
@@ -61,10 +61,10 @@ class Player(commands.GroupCog, name="player"):
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
-        cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
+        cursor.execute("SELECT uuid FROM members WHERE name = ? COLLATE NOCASE", (name,))
         result = cursor.fetchone()
         if not result:
-            cursor.execute("SELECT uuid FROM members WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM members WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
     
         if not result:

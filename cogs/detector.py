@@ -107,7 +107,7 @@ class Detector(commands.GroupCog, name="detector"):
     @app_commands.command(description="Add a guild to detect.")
     @app_commands.describe(
         channel='Channel to set',
-        guild_prefix='Prefix of the guild to track Ex: SEQ, ICo.',
+        guild_prefix='Prefix of the guild to track Ex: SEQ, ICo. (Case Sensitive)',
         role='Role to be pinged (optional)',
         interval='The cooldown on the pings in minutes (optional)',
     )  

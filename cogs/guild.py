@@ -74,16 +74,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -113,16 +113,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -152,16 +152,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -190,16 +190,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -227,16 +227,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -265,16 +265,16 @@ class Guild(commands.GroupCog, name="guild"):
         cursor = conn.cursor()
         
         if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ?", (name,))
+            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
             result = cursor.fetchone()
             if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ?", (name,))
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
                 result = cursor.fetchone()
         
         if not result:
@@ -354,7 +354,6 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available.")
 
-    # This works, but the server im using to host this bot takes way too long to perform this. So uncomment if you want.
     @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.") 
     async def leaderboardPlaytime(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
@@ -372,7 +371,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available.")
             
     @app_commands.command(description="Shows you to get a quick overview of a guild, like level, online members, etc.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',)
     async def overview(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild overview was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
@@ -393,7 +392,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
 
     @app_commands.command(description="Shows and sorts the player inactivity of a selected guild")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',) 
     async def inactivity(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()

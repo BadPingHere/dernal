@@ -1,4 +1,3 @@
-# i think chatgpt is a blessing and a curse. because god smite me before I have to deal with this shit.
 import pytz
 import requests
 import time
@@ -9,7 +8,8 @@ import os
 import asyncio
 import zipfile
 import platform
-
+import logging
+import logging.handlers
 
 def get_utc_now():
     if platform.system() == "Windows":
@@ -20,12 +20,20 @@ def get_utc_now():
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
 BACKUP_DIR = os.path.join(DATABASE_DIR, "backups")
+LOG_FILE = os.path.join(BASE_DIR, "activitySQL.log")
 
-
-def log_progress(message):
-    """Log with timestamp"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {message}")
+logger = logging.getLogger('discord')
+logger.setLevel(logging.INFO)
+handler = logging.handlers.RotatingFileHandler(
+    filename=LOG_FILE,
+    encoding='utf-8',
+    maxBytes=32 * 1024 * 1024,  # 32 MiB
+    backupCount=5,  # Rotate through 5 files
+)
+dt_fmt = '%Y-%m-%d %H:%M:%S'
+formatter = logging.Formatter('[{asctime}] [{levelname:<8}] {name}: {message}', dt_fmt, style='{')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 
 def makeRequest(URL):
@@ -37,58 +45,104 @@ def makeRequest(URL):
 
             # If we get a 404, the guild doesn't exist anymore
             if r.status_code == 404:
-                log_progress(f"Guild not found (404) for URL: {URL}")
+                logger.info(f"Guild not found (404) for URL: {URL}")
                 return None
 
             r.raise_for_status()
         except requests.exceptions.RequestException as err:
             if "404" in str(err):  # Catch 404s that might raise as exceptions
-                log_progress(f"Guild not found (404) for URL: {URL}")
+                logger.info(f"Guild not found (404) for URL: {URL}")
                 return None
-            log_progress(f"Request failed, retrying in 3s... Error: {err}")
+            logger.info(f"Request failed, retrying in 3s... Error: {err}")
             time.sleep(3)
             continue
 
         if r.ok:
             return r
         else:
-            log_progress("Request not OK, retrying in 3s...")
+            logger.info("Request not OK, retrying in 3s...")
             time.sleep(3)
             continue
 
 
 def connect_to_db():
-    """
-    Connect to the database with proper WAL mode settings
-    """
-    log_progress("Connecting to database...")
+    logger.info("Connecting to database...")
     os.makedirs(DATABASE_DIR, exist_ok=True)
     db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
     conn = sqlite3.connect(db_path, isolation_level=None)
 
-    # Configure WAL mode with conservative settings for slower servers
-    log_progress("Configuring database settings...")
+    # Optimized database configuration
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA auto_vacuum=FULL")
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-20000")  # 20MB cache
+    conn.execute("PRAGMA temp_store=MEMORY")
+
+    # Add performance indexes
+    add_performance_indexes(conn)
 
     if not check_tables_exist(conn):
         create_tables(conn)
-    log_progress("Database connection established")
+    
+    logger.info("Database connection established")
     return conn
 
+def add_performance_indexes(conn):
+    cursor = conn.cursor()
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_guild_members_guild_uuid ON guild_members(guild_uuid)",
+        "CREATE INDEX IF NOT EXISTS idx_guild_members_member_uuid ON guild_members(member_uuid)",
+        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_guild_member ON member_snapshots(guild_uuid, member_uuid)",
+        "CREATE INDEX IF NOT EXISTS idx_guild_snapshots_guild_uuid ON guild_snapshots(guild_uuid)",
+        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp_guild ON member_snapshots(timestamp, guild_uuid)"
+    ]
+    
+    for index in indexes:
+        try:
+            cursor.execute(index)
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not create index: {index}. Error: {e}")
+    conn.commit()
+    logger.info("Performance indexes added/verified")
+
+def analyze_database_performance(conn):
+    try:
+        cursor = conn.cursor()
+        
+        # Check database statistics
+        integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()
+        logger.info(f"Database Integrity Check: {integrity_check}")
+        
+        # Analyze table sizes
+        cursor.execute("""
+            SELECT 
+                'guild_snapshots' as table_name, 
+                COUNT(*) as row_count, 
+                (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM guild_snapshots)) as percentage
+            FROM guild_snapshots
+            UNION ALL
+            SELECT 
+                'member_snapshots' as table_name, 
+                COUNT(*) as row_count, 
+                (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM member_snapshots)) as percentage
+            FROM member_snapshots
+        """)
+        
+        for row in cursor.fetchall():
+            logger.info(f"Table {row[0]}: {row[1]} rows ({row[2]:.2f}%)")
+    
+    except Exception as e:
+        logger.error(f"Database performance analysis failed: {e}")
 
 def cleanup_database(conn):
-    """
-    Properly cleanup the database, checkpoint WAL, and close connection
-    """
-    log_progress("Starting database cleanup...")
+    logger.info("Starting database cleanup...")
     try:
-        log_progress("Performing WAL checkpoint...")
+        logger.info("Performing WAL checkpoint...")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-        log_progress("Closing database connection...")
+        logger.info("Closing database connection...")
         conn.close()
 
         # Clean up WAL and SHM files if they exist
@@ -99,33 +153,30 @@ def cleanup_database(conn):
         if os.path.exists(wal_path):
             try:
                 os.remove(wal_path)
-                log_progress("WAL file removed")
+                logger.info("WAL file removed")
             except OSError as e:
-                log_progress(f"Warning: Could not remove WAL file: {e}")
+                logger.info(f"Warning: Could not remove WAL file: {e}")
 
         if os.path.exists(shm_path):
             try:
                 os.remove(shm_path)
-                log_progress("SHM file removed")
+                logger.info("SHM file removed")
             except OSError as e:
-                log_progress(f"Warning: Could not remove SHM file: {e}")
+                logger.info(f"Warning: Could not remove SHM file: {e}")
 
-        log_progress("Database cleanup completed")
+        logger.info("Database cleanup completed")
 
     except Exception as e:
-        log_progress(f"Error during database cleanup: {e}")
+        logger.info(f"Error during database cleanup: {e}")
 
 
 def cleanup_old_data(conn, batch_size=500):
-    """
-    Cleanup old data using batched deletions
-    """
     cutoff_date = get_utc_now() - timedelta(days=30)
-    log_progress(f"Starting data cleanup for records older than {cutoff_date}")
+    logger.info(f"Starting data cleanup for records older than {cutoff_date}")
     cur = conn.cursor()
 
     # Create indexes if they don't exist
-    log_progress("Ensuring indexes exist...")
+    logger.info("Ensuring indexes exist...")
     cur.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_guild_snapshots_timestamp 
@@ -141,7 +192,7 @@ def cleanup_old_data(conn, batch_size=500):
 
     # Cleanup guild_snapshots in batches
     total_guild_deleted = 0
-    log_progress("Starting guild_snapshots cleanup...")
+    logger.info("Starting guild_snapshots cleanup...")
     while True:
         cur.execute(
             """
@@ -159,7 +210,7 @@ def cleanup_old_data(conn, batch_size=500):
         deleted = cur.rowcount
         total_guild_deleted += deleted
         if deleted > 0:
-            log_progress(
+            logger.info(
                 f"Deleted {deleted} guild snapshot records (Total: {total_guild_deleted})"
             )
             conn.commit()
@@ -169,7 +220,7 @@ def cleanup_old_data(conn, batch_size=500):
 
     # Cleanup member_snapshots in batches
     total_member_deleted = 0
-    log_progress("Starting member_snapshots cleanup...")
+    logger.info("Starting member_snapshots cleanup...")
     while True:
         cur.execute(
             """
@@ -187,7 +238,7 @@ def cleanup_old_data(conn, batch_size=500):
         deleted = cur.rowcount
         total_member_deleted += deleted
         if deleted > 0:
-            log_progress(
+            logger.info(
                 f"Deleted {deleted} member snapshot records (Total: {total_member_deleted})"
             )
             conn.commit()
@@ -195,7 +246,7 @@ def cleanup_old_data(conn, batch_size=500):
         if deleted < batch_size:
             break
 
-    log_progress(
+    logger.info(
         f"Cleanup completed. Total records deleted - Guild: {total_guild_deleted}, Member: {total_member_deleted}"
     )
 
@@ -209,20 +260,20 @@ def create_monthly_backup():
         with open(backup_flag_file, "r") as f:
             last_backup = f.read().strip()
             if last_backup == current_month:
-                log_progress("Monthly backup already exists, skipping...")
+                logger.info("Monthly backup already exists, skipping...")
                 return
 
     # Only backup on day 2
     if datetime.now().day != 1:
         return
 
-    log_progress("Starting monthly backup creation...")
+    logger.info("Starting monthly backup creation...")
     os.makedirs(BACKUP_DIR, exist_ok=True)
     db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
     zip_path = os.path.join(BACKUP_DIR, f"guild_activity_backup_{current_month}.zip")
 
     try:
-        log_progress("Creating zip backup...")
+        logger.info("Creating zip backup...")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(db_path, os.path.basename(db_path))
 
@@ -230,9 +281,9 @@ def create_monthly_backup():
             f.write(current_month)
 
         backup_size = os.path.getsize(zip_path) / (1024 * 1024)  # Convert to MB
-        log_progress(f"Monthly backup created: {zip_path} (Size: {backup_size:.2f} MB)")
+        logger.info(f"Monthly backup created: {zip_path} (Size: {backup_size:.2f} MB)")
     except Exception as e:
-        log_progress(f"Error creating monthly backup: {e}")
+        logger.info(f"Error creating monthly backup: {e}")
 
 
 def check_tables_exist(conn):
@@ -244,12 +295,12 @@ def check_tables_exist(conn):
 
 
 def create_tables(conn):
-    log_progress("Creating database tables...")
+    logger.info("Creating database tables...")
     schema_path = os.path.join(DATABASE_DIR, "schema.sql")
     with open(schema_path, "r") as schema_file:
         schema_script = schema_file.read()
         conn.executescript(schema_script)
-    log_progress("Tables created successfully")
+    logger.info("Tables created successfully")
 
 
 def insert_or_update_guild(conn, guild_data):
@@ -322,45 +373,26 @@ def insert_or_update_members(conn, guild_uuid, members_data):
                 )
 
 
-def vacuum_database(conn):
-    try:
-        log_progress("Starting database VACUUM...")
-        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
-        size_before = os.path.getsize(db_path)
-        conn.execute("VACUUM")
-        size_after = os.path.getsize(db_path)
-        saved = size_before - size_after
-        log_progress(f"Database VACUUM completed:")
-        log_progress(f"Size before: {size_before / 1024:.2f} KB")
-        log_progress(f"Size after: {size_after / 1024:.2f} KB")
-        log_progress(f"Saved: {saved / 1024:.2f} KB")
-    except Exception as e:
-        log_progress(f"VACUUM failed: {str(e)}")
-
-
 def main():
-    log_progress("Starting main data collection...")
+    logger.info("Starting main data collection...")
     guildlist_path = os.path.join(DATABASE_DIR, "guildlist.csv")
 
     # Read guild list
     with open(guildlist_path, mode="r") as file:
         reader = csv.reader(file)
         uuids = [row[0] for row in reader]
-    log_progress(f"Found {len(uuids)} guilds to process")
+    logger.info(f"Found {len(uuids)} guilds to process")
 
     conn = connect_to_db()
     try:
         for i, uuid in enumerate(uuids, 1):
-            log_progress(f"Processing guild {i}/{len(uuids)} (UUID: {uuid})")
+            logger.info(f"Processing guild {i}/{len(uuids)} (UUID: {uuid})")
             response = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
-
             # Skip this guild if we got a 404
             if response is None:
-                log_progress(f"Skipping guild {uuid} as it no longer exists")
+                logger.info(f"Skipping guild {uuid} as it no longer exists")
                 continue
-
             guild_data = response.json()
-
             insert_or_update_guild(conn, guild_data)
             insert_guild_snapshot(conn, guild_data)
             insert_or_update_members(conn, guild_data["uuid"], guild_data["members"])
@@ -368,45 +400,62 @@ def main():
 
             # Checkpoint WAL periodically
             if i % 10 == 0:  # Every 10 guilds
-                log_progress("Performing periodic WAL checkpoint...")
+                logger.info("Performing periodic WAL checkpoint...")
                 conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
-            time.sleep(1.25)  # Rate limiting
+            time.sleep(1.25)  # Rate limit
 
     except Exception as e:
-        log_progress(f"Error in main data collection: {e}")
+        logger.info(f"Error in main data collection: {e}")
     finally:
         cleanup_database(conn)
 
+def vacuum_database(conn):
+    try:
+        logger.info("Starting database VACUUM...")
+        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
+        size_before = os.path.getsize(db_path)
+        conn.execute("VACUUM")
+        size_after = os.path.getsize(db_path)
+        saved = size_before - size_after
+        
+        logger.info(f"Database VACUUM completed:")
+        logger.info(f"Size before: {size_before / 1024:.2f} KB")
+        logger.info(f"Size after: {size_after / 1024:.2f} KB")
+        logger.info(f"Saved: {saved / 1024:.2f} KB")
+        analyze_database_performance(conn)
+    except Exception as e:
+        logger.error(f"VACUUM failed: {str(e)}")
 
 async def scheduled_main():
     while True:
         start_time = datetime.now()
-        log_progress("Starting scheduled run...")
+        logger.info("Starting scheduled run...")
 
         try:
             main()
             conn = connect_to_db()
             cleanup_old_data(conn)
             create_monthly_backup()
-            vacuum_database(conn)
+            if datetime.now().day % 7 == 0: # Weekly
+                vacuum_database(conn)
+            if datetime.now().day % 7 == 0:  # Weekly
+                analyze_database_performance(conn)
             cleanup_database(conn)
-            log_progress("Scheduled run completed successfully")
-
+            logger.info("Scheduled run completed successfully")
         except Exception as e:
-            log_progress(f"Error during scheduled run: {e}")
-
+            logger.error(f"Error during scheduled run: {e}")
+        
         execution_time = (datetime.now() - start_time).total_seconds()
         wait_time = max(1200 - execution_time, 0)  # 20 minutes
-
-        log_progress(f"Execution took {execution_time:.2f} seconds")
-        log_progress(f"Waiting {wait_time:.2f} seconds until next run")
+        logger.info(f"Execution took {execution_time:.2f} seconds")
+        logger.info(f"Waiting {wait_time:.2f} seconds until next run")
         await asyncio.sleep(wait_time)
 
 
 if __name__ == "__main__":
-    log_progress("Starting production collector...")
+    logger.info("Starting production collector...")
     try:
         asyncio.run(scheduled_main())
     except KeyboardInterrupt:
-        log_progress("Scheduled data collection stopped by user")
+        logger.info("Scheduled data collection stopped by user")

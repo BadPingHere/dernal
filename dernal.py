@@ -24,7 +24,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix=None, intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
 
 def checkUpdates(localVersionFile='version.json'):
     try:
