@@ -16,7 +16,7 @@
 
 ## Features
 
-This is a quite versitile discord bot, with a few commands, like:
+This is a quite versitile discord bot, with commands, like:
 
 - **Detector**, a background task you can set up to passively track all things guild wars, including:
   - When and who takes your territory, at what time, and how long it lasted
@@ -39,6 +39,8 @@ This is a quite versitile discord bot, with a few commands, like:
   - Leaderboard online_members: Shows a leaderboard of the top 10 guild's average amount of online players.
   - Leaderboard playtime: Shows a leaderboard of the top 10 guild's playtime percentage.
   - Leaderboard total_members: Shows a leaderboard of the top 10 guild's total members.
+- **Giveaway Commands**
+  - Allows configuiring what guild you want to track for weekly giveaways, and gives better odds to win the givaway based on serveral factors. For example, Having 300 minutes of playtime and 50m xp contributed over the past 7 days, along with weekly, will triple your chances of winning the giveaway versus someone who only did their weekly. All chances are hard-coded atm, however you can edit these as you like. This is primarily built for distributing tomes gained from weekly's, however this can be used for absolutely anything.
 - **Player Commands**, a couple of commands, like:
   - Activity playtime: Shows the graph displaying the average amount minutes played every day for the past 2 weeks.
   - Activity xp: Shows a bar graph displaying the total xp a player gained every day, for the past 2 weeks.
@@ -48,15 +50,15 @@ This is a quite versitile discord bot, with a few commands, like:
   - Owner, Online, Total members, Wars and territory count, Top Season Ratings and Top Contributing Members.
 
 > [!NOTE]  
-> Due to limited API usage, if you intend to use Detector, you must self host the bot. To add, for any /guild activity and /guild leaderboard commands, you will need generateActivitySQL.py creating the database for it. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
+> For self-hosting, you will need to run dernal with the activitySQL script to use /guild activity/leaderboard commands, /player activity commands, and /giveaway commands. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
 
 ## How To Use
 
-To use this discord bot, you need to either pick the legacy, webhook version, or the supported discord bot.
+To use this discord bot, you need to either pick the legacy webhook version, or the supported discord bot (recommended).
 
 #### Discord bot
 
-If you use our hosted bot, you can add it to your server via this [link](https://discord.com/oauth2/authorize?client_id=1270960638382051368), but it will not have the full capabilities due to api ratelimits, notably losing access to Detector. If you want to use the full capabilities, you should self host the bot.
+If you use our hosted bot, you can add it to your server via this [link](https://discord.com/oauth2/authorize?client_id=1270960638382051368). However, if you wish to self-host, follow these instructions:
 
 To clone and run this discord bot, you'll need [Git](https://git-scm.com), [Python](https://www.python.org/downloads/) and [Pip](https://nodejs.org/en/download/) installed on your computer. From your command line:
 
@@ -70,12 +72,15 @@ $ cd dernal
 # Install dependencies
 $ pip install -r requirements.txt
 
-# Rename env file and add your bot token
+# Rename env file and add your bot token and other configs
 $ mv .env.example .env
 $ nano .env
 
 # Run the app
 $ python3 dernal.py
+
+# Run the activity script
+$ python3 lib/generateActivitySQL.py
 ```
 
 #### Webhook Script
@@ -106,7 +111,7 @@ You can [download](https://github.com/BadPingHere/dernal/releases/latest) the la
 
 ## Credits
 
-This software was inspired by:
+This software was inspired or uses assets from:
 
 - BoxFot
 - [Nori](https://nori.fish)
@@ -118,6 +123,5 @@ GPLv3
 
 ---
 
-> [badpinghere.tech](https://badpinghere.tech) &nbsp;&middot;&nbsp;
 > GitHub [@BadPingHere](https://github.com/BadPingHere)&nbsp;&middot;&nbsp;
-> Discord [Ping#6175](https://discord.com/users/736028271153512489)
+> Discord [BadPingHere](https://discord.com/users/736028271153512489)

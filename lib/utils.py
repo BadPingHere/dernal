@@ -15,16 +15,19 @@ from datetime import timedelta
 import io
 import seaborn as sns
 import pandas as pd
+import bisect
+import random
 
 logger = logging.getLogger('discord')
 
 ratelimitmultiplier = 1
 ratelimitwait = 0.1 
+cooldownHolder = {}
 
 sns.set_style("whitegrid")
 blue, = sns.color_palette("muted", 1)
 
-async def makeRequest(URL): # the world is built on nested if else statements.
+def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitmultiplier
     global ratelimitwait
     while True:
@@ -35,37 +38,40 @@ async def makeRequest(URL): # the world is built on nested if else statements.
             r = session.get(URL)
             r.raise_for_status()
         except requests.exceptions.RequestException as err:
-            if r.status_code == 404: # dont repeat 404's cause they wont be there.
-                logger.error(f"{URL} returned 404: {err}")
-                await asyncio.sleep(3)
+            if 400 <= r.status_code <= 499: # dont repeat 4xx's cause they wont be there.
+                logger.error(f"{URL} returned {r.status_code}: {err}")
+                time.sleep(3)
                 return r
             logger.error(f"Error getting {URL}: {err}")
-            await asyncio.sleep(3)
+            time.sleep(3)
             continue
         if r.ok:
-            if int(r.headers['RateLimit-Remaining']) > 60:
-                ratelimitmultiplier = 1
-                ratelimitwait = 0.25
-            else:
-                if int(r.headers['RateLimit-Remaining']) < 60: # We making too many requests, slow it down
-                    logger.info(f"Ratelimit-Remaining is under 60.")
-                    ratelimitmultiplier = 1.5
-                    ratelimitwait = 0.70
-                if int(r.headers['RateLimit-Remaining']) < 30: # We making too many requests, slow it down
-                    logger.info(f"Ratelimit-Remaining is under 30.")
-                    ratelimitmultiplier = 2
-                    ratelimitwait = 1.25
-                if int(r.headers['RateLimit-Remaining']) < 10: # We making too many requests, slow it down
-                    logger.info(f"Ratelimit-Remaining is under 10.")
-                    ratelimitmultiplier = 4
-                    ratelimitwait = 3
-            return r
+            if "nori" in URL: # We should be using a tad amount of resouces, and i think caches are route specific, so uhhh dont worry about rate limiting!
+                return r
+            else: # we are on main api, we gotta rate limit ourselves
+                if int(r.headers['RateLimit-Remaining']) > 60:
+                    ratelimitmultiplier = 1
+                    ratelimitwait = 0 # ive gotten to the point in development when ive forgot what these two
+                else:
+                    if int(r.headers['RateLimit-Remaining']) < 60: # We making too many requests, slow it down
+                        print(f"Ratelimit-Remaining is under 60.")
+                        ratelimitmultiplier = 1.5
+                        ratelimitwait = 0.70
+                    if int(r.headers['RateLimit-Remaining']) < 30: # We making too many requests, slow it down
+                        print(f"Ratelimit-Remaining is under 30.")
+                        ratelimitmultiplier = 2
+                        ratelimitwait = 1.25
+                    if int(r.headers['RateLimit-Remaining']) < 10: # We making too many requests, slow it down
+                        print(f"Ratelimit-Remaining is under 10.")
+                        ratelimitmultiplier = 4
+                        ratelimitwait = 3
+                return r
         else:
             logger.error(f"Error getting {URL}. Status code is {r.status_code}")
-            await asyncio.sleep(3)
+            time.sleep(3)
             continue
     
-async def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
+def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
         ('week', 60*60*24*7),
         ('day', 60*60*24),
@@ -82,84 +88,137 @@ async def human_time_duration(seconds): # thanks guy from github https://gist.gi
             parts.append('{} {}{}'.format(amount, unit, "" if amount == 1 else "s"))
     return ' '.join(parts)
 
-async def findAttackingMembers(attacker):
-    r = await makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker))
-    await asyncio.sleep(ratelimitwait)
-    if r is None:
-        logger.error(f"R is None in findAttackingMembers. Here is r: {r}.")
-        return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
+def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save cooldowns to disk, but uh, we wont!
+    now = time.time()
+    logger.info(cooldownHolder)
 
-    jsonData = r.json()
-    onlineMembers = []
-    warringMembers = []
-    attackingMembers = []
+    lastUsed = cooldownHolder.get(userOrGuildID, 0)
+    elapsed = now - lastUsed
+    if elapsed < cooldownSeconds:
+        remaining = round(cooldownSeconds - elapsed, 1)
+        return remaining
+    cooldownHolder[userOrGuildID] = now
+    logger.info(cooldownHolder)
+    return True
 
-    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
-        if isinstance(jsonData["members"][rank], dict):
-            for member in jsonData["members"][rank].values(): 
-                if member['online']: # checks if online is set to true or false
-                    onlineMembers.append([member['uuid'], member['server']])
-    #logger.info(f"Online Members: {onlineMembers}")
-    for i in onlineMembers:
-        r = await makeRequest("https://api.wynncraft.com/v3/player/"+str(i[0]))
-        json = r.json()
-        if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
-            warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
-    #logger.info(f"Warring Members: {warringMembers}")
 
-    if not warringMembers: # if for some reason this comes back with no one (offline or sum)
-        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+def findAttackingMembers(attacker):
+    r = makeRequest("https://nori.fish/api/guild/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
+    if r.status_code == 200:
+        jsonData = r.json()
+        onlineMembers = []
+        warringMembers = []
+
+        for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+            if isinstance(jsonData["members"][rank], dict):
+                for member in jsonData["members"][rank].values(): 
+                    if member['online']: # checks if online is set to true or false
+                        onlineMembers.append(member['uuid'])
+
+        for i in onlineMembers:
+            r = makeRequest("https://nori.fish/api/player/"+str(i))
+            json = r.json()
+            logger.info(f"json: {json}")
+            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+
+        if not warringMembers: # if for some reason this comes back with no one (offline or sum)
+            attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+            logger.info(f"Attacking Members: {attackingMembers}")
+            return attackingMembers
+        
+        worldStrings = [sublist[1] for sublist in warringMembers]
+        mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
+
+        if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
+            # no majority world, so we just send who has the most amount of wars
+            highestWars = max(warringMembers, key=lambda x: x[2])
+            attackingMembers = [highestWars]
+        else:
+            # majority world, just chop shit up and whatnot
+            string = mostCommonWorld[0][0]
+            attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
+        logger.info(f"Attacking Members: {attackingMembers}")
+        return attackingMembers
+    else: # Nori API issues, fallback to offical api
+        logger.warning(f"Nori api failed. Falling back to offical api. r: {r}, r.status_code: {r.status_code}")
+        r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker))
+        time.sleep(ratelimitwait)
+        if r is None:
+            logger.error(f"R is None in findAttackingMembers. Here is r: {r}.")
+            return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
+
+        jsonData = r.json()
+        onlineMembers = []
+        warringMembers = []
+        attackingMembers = []
+
+        for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+            if isinstance(jsonData["members"][rank], dict):
+                for member in jsonData["members"][rank].values(): 
+                    if member['online']: # checks if online is set to true or false
+                        onlineMembers.append([member['uuid'], member['server']])
+        #logger.info(f"Online Members: {onlineMembers}")
+        for i in onlineMembers:
+            r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i[0]))
+            json = r.json()
+            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+        #logger.info(f"Warring Members: {warringMembers}")
+
+        if not warringMembers: # if for some reason this comes back with no one (offline or sum)
+            attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+            #logger.info(f"Attacking Members: {attackingMembers}")
+            return attackingMembers
+        
+        worldStrings = [sublist[1] for sublist in warringMembers]
+        mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
+
+        if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
+            # no majority world, so we just send who has the most amount of wars
+            highestWars = max(warringMembers, key=lambda x: x[2])
+            attackingMembers = [highestWars]
+        else:
+            # majority world, just chop shit up and whatnot
+            string = mostCommonWorld[0][0]
+            attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
         #logger.info(f"Attacking Members: {attackingMembers}")
         return attackingMembers
-    
-    worldStrings = [sublist[1] for sublist in warringMembers]
-    mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
-
-    if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
-        # no majority world, so we just send who has the most amount of wars
-        highestWars = max(warringMembers, key=lambda x: x[2])
-        attackingMembers = [highestWars]
-    else:
-        # majority world, just chop shit up and whatnot
-        string = mostCommonWorld[0][0]
-        attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-    #logger.info(f"Attacking Members: {attackingMembers}")
-    return attackingMembers
         
-async def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, channelForMessages, intervalForPing, timesinceping):
+def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, intervalForPing, timesinceping):
     if guildPrefix not in timesinceping:
         timesinceping[guildPrefix] = 0  # setup 0 first, never again
         
-    if attacker != guildPrefix: # lost territory, so try to find attackers
-        attackingMembers = await findAttackingMembers(attacker)
-        world = attackingMembers[0][1]
-        username = [item[0] for item in attackingMembers]
+    shouldPing = False
+    attackingMembers = findAttackingMembers(attacker) # I dont give a shit. we will be showing the attackers on gained territory. its 1:12 am i write this
+    world = attackingMembers[0][1]
+    username = [item[0] for item in attackingMembers]
+
     description = "### 🟢 **Gained Territory!**" if attacker == guildPrefix else "### 🔴 **Lost Territory!**"
     description += f"\n\n**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}." + ("" if attacker == guildPrefix else f"\n{world}: **{'**, **'.join(username)}**")
     embed = discord.Embed(
         description=description,
         color=0x00FF00 if attacker == guildPrefix else 0xFF0000  # Green for gain, red for loss
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
-    try:
-        logger.info(f"Embed: {embed.to_dict()}")
-        await channelForMessages.send(embed=embed)
-    except discord.DiscordException as err:
-        logger.error(f"Error sending message: {err}")
-        
-    if pingRoleID and intervalForPing and channelForMessages and attacker != guildPrefix: #checks if we have everything required, and its a loss
+    # Check if we should ping
+    if pingRoleID and intervalForPing and attacker != guildPrefix:
         current_time = time.time()
-        if current_time  - int(timesinceping[guildPrefix]) >= intervalForPing*60:
+        if current_time - int(timesinceping[guildPrefix]) >= intervalForPing*60:
             timesinceping[guildPrefix] = current_time
-            try:
-                await channelForMessages.send(f"<@&{pingRoleID}>")
-            except discord.DiscordException as err:
-                logger.error(f"Error sending ping: {err}")
+            shouldPing = True
+    logger.info(f"embed description: {description}")
+    return {
+        "embed": embed,
+        "shouldPing": shouldPing,
+        "roleID": pingRoleID if shouldPing  else None
+    }
 
-async def getTerrData(untainteddata, untainteddataOLD):
-    r = await makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
-    await asyncio.sleep(ratelimitwait)
+def getTerrData(untainteddata, untainteddataOLD):
+    logger.info("We are getting territory data!")
+    r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
+    time.sleep(ratelimitwait)
     #print("status", r.status_code)
     stringdata = str(r.json())
     if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
@@ -167,13 +226,12 @@ async def getTerrData(untainteddata, untainteddataOLD):
     untainteddata = r.json()
     return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
 
-async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butitchangestho, guildPrefix, pingRoleID, channelForMessages, expectedterrcount, intervalForPing, hasbeenran, timesinceping):
-    returnData = await getTerrData(untainteddata_butitchangestho, untainteddataOLD_butitchangestho) # gets untainteddataOLD with info
-    untainteddataOLD = returnData["untainteddataOLD"]
-    untainteddata = returnData["untainteddata"]
+def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping):
     gainedTerritories = {}
     lostTerritories = {}
     terrcount = {}
+    messagesToSend = []
+    #logger.info(f"guildPrefix: {guildPrefix}")
     
     for territory, data in untainteddata.items():
         old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
@@ -196,7 +254,8 @@ async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butit
             opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix] -= 1
-            await sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, await human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, channelForMessages, intervalForPing, timesinceping)
+            embedInfo = sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, intervalForPing, timesinceping)
+            messagesToSend.append(embedInfo)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories: # checks if its empty, no need to run if it is
         for i in gainedTerritories:
@@ -209,20 +268,22 @@ async def checkterritories(untainteddata_butitchangestho, untainteddataOLD_butit
             opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
             opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix]+=1
-            await sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, await human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, channelForMessages, intervalForPing, timesinceping)
+            embedInfo = sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, intervalForPing, timesinceping)
+            messagesToSend.append(embedInfo)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories or lostTerritories: # just for resetting our variables
         hasbeenran[guildPrefix] = False
     else:
         hasbeenran[guildPrefix] = True
+    return messagesToSend
 
-async def printTop3(list, word, word2):
+def printTop3(list, word, word2):
     output = ""
     for i, sublist in enumerate(list[:3], 1):
         output += f"{i}.{word} {sublist[1]}: **{sublist[0]}** {word2}\n"
     return output
 
-async def guildLookup(guildPrefixorName, r):
+def guildLookup(guildPrefixorName, r):
     jsonData = r.json()
     online_count = 0 # default
     ratingList = [] 
@@ -258,17 +319,17 @@ async def guildLookup(guildPrefixorName, r):
         Territory Count: **{jsonData["territories"]}**
         Wars: **{"{:,}".format(jsonData["wars"])}**\n
         Top Season Rankings:
-        {await printTop3(formattedRatingList, " Season", "SR")}
+        {printTop3(formattedRatingList, " Season", "SR")}
         Top Contributing Members:
-        {await printTop3(formattedcontributingList, "", "XP")}
+        {printTop3(formattedcontributingList, "", "XP")}
         """,
         color=0xFFFF00  # i could make color specific to lookup command, but i wont until i can figure out how to get banner inside of the embed.
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     logger.info(f"Print for {guildPrefixorName} was a success!")
     return(embed)
 
-async def getTerritoryNames(untainteddata, guildPrefix):
+def getTerritoryNames(untainteddata, guildPrefix):
     with open('territories.json') as a:
         territoryData = json.load(a)
 
@@ -319,11 +380,11 @@ async def getTerritoryNames(untainteddata, guildPrefix):
         description=description,
         color=0x3457D5,
         )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
     return (embed)
 
-async def lookupUser(memberList):
+def lookupUser(memberList):
     inactivityDict = {
         "Four Week Inactive Users": [],
         "Three Week Inactive Users": [],
@@ -334,7 +395,7 @@ async def lookupUser(memberList):
     }
     for member in memberList:
         URL = "https://api.wynncraft.com/v3/player/"+str(member)
-        r = await makeRequest(URL)
+        r = makeRequest(URL)
         jsonData = r.json()
         lastJoinDate = jsonData["lastJoin"]
 
@@ -361,23 +422,23 @@ async def lookupUser(memberList):
             inactivityDict["Active Users"].append((jsonData["username"], int(epochTime)))
     return inactivityDict
 
-async def lookupGuild(name):
+def lookupGuild(name):
     # All this does is gets all the users in the guild and puts them in a list
     if len(name) >= 5:
         URL = f"https://api.wynncraft.com/v3/guild/{name}"
     else:
         URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
-    r = await makeRequest(URL)
+    r = makeRequest(URL)
     jsonData = r.json()
     memberList = []
     for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
         if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
             for member, value in jsonData["members"][rank].items(): 
                 memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
-    return await lookupUser(memberList)
+    return lookupUser(memberList)
 
 # because not everything happens in a second.
-async def intvervalGrouping(timestamps):
+def intvervalGrouping(timestamps):
     interval_seconds=30
     groups = deque()
     for ts in timestamps:
@@ -387,7 +448,7 @@ async def intvervalGrouping(timestamps):
             groups[-1].append(ts)
     return groups
 
-async def guildActivityPlaytime(guild_uuid, name):
+def guildActivityPlaytime(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, ActivityPlaytime")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -406,7 +467,7 @@ async def guildActivityPlaytime(guild_uuid, name):
     
     hourly_data = defaultdict(list)
     
-    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
+    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
 
     for group in grouped_snapshots:
         avg_online = sum(
@@ -435,7 +496,7 @@ async def guildActivityPlaytime(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
         transform=plt.gca().transAxes, 
         fontsize=9, verticalalignment='bottom', 
         horizontalalignment='right',color='gray')
@@ -451,12 +512,12 @@ async def guildActivityPlaytime(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     conn.close()
     buf.close()
     return file, embed
 
-async def guildActivityXP(guild_uuid, name):
+def guildActivityXP(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityXP")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -514,7 +575,7 @@ async def guildActivityXP(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
             transform=plt.gca().transAxes, 
             fontsize=9, verticalalignment='bottom', 
             horizontalalignment='right',color='gray')
@@ -530,13 +591,13 @@ async def guildActivityXP(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://xp_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     conn.close()
     buf.close()
     return file, embed
 
-async def guildActivityTerritories(guild_uuid, name):
+def guildActivityTerritories(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityTerritories")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -621,7 +682,7 @@ async def guildActivityTerritories(guild_uuid, name):
     plt.legend()
     plt.margins(x=0.01)
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
         transform=plt.gca().transAxes, 
         fontsize=9, verticalalignment='bottom', 
         horizontalalignment='right',color='gray')
@@ -637,13 +698,13 @@ async def guildActivityTerritories(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://territory_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
 
     buf.close()
     conn.close()
     return file, embed
 
-async def guildActivityWars(guild_uuid, name):
+def guildActivityWars(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityWars")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -725,7 +786,7 @@ async def guildActivityWars(guild_uuid, name):
     plt.legend()
     plt.margins(x=0.01)
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
         transform=plt.gca().transAxes, 
         fontsize=9, verticalalignment='bottom', 
         horizontalalignment='right',color='gray')
@@ -741,13 +802,13 @@ async def guildActivityWars(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://wars_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
 
     buf.close()
     conn.close()
     return file, embed
 
-async def guildActivityOnlineMembers(guild_uuid, name):
+def guildActivityOnlineMembers(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityOnlineMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -767,7 +828,7 @@ async def guildActivityOnlineMembers(guild_uuid, name):
     
     hourly_data = defaultdict(list)
     
-    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
+    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
 
     for group in grouped_snapshots:
         total_online = sum(snapshot[2] for snapshot in snapshots if datetime.fromisoformat(snapshot[1]) in group)
@@ -790,7 +851,7 @@ async def guildActivityOnlineMembers(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
         transform=plt.gca().transAxes, 
         fontsize=9, verticalalignment='bottom', 
         horizontalalignment='right',color='gray')
@@ -810,14 +871,14 @@ async def guildActivityOnlineMembers(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     conn.close()
     buf.close()
     
     return file, embed
 
-async def guildActivityTotalMembers(guild_uuid, name):
+def guildActivityTotalMembers(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityTotalMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -835,7 +896,7 @@ async def guildActivityTotalMembers(guild_uuid, name):
         return None, None
     
     hourly_data = defaultdict(list)
-    grouped_snapshots = await intvervalGrouping([datetime.fromisoformat(snapshot[0]) for snapshot in snapshots])
+    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[0]) for snapshot in snapshots])
     for group in grouped_snapshots:
         total_members = sum(snapshot[1] for snapshot in snapshots if datetime.fromisoformat(snapshot[0]) in group)
         hourly_data[group[0]].append(total_members)
@@ -857,7 +918,7 @@ async def guildActivityTotalMembers(guild_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
     transform=plt.gca().transAxes, 
     fontsize=9, verticalalignment='bottom', 
     horizontalalignment='right',color='gray')
@@ -877,13 +938,13 @@ async def guildActivityTotalMembers(guild_uuid, name):
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://total_members_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     conn.close()
     buf.close()
     return file, embed
 
-async def guildLeaderboardOnlineMembers():
+def guildLeaderboardOnlineMembers():
     logger.info(f"leaderboardOnlineMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -935,10 +996,10 @@ async def guildLeaderboardOnlineMembers():
         description=description,
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
 
-async def guildLeaderboardTotalMembers():
+def guildLeaderboardTotalMembers():
     logger.info(f"leaderboardTotalMembers")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -993,10 +1054,10 @@ async def guildLeaderboardTotalMembers():
         description=description,
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
 
-async def guildLeaderboardWars():
+def guildLeaderboardWars():
     logger.info(f"leaderboardWars")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1031,11 +1092,11 @@ async def guildLeaderboardWars():
         description=leaderboard_description,
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     conn.close()
     return embed
 
-async def guildLeaderboardXP():
+def guildLeaderboardXP():
     logger.info(f"leaderboardXP")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1110,11 +1171,11 @@ async def guildLeaderboardXP():
         description=leaderboard_description,
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     conn.close()
     return embed
 
-async def guildLeaderboardPlaytime():
+def guildLeaderboardPlaytime():
     logger.info(f"leaderboardPlaytime")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1123,13 +1184,9 @@ async def guildLeaderboardPlaytime():
         WITH time_grouped_data AS (
             SELECT 
                 g.uuid as guild_uuid,
-                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
                 ms.timestamp,
                 ms.online,
-                datetime(
-                    strftime('%Y-%m-%d %H:', timestamp) || 
-                    (cast(strftime('%M', timestamp) / 5 as int) * 5)
-                ) as interval_start
+                datetime(strftime('%s', ms.timestamp) - strftime('%s', ms.timestamp) % 300, 'unixepoch') as interval_start
             FROM guilds g
             JOIN member_snapshots ms ON g.uuid = ms.guild_uuid
             WHERE ms.timestamp >= datetime('now', '-1 day')
@@ -1137,18 +1194,18 @@ async def guildLeaderboardPlaytime():
         interval_averages AS (
             SELECT 
                 guild_uuid,
-                guild_name,
                 interval_start,
                 AVG(CAST(online AS FLOAT)) * 100 as interval_avg
             FROM time_grouped_data
-            GROUP BY guild_uuid, guild_name, interval_start
+            GROUP BY guild_uuid, interval_start
         ),
         guild_averages AS (
             SELECT 
-                guild_name,
-                AVG(interval_avg) as activity_percentage
-            FROM interval_averages
-            GROUP BY guild_name
+                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+                AVG(ia.interval_avg) as activity_percentage
+            FROM interval_averages ia
+            JOIN guilds g ON ia.guild_uuid = g.uuid
+            GROUP BY g.uuid
             HAVING activity_percentage > 0
         )
         SELECT 
@@ -1179,10 +1236,10 @@ async def guildLeaderboardPlaytime():
         description=leaderboard_description,
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return embed
 
-async def playerActivityPlaytime(player_uuid, name):
+def playerActivityPlaytime(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1254,7 +1311,7 @@ async def playerActivityPlaytime(player_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
             transform=plt.gca().transAxes, 
             fontsize=9, verticalalignment='bottom', 
             horizontalalignment='right', color='gray')
@@ -1276,14 +1333,14 @@ async def playerActivityPlaytime(player_uuid, name):
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     conn.close()
     buf.close()
     
     return file, embed
 
-async def playerActivityXP(player_uuid, name):
+def playerActivityXP(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityXP")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
@@ -1333,7 +1390,7 @@ async def playerActivityXP(player_uuid, name):
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now().strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
              transform=plt.gca().transAxes, fontsize=9, verticalalignment='bottom', 
              horizontalalignment='right', color='gray')
 
@@ -1353,8 +1410,164 @@ async def playerActivityXP(player_uuid, name):
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_xp_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now().strftime('%m/%d/%Y, %I:%M %p')}")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     conn.close()
     buf.close()
     return file, embed
+
+def rollGiveaway(weeklyNames, rollcount):
+    logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
+    
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    weeklyNames = list(weeklyNames)
+
+    placeholders = ','.join(['?' for _ in weeklyNames])
+    cursor.execute(f"""
+        SELECT name, uuid 
+        FROM members 
+        WHERE name IN ({placeholders})
+    """, weeklyNames)
+    uuid_map = dict(cursor.fetchall())
+
+    uuid_list = list(uuid_map.values())
+    if not uuid_list:
+        logger.warning("No valid UUIDs found for the provided player names")
+        conn.close()
+        return {}, []
+        
+    placeholders = ','.join(['?' for _ in uuid_list])
+    cursor.execute(f"""
+        SELECT member_uuid, timestamp, online, contribution
+        FROM member_snapshots
+        WHERE member_uuid IN ({placeholders})
+        AND timestamp >= datetime('now', '-7 days')
+        ORDER BY member_uuid, timestamp
+    """, uuid_list)
+
+    player_snapshots = defaultdict(list)
+    for row in cursor.fetchall():
+        player_snapshots[row[0]].append(row)
+    
+    chances = {}
+    tickets = {}
+    total_tickets = 0
+    
+    for player_name in weeklyNames:
+        if player_name not in uuid_map:
+            logger.warning(f"Player {player_name} not found in database") # shouldnt happen but whatnot
+            continue
+            
+        player_uuid = uuid_map[player_name]
+        snapshots = player_snapshots[player_uuid]
+        
+        if not snapshots:
+            logger.warning(f"No snapshots found for player {player_name}")
+            chances[player_name] = 0
+            tickets[player_name] = 0
+            continue
+            
+        # Calculate playtime
+        playtimeMinutes = defaultdict(float)
+        for i in range(1, len(snapshots)):
+            if snapshots[i][2] == 1:  # online status
+                curr_time = datetime.strptime(snapshots[i][1], '%Y-%m-%d %H:%M:%S')
+                prev_time = datetime.strptime(snapshots[i-1][1], '%Y-%m-%d %H:%M:%S')
+                minutes = (curr_time - prev_time).total_seconds() / 60
+                playtimeMinutes[curr_time.date()] += minutes
+        
+        avgDailyPlaytime = sum(playtimeMinutes.values()) / 7 if playtimeMinutes else 0
+
+        playtime_thresholds = [ # Tickets per minute ex. 300 mins playtime per day is 1, 60 is 0.5
+            (300, 1.0), (240, 0.9), (120, 0.8), (90, 0.7),
+            (75, 0.6), (60, 0.5), (45, 0.4), (30, 0.3),
+            (20, 0.2), (10, 0.1), (0, 0.0)
+        ]
+        
+        for threshold, ticket in playtime_thresholds: # goes down the list and sees if they qualify if they do break
+            if avgDailyPlaytime >= threshold:
+                playtimeTickets = ticket
+                break
+
+        weeklyXP = snapshots[-1][3] - snapshots[0][3] if len(snapshots) > 1 else 0
+
+        xp_thresholds = [ # Tickets per xp ex. 50m xp contri the week is 1, 1.25m is 0.5
+            (50_000_000, 1.0), (25_000_000, 0.9), (15_000_000, 0.8),
+            (10_000_000, 0.7), (3_000_000, 0.6), (1_250_000, 0.5),
+            (750_000, 0.4), (300_000, 0.3), (150_000, 0.2),
+            (50_000, 0.1), (0, 0.0)
+        ]
+        
+        for threshold, ticket in xp_thresholds: # goes down the list and sees if they qualify if they do break
+            if weeklyXP >= threshold:
+                xpTickets = ticket
+                break
+
+        completion_tickets = 1.0 # Base ticket count, everyone will have 1 ticket because they did weekly
+        total_player_tickets = completion_tickets + playtimeTickets + xpTickets
+        total_tickets += total_player_tickets
+        chances[player_name] = total_player_tickets
+        tickets[player_name] = total_player_tickets
+        
+        logger.info(f"Player {player_name} processing completed")
+        logger.info(
+            f"Player Stats - "
+            f"Average Daily Playtime: {avgDailyPlaytime:.1f} minutes, "
+            f"Weekly XP: {weeklyXP:,}"
+        )
+        logger.info(
+            f"Tickets breakdown - "
+            f"Completion: {completion_tickets}, "
+            f"Playtime: {playtimeTickets} (from {avgDailyPlaytime:.1f} min/day), "
+            f"XP: {xpTickets} (from {weeklyXP:,} XP)"
+        )
+    
+    if total_tickets > 0: # redardancy and whjatnot
+        chances = {name: (tickets[name]/total_tickets) * 100 for name in chances}
+    
+    eligible_players = [name for name, tickets in tickets.items() if tickets > 0]
+    rollcount = min(rollcount, len(eligible_players))
+    
+    if rollcount == 0:
+        logger.warning("No eligible players or rolls requested")
+        conn.close()
+        return chances, []
+
+    names = []
+    weights = []
+    for name in eligible_players:
+        names.append(name)
+        weights.append(tickets[name])
+
+    total_weight = sum(weights)
+    if total_weight > 0:
+        weights = [w/total_weight for w in weights]
+    winners = []
+    remaining_names = names.copy()
+    remaining_weights = weights.copy()
+    
+    for _ in range(rollcount):
+        if not remaining_names: # No one to pick from
+            break
+        cum_weights = []
+        curr_sum = 0
+        for w in remaining_weights:
+            curr_sum += w
+            cum_weights.append(curr_sum)
+        winner_idx = bisect.bisect(cum_weights, random.random())
+        winner = remaining_names[winner_idx]
+        winners.append(winner)
+        
+        del remaining_names[winner_idx]
+        del remaining_weights[winner_idx]
+        
+        if remaining_weights:
+            weight_sum = sum(remaining_weights)
+            remaining_weights = [w/weight_sum for w in remaining_weights]
+    
+    conn.close()
+    logger.info(f"Tickets: {tickets}") # For logging purposes, so we dont have to do the math
+    logger.info(f"Chances: {chances}")
+    logger.info(f"Winners: {winners}")
+    return chances, winners

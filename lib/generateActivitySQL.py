@@ -23,15 +23,14 @@ BACKUP_DIR = os.path.join(DATABASE_DIR, "backups")
 LOG_FILE = os.path.join(BASE_DIR, "activitySQL.log")
 
 logger = logging.getLogger('activity')
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 handler = logging.handlers.RotatingFileHandler(
     filename=LOG_FILE,
     encoding='utf-8',
-    maxBytes=32 * 1024 * 1024,  # 32 MiB
-    backupCount=5,  # Rotate through 5 files
+    maxBytes=256 * 1024 * 1024,  # 256 Mib
 )
 dt_fmt = '%Y-%m-%d %H:%M:%S'
-formatter = logging.Formatter('[{asctime}] [{levelname:<8}] {name}: {message}', dt_fmt, style='{')
+formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
@@ -391,23 +390,65 @@ def main():
         cleanup_database(conn)
 
 def vacuum_database(conn):
+    # This function is a bitch on linux but finally works.
     try:
-        logger.info("Starting database VACUUM...")
-        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
-        size_before = os.path.getsize(db_path)
-        conn.execute("VACUUM")
-        size_after = os.path.getsize(db_path)
-        saved = size_before - size_after
+        logger.info("Starting database VACUUM preparation...")
         
-        logger.info(f"Database VACUUM completed:")
-        logger.info(f"Size before: {size_before / 1024:.2f} KB")
-        logger.info(f"Size after: {size_after / 1024:.2f} KB")
-        logger.info(f"Saved: {saved / 1024:.2f} KB")
-        analyze_database_performance(conn)
+        # First check available disk space
+        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
+        db_size = os.path.getsize(db_path)
+        
+        # Get free space
+        stat = os.statvfs(DATABASE_DIR)
+        free_space = stat.f_frsize * stat.f_bavail
+        
+        logger.info(f"Current database size: {db_size / (1024*1024):.2f} MB")
+        logger.info(f"Available disk space: {free_space / (1024*1024):.2f} MB")
+        required_space = db_size * 1.1
+        if free_space < required_space:
+            logger.error(f"Insufficient disk space for VACUUM. Need at least {required_space/(1024*1024):.2f} MB free")
+            return
+        logger.info("Preparing system for VACUUM")
+        conn.close()
+        
+        vacuum_conn = sqlite3.connect(db_path, isolation_level=None)
+        vacuum_conn.execute("PRAGMA journal_mode=OFF")
+        vacuum_conn.execute("PRAGMA synchronous=OFF")
+        vacuum_conn.execute("PRAGMA cache_size=-2000") 
+        vacuum_conn.execute("PRAGMA busy_timeout=3600000") # linux is slow but shouldnt ever take more than 1hr
+        logger.info("Executing VACUUM")
+        start_time = time.time()
+        vacuum_conn.execute("VACUUM")
+        duration = time.time() - start_time
+        size_after = os.path.getsize(db_path)
+        saved = db_size - size_after
+        
+        logger.info(f"Database VACUUM completed successfully:")
+        logger.info(f"Duration: {duration/60:.1f} minutes")
+        logger.info(f"Size before: {db_size / (1024*1024):.2f} MB")
+        logger.info(f"Size after: {size_after / (1024*1024):.2f} MB")
+        logger.info(f"Saved: {saved / (1024*1024):.2f} MB")
+        
+        # Close vacuum connection
+        vacuum_conn.close()
+        return connect_to_db()
+        
+    except sqlite3.OperationalError as e:
+        logger.error(f"SQLite operational error during VACUUM: {str(e)}")
+    except OSError as e:
+        logger.error(f"OS error during VACUUM (possibly disk space related): {str(e)}")
     except Exception as e:
-        logger.error(f"VACUUM failed: {str(e)}")
+        logger.error(f"Unexpected error during VACUUM: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        
+    try:
+        return connect_to_db()
+    except:
+        logger.error("Could not re-establish database connection after VACUUM error")
+        raise
 
 async def scheduled_main():
+    vacuum = False
     while True:
         start_time = datetime.now()
         logger.info("Starting scheduled run...")
@@ -417,9 +458,12 @@ async def scheduled_main():
             conn = connect_to_db()
             cleanup_old_data(conn)
             create_monthly_backup()
-            if datetime.now().day % 7 == 0: # Weekly
+            if datetime.now().day != 1:
+                vacuum = False
+            if datetime.now().day == 1 and not vacuum:
                 vacuum_database(conn)
-            if datetime.now().day % 7 == 0:  # Weekly
+                vacuum = True
+            if datetime.now().day % 7 == 0:
                 analyze_database_performance(conn)
             cleanup_database(conn)
             logger.info("Scheduled run completed successfully")

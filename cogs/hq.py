@@ -4,6 +4,7 @@ from discord import app_commands
 from typing import Optional
 from lib.utils import makeRequest, getTerritoryNames
 import logging
+import asyncio
 
 logger = logging.getLogger('discord')
 
@@ -22,7 +23,7 @@ class HQ(commands.Cog):
         URL = "https://api.wynncraft.com/v3/guild/list/territory"
         r = await makeRequest(URL)
         untainteddata = r.json()
-        embed = await getTerritoryNames(untainteddata, guild if guild else None)
+        embed = await asyncio.to_thread(getTerritoryNames, untainteddata, guild if guild else None)
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):

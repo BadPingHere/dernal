@@ -3,9 +3,10 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 import time
-from lib.utils import makeRequest, guildLookup, lookupGuild, guildActivityPlaytime, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardPlaytime
+from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildActivityPlaytime, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardPlaytime
 import sqlite3
 import logging
+import asyncio
 
 logger = logging.getLogger('discord')
 class InactivityView(View):
@@ -64,12 +65,14 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)  
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
+        
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
@@ -91,7 +94,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await guildActivityPlaytime(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityPlaytime, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -102,11 +105,11 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)   
     async def activityXP(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
             
         conn = sqlite3.connect('database/guild_activity.db')
@@ -130,7 +133,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await guildActivityXP(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityXP,result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -141,11 +144,11 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityTerritories(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
             
         conn = sqlite3.connect('database/guild_activity.db')
@@ -168,7 +171,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await guildActivityTerritories(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityTerritories, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -179,11 +182,13 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityWars(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
+        
         await interaction.response.defer()
             
         conn = sqlite3.connect('database/guild_activity.db')
@@ -206,7 +211,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await guildActivityWars(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityWars, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -217,12 +222,12 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityTotal_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
@@ -244,7 +249,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await guildActivityTotalMembers(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityTotalMembers, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -255,12 +260,12 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityOnline_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
@@ -282,7 +287,7 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await guildActivityOnlineMembers(result[0], name)
+        file, embed = await asyncio.to_thread(guildActivityOnlineMembers, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -293,14 +298,14 @@ class Guild(commands.GroupCog, name="guild"):
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
     async def leaderboardOnline_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await guildLeaderboardOnlineMembers()
+        embed = await asyncio.to_thread(guildLeaderboardOnlineMembers)
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -309,14 +314,14 @@ class Guild(commands.GroupCog, name="guild"):
     @leaderboardCommands.command(name="total_members", description="Shows a leaderboard of the top 10 guild's total members.")
     async def leaderboardTotal_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await guildLeaderboardTotalMembers()
+        embed = await asyncio.to_thread(guildLeaderboardTotalMembers)
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -325,14 +330,14 @@ class Guild(commands.GroupCog, name="guild"):
     @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 10 guild's war amount.")
     async def leaderboardWars(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await guildLeaderboardWars()
+        embed = await asyncio.to_thread(guildLeaderboardWars)
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -341,14 +346,14 @@ class Guild(commands.GroupCog, name="guild"):
     @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.")
     async def leaderboardXP(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await guildLeaderboardXP()
+        embed = await asyncio.to_thread(guildLeaderboardXP)
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -357,14 +362,14 @@ class Guild(commands.GroupCog, name="guild"):
     @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.") 
     async def leaderboardPlaytime(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         await interaction.response.defer()
         
-        embed = await guildLeaderboardPlaytime()
+        embed = await asyncio.to_thread(guildLeaderboardPlaytime)
         if embed:
             await interaction.followup.send(embed=embed)
         else:
@@ -384,9 +389,9 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
 
-        r = await makeRequest(URL)
+        r = await asyncio.to_thread(makeRequest, URL)
         if r.ok:
-            embed = await guildLookup(name, r)
+            embed = await asyncio.to_thread(guildLookup, name, r)
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
@@ -405,10 +410,10 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
 
-        r = await makeRequest(URL)
+        r = await asyncio.to_thread(makeRequest, URL)
         if r.ok:
             await interaction.response.defer()
-            inactivityDict = await lookupGuild(name)
+            inactivityDict = await asyncio.to_thread(lookupGuild, name)
             view = InactivityView(inactivityDict)
             embed = discord.Embed(
                 title=f"{view.category_keys[view.current_category_index]}",

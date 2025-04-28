@@ -15,16 +15,27 @@ logger.setLevel(logging.INFO)
 handler = logging.handlers.RotatingFileHandler(
     filename='discord.log',
     encoding='utf-8',
-    maxBytes=32 * 1024 * 1024,  # 32 MiB
-    backupCount=5,  # Rotate through 5 files
+    maxBytes=128 * 1024 * 1024,  # 128 MiB
 )
 dt_fmt = '%Y-%m-%d %H:%M:%S'
-formatter = logging.Formatter('[{asctime}] [{levelname:<8}] {name}: {message}', dt_fmt, style='{')
+formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+
+# TODO:
+#* 1. Fix commands blocking heartbeat 
+#! 2. Debug what is causing the database to corrupt 
+#* 3. Fix all forward-facing times to show UTC rather than server time
+#! 4. Implement proxies for heavy tasks, which would allow us to hold more data
+#? 5. Improve performance on database commands.
+#! 6. Have a webhook or something ping on discord when the bot or database is down for more than 30 minutes
+#* 7. Fix giveaway selection for players, for sure making it alphabetical and using the api since its only 1 request. Also, if possible, a search function
+#* 8. Fix cooldowns being for all users, and make it user-specific; also make giveaway command server-specific, and add a 1hr cooldown, and possibly check permissions for who can use it?
+#* 9. Change Detector to cache territory data, giving way to allowing a infinite amount of servers use detector.
+#* 10. Change detector and giveaway to allow only certain role names to run them, rather than hardcoded role id's
 
 def checkUpdates(localVersionFile='version.json'):
     try:
@@ -73,31 +84,29 @@ def checkUpdates(localVersionFile='version.json'):
             "message": "Could not check for updates"
         }
 
-
 @bot.event
 async def on_ready():
-    print("\n")
-    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
-    print('Syncing bot commands, this may take some time.')
+    logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    logger.info('Syncing bot commands, this may take some time.')
 
     #bot.tree.clear_commands(guild=None) 
     await bot.tree.sync(guild=None)
-    print("Command Tree is synced to global!")
+    logger.info("Command Tree is synced to global!")
     guild_id = os.getenv("SERVER_ID")
     if guild_id: # if server_id is present, faster syncs. mainly for development, but end user can use it too ig.
         guild = discord.Object(id=guild_id) 
         #bot.tree.clear_commands(guild=guild) # this is legit only for one reason. because discord bots suck.
         await bot.tree.sync(guild=guild)
-        print(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
+        logger.info(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
 
-    print('------')
+    logger.info('------')
     update_info = checkUpdates()
     if update_info.get('update_available', False):
-        print(f"Update available! Current version: {update_info['current_version']}, "
+        logger.info(f"Update available! Current version: {update_info['current_version']}, "
               f"Latest version: {update_info['latest_version']}")
-        print(f"Update URL: {update_info['update_url']}")
+        logger.info(f"Update URL: {update_info['update_url']}")
     else:
-        print("Dernal is up to date!")
+        logger.info("Dernal is up to date!")
     logger.info(f"Logged in as {bot.user.name}")
     logger.info(f"Discord.py version: {discord.__version__}")
     logger.info(f"Python version: {platform.python_version()}")
@@ -107,17 +116,17 @@ async def on_ready():
     logger.info("-------------------")
 
 async def load_cogs():
-    print("Loading bot cogs:")
+    logger.info("Loading bot cogs:")
     for filename in os.listdir('./cogs'): # gets commands (cogs(why is it called cogs))
         if filename.endswith('.py'):
             try:
                 await bot.load_extension(f'cogs.{filename[:-3]}')
-                print(f'Loaded Cog: {filename[:-3]}')
+                logger.info(f'Loaded Cog: {filename[:-3]}')
             except Exception as e:
-                print(f'Failed to load Cog {filename[:-3]}')
-                print(f'Error: {str(e)}')
+                logger.info(f'Failed to load Cog {filename[:-3]}')
+                logger.info(f'Error: {str(e)}')
 
-async def main(): # couldnt explain whats happening around here. at all.
+async def main(): # idk why i couldnt explain it? maybe it was my past code but like this is not unexplainable
     async with bot:
         await load_cogs()
         load_dotenv()

@@ -3,9 +3,10 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 import time
-from lib.utils import makeRequest, playerActivityPlaytime, playerActivityXP
+from lib.utils import playerActivityPlaytime, playerActivityXP
 import sqlite3
 import logging
+import asyncio
 
 logger = logging.getLogger('discord')
 
@@ -20,10 +21,13 @@ class Player(commands.GroupCog, name="player"):
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day over the past two weeks.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
-        logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
+        logger.info(f"Command /player activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        elapsed = current_time - self.guildLookupCooldown
+
+        if elapsed <= 5:
+            remaining = 5 - elapsed
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
         self.guildLookupCooldown = current_time
@@ -41,7 +45,7 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await playerActivityPlaytime(result[0], name)
+        file, embed = await asyncio.to_thread(playerActivityPlaytime, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -51,10 +55,13 @@ class Player(commands.GroupCog, name="player"):
     @activityCommands.command(name="xp", description="Shows the graph displaying the average amount of xp gain every day over the past two weeks.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityXP(self, interaction: discord.Interaction, name: str):
-        logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
+        logger.info(f"Command /player activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 10:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        elapsed = current_time - self.guildLookupCooldown
+
+        if elapsed <= 5:
+            remaining = 5 - elapsed
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
         self.guildLookupCooldown = current_time
@@ -72,7 +79,7 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await playerActivityXP(result[0], name)
+        file, embed = await asyncio.to_thread(playerActivityXP, result[0], name)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
