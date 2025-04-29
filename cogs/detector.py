@@ -7,7 +7,7 @@ import os
 import json
 import shelve
 from dotenv import load_dotenv
-from lib.utils import checkterritories, getTerrData, makeRequest
+from lib.utils import checkterritories, makeRequest
 import asyncio
 
 logger = logging.getLogger('discord')
@@ -66,6 +66,7 @@ class Detector(commands.GroupCog, name="detector"):
                 config = self.guildsBeingTracked[guild_id]
                 guildPrefix = config['guildPrefix']
                 pingRoleID = config["pingRoleID"]
+                #logger.info(f"guildPrefix: {guildPrefix}")
                 try:
                     channel_id = config['channelForMessages']
                     guild = await self.bot.fetch_guild(guild_id)
@@ -78,10 +79,12 @@ class Detector(commands.GroupCog, name="detector"):
                 
                 # Check territories using current and old data
                 messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping)
+                #logger.info(f"messagesToSend: {messagesToSend}")
                 if messagesToSend:
                     for message_info in messagesToSend:
                         try:
-                            await channelForMessages.send(embed=message_info["embed"])
+                            await channelForMessages.send(embed=message_info['embed'])
+                                
                             if message_info["shouldPing"]:
                                 await channelForMessages.send(f"<@&{message_info['roleID']}>")
                         except discord.DiscordException as err:
@@ -93,7 +96,7 @@ class Detector(commands.GroupCog, name="detector"):
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):
         requiredRoleName = "Detector Permission"
-        logger.info(f"interaction.user.roles: {interaction.user.roles}")
+        #logger.info(f"interaction.user.roles: {interaction.user.roles}")
         permission = 0
         for role in interaction.user.roles:
             if role.name.lower() == requiredRoleName.lower():
@@ -131,7 +134,7 @@ class Detector(commands.GroupCog, name="detector"):
             return choices # This is so the user in question doesnt get info on the currently-running detector
         
         serverID = str(interaction.guild.id)  # This gets the current server ID
-        logger.info(f"self.guildsBeingTracked.items(): {self.guildsBeingTracked.items()}")
+        #logger.info(f"self.guildsBeingTracked.items(): {self.guildsBeingTracked.items()}")
         for server_id, data in self.guildsBeingTracked.items():
             if server_id == serverID: # make sure we are only showing results for the server we are in
                 guildPrefix = data.get('guildPrefix', '')

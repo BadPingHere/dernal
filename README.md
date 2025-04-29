@@ -117,6 +117,10 @@ This software was inspired or uses assets from:
 - [Nori](https://nori.fish)
 - [Wynncraft-Territory-Info](https://github.com/jakematt123/Wynncraft-Territory-Info)
 
+## Bug Reporting
+
+If you are having any issues, that being a command is running improperly, the grammar on an error is weird, or having issues getting the bot up and running, please do not hesitate to either contact me on discord or submit an issue [here](https://github.com/BadPingHere/dernal/issues).
+
 ## License
 
 GPLv3

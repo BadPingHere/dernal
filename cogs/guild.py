@@ -67,7 +67,7 @@ class Guild(commands.GroupCog, name="guild"):
         logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
 
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -106,7 +106,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityXP(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -145,7 +145,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityTerritories(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -184,7 +184,7 @@ class Guild(commands.GroupCog, name="guild"):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -223,7 +223,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityTotal_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -261,7 +261,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityOnline_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -299,7 +299,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def leaderboardOnline_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -315,7 +315,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def leaderboardTotal_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -331,7 +331,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def leaderboardWars(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -347,7 +347,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def leaderboardXP(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
@@ -363,7 +363,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def leaderboardPlaytime(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        logger.info(response)
+        #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return

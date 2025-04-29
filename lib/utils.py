@@ -30,46 +30,55 @@ blue, = sns.color_palette("muted", 1)
 def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitmultiplier
     global ratelimitwait
+
+    retries = 0
+    maxRetries = 0 # So we dont constantly spam a url if we cant find it or something.
+    session = requests.Session()
+    session.trust_env = False
     while True:
         try:
-            session = requests.Session()
-            session.trust_env = False
-            
             r = session.get(URL)
             r.raise_for_status()
         except requests.exceptions.RequestException as err:
-            if 400 <= r.status_code <= 499: # dont repeat 4xx's cause they wont be there.
-                logger.error(f"{URL} returned {r.status_code}: {err}")
+            statusCode = getattr(err.response, 'status_code', None) # status code we got from the error
+            retryCodes = [408, 425, 429, 500, 502, 503, 504]
+            if statusCode in retryCodes: # only retry reasonable codes
+                logger.error(f"{URL} returned {statusCode}: {err}")
+                time.sleep(2)
+                retries += 1
+                if retries >= maxRetries: # if we passed our limit, make sure the bartender doesnt serve us any more.
+                    logger.critical(f"Max retries exceeded for {URL}")
+                    raise
+                continue
+            else: # no need to retry
+                logger.error(f"{URL} returned {statusCode}, will not be retried: {err}")
                 time.sleep(3)
-                return r
-            logger.error(f"Error getting {URL}: {err}")
-            time.sleep(3)
-            continue
+                raise
         if r.ok:
             if "nori" in URL: # We should be using a tad amount of resouces, and i think caches are route specific, so uhhh dont worry about rate limiting!
                 return r
             else: # we are on main api, we gotta rate limit ourselves
-                if int(r.headers['RateLimit-Remaining']) > 60:
+                ratelimitRemaining = int(r.headers['RateLimit-Remaining']) 
+                if ratelimitRemaining > 60:
                     ratelimitmultiplier = 1
                     ratelimitwait = 0 # ive gotten to the point in development when ive forgot what these two
                 else:
-                    if int(r.headers['RateLimit-Remaining']) < 60: # We making too many requests, slow it down
-                        print(f"Ratelimit-Remaining is under 60.")
+                    if ratelimitRemaining < 60: # We making too many requests, slow it down
+                        logger.warning(f"Ratelimit-Remaining is under 60.")
                         ratelimitmultiplier = 1.5
                         ratelimitwait = 0.70
-                    if int(r.headers['RateLimit-Remaining']) < 30: # We making too many requests, slow it down
-                        print(f"Ratelimit-Remaining is under 30.")
+                    if ratelimitRemaining < 30: # We making too many requests, slow it down
+                        logger.warning(f"Ratelimit-Remaining is under 30.")
                         ratelimitmultiplier = 2
                         ratelimitwait = 1.25
-                    if int(r.headers['RateLimit-Remaining']) < 10: # We making too many requests, slow it down
-                        print(f"Ratelimit-Remaining is under 10.")
+                    if ratelimitRemaining < 10: # We making too many requests, slow it down
+                        logger.warning(f"Ratelimit-Remaining is under 10.")
                         ratelimitmultiplier = 4
                         ratelimitwait = 3
                 return r
         else:
             logger.error(f"Error getting {URL}. Status code is {r.status_code}")
             time.sleep(3)
-            continue
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
@@ -90,7 +99,7 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
 
 def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save cooldowns to disk, but uh, we wont!
     now = time.time()
-    logger.info(cooldownHolder)
+    #logger.info(cooldownHolder)
 
     lastUsed = cooldownHolder.get(userOrGuildID, 0)
     elapsed = now - lastUsed
@@ -98,7 +107,7 @@ def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save
         remaining = round(cooldownSeconds - elapsed, 1)
         return remaining
     cooldownHolder[userOrGuildID] = now
-    logger.info(cooldownHolder)
+    #logger.info(cooldownHolder)
     return True
 
 
@@ -118,13 +127,13 @@ def findAttackingMembers(attacker):
         for i in onlineMembers:
             r = makeRequest("https://nori.fish/api/player/"+str(i))
             json = r.json()
-            logger.info(f"json: {json}")
+            #logger.info(f"json: {json}")
             if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
                 warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
 
         if not warringMembers: # if for some reason this comes back with no one (offline or sum)
             attackingMembers = [["Unknown", "Unknown", 1738]] # ay
-            logger.info(f"Attacking Members: {attackingMembers}")
+            #(f"Attacking Members: {attackingMembers}")
             return attackingMembers
         
         worldStrings = [sublist[1] for sublist in warringMembers]
@@ -138,7 +147,7 @@ def findAttackingMembers(attacker):
             # majority world, just chop shit up and whatnot
             string = mostCommonWorld[0][0]
             attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-        logger.info(f"Attacking Members: {attackingMembers}")
+        #logger.info(f"Attacking Members: {attackingMembers}")
         return attackingMembers
     else: # Nori API issues, fallback to offical api
         logger.warning(f"Nori api failed. Falling back to offical api. r: {r}, r.status_code: {r.status_code}")
@@ -214,17 +223,6 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
         "shouldPing": shouldPing,
         "roleID": pingRoleID if shouldPing  else None
     }
-
-def getTerrData(untainteddata, untainteddataOLD):
-    logger.info("We are getting territory data!")
-    r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
-    time.sleep(ratelimitwait)
-    #print("status", r.status_code)
-    stringdata = str(r.json())
-    if untainteddata: #checks if it was used before if not save the last one to a different variable. only useful for time when gaind a territory.
-        untainteddataOLD = untainteddata
-    untainteddata = r.json()
-    return {"stringdata": stringdata, "untainteddataOLD": untainteddataOLD, "untainteddata": untainteddata}
 
 def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping):
     gainedTerritories = {}

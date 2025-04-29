@@ -191,7 +191,7 @@ class giveaway(commands.Cog):
     @app_commands.describe(prefix='The guild prefix to configure for giveaways')
     async def configure(self, interaction: discord.Interaction, prefix: str):
         requiredRoleName = "Giveaway Permission"
-        logger.info(f"interaction.user.roles: {interaction.user.roles}")
+        #logger.info(f"interaction.user.roles: {interaction.user.roles}")
         permission = 0
         for role in interaction.user.roles:
             logger.info(f"role.name: {role.name}")
@@ -236,7 +236,7 @@ class giveaway(commands.Cog):
     @app_commands.describe(winners='The amount of winners for the giveaway.')
     async def roll(self, interaction: discord.Interaction, winners: int):
         requiredRoleName = "Giveaway Permission"
-        logger.info(f"interaction.user.roles: {interaction.user.roles}")
+        #logger.info(f"interaction.user.roles: {interaction.user.roles}")
         permission = 0
         for role in interaction.user.roles:
             if role.name.lower() == requiredRoleName.lower():
