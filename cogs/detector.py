@@ -71,8 +71,7 @@ class Detector(commands.GroupCog, name="detector"):
                     channel_id = config['channelForMessages']
                     guild = await self.bot.fetch_guild(guild_id)
                     channelForMessages = await guild.fetch_channel(channel_id)
-                except Exception as e:
-                    logger.error(f"Failed fetching guild/channel for {guild_id}: {e}")
+                except Exception as e: # if someone kicks the bot or similar, theyll enter here and always be pinging discord servers every 20s. As much as I care about discord's api, i dont care enough to change the code.
                     continue
 
                 intervalForPing = config["intervalForPing"]

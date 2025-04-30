@@ -32,7 +32,7 @@ def makeRequest(URL): # the world is built on nested if else statements.
     global ratelimitwait
 
     retries = 0
-    maxRetries = 0 # So we dont constantly spam a url if we cant find it or something.
+    maxRetries = 10 # So we dont constantly spam a url if we cant find it or something.
     session = requests.Session()
     session.trust_env = False
     while True:
@@ -304,10 +304,9 @@ def guildLookup(guildPrefixorName, r):
     
     ratingList.sort(reverse = True)
     contributingList.sort(reverse = True)
-    
+    warCount = jsonData.get("wars") or 0 # Accounts for null wars, or 0 wars
     formattedRatingList = [[f"{x:,}", y] for x, y in ratingList]
     formattedcontributingList = [[f"{x:,}", y] for x, y in contributingList]
-
     embed = discord.Embed(
         description=f"""
         {"## "+'🐝 **Fruman Bee (FUB)** 🐝' if jsonData['prefix'] == 'FUB' else '**'+jsonData['name']+' ('+jsonData['prefix']+')**'}
@@ -315,7 +314,7 @@ def guildLookup(guildPrefixorName, r):
         Online: **{online_count}**/**{jsonData["members"]["total"]}**
         Guild Level: **{jsonData["level"]}** (**{jsonData["xpPercent"]}**% until {int(jsonData["level"])+1})\n
         Territory Count: **{jsonData["territories"]}**
-        Wars: **{"{:,}".format(jsonData["wars"])}**\n
+        Wars: **{"{:,}".format(warCount)}**\n
         Top Season Rankings:
         {printTop3(formattedRatingList, " Season", "SR")}
         Top Contributing Members:
