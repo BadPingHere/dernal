@@ -389,7 +389,11 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
 
-        r = await asyncio.to_thread(makeRequest, URL)
+        success, r = await asyncio.to_thread(makeRequest, URL)
+        if not success:
+            logger.error("Error while getting request in /guild overview")
+            await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
+            return
         if r.ok:
             embed = await asyncio.to_thread(guildLookup, name, r)
             await interaction.response.send_message(embed=embed)
@@ -410,10 +414,14 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
 
-        r = await asyncio.to_thread(makeRequest, URL)
+        success, r = await asyncio.to_thread(makeRequest, URL)
+        if not success:
+            logger.error("Error while getting request in /guild inactivity")
+            await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
+            return
         if r.ok:
             await interaction.response.defer()
-            inactivityDict = await asyncio.to_thread(lookupGuild, name)
+            inactivityDict = await asyncio.to_thread(lookupGuild, r)
             view = InactivityView(inactivityDict)
             embed = discord.Embed(
                 title=f"{view.category_keys[view.current_category_index]}",

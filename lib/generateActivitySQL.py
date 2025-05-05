@@ -4,18 +4,20 @@ import time
 import csv
 import sqlite3
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 import os
 import asyncio
 import zipfile
 import platform
 import logging
 import logging.handlers
-
 def get_utc_now():
     if platform.system() == "Windows":
         return datetime.utcnow()
     return datetime.now(pytz.UTC)
 
+#TODO: Fix when nori ratelimit hits and we use too all retries the script just stopping
+#TODO: Eventuall rewrite this entire script, as to fix shit, make it easier to understand, and whatnot
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
@@ -35,33 +37,80 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def makeRequest(URL):
-    while True:
+
+def makeRequest(url): # the world is built on nested if else statements.
+    session = requests.Session()
+    session.trust_env = False
+    apiSwapDict = { # ts pmo icl
+        "https://api.wynncraft.com/v3/guild/list/territory{}": "https://api.wynncraft.com/v3/guild/list/territory{}", # they call me the goat of hacks.
+        "https://api.wynncraft.com/v3/guild/uuid/{}": "https://api.wynncraft.com/v3/guild/uuid/{}", # wait, i got one more in me
+        "https://api.wynncraft.com/v3/guild/prefix/{}": "https://nori.fish/api/guild/{}",
+        "https://api.wynncraft.com/v3/guild/{}": "https://nori.fish/api/guild/{}",
+        "https://api.wynncraft.com/v3/player/{}": "https://nori.fish/api/player/{}",# Currently i'd like to save this for player activity sql
+    }
+        
+    usingWynnAPI = True  # Default to official
+    for wynn, nori in apiSwapDict.items():
+        wynnPrefix = wynn.split("{}")[0] # just the beginning of url before {}
+        if url.startswith(wynnPrefix):
+            suffix = url[len(wynnPrefix):]  # Extract suffix from official URL
+            url = nori.format(suffix)
+            usingWynnAPI = False
+            break
+
+    retries = 0
+    maxRetries = 10
+
+    while retries < maxRetries:
         try:
-            session = requests.Session()
-            session.trust_env = False
-            r = session.get(URL)
+            r = session.get(url)
+            # Nori currently doesnt support multiple responses, itll just go code 500
+            if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
+                if "/guild/" in url: # In guild endpoint, just select the first option.
+                    jsonData = r.json()
+                    prefix = jsonData[next(iter(jsonData))]["prefix"]
+                    success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
+                    return success, r
+                if "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
+                    jsonData = r.json()
+                    username = jsonData[list(jsonData)[-1]]["storedName"]
+                    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}")   
+                    return success, r
 
-            # If we get a 404, the guild doesn't exist anymore
-            if r.status_code == 404:
-                logger.info(f"Guild not found (404) for URL: {URL}")
-                return None
-
-            r.raise_for_status()
+            elif r.status_code >= 400:
+                raise requests.exceptions.HTTPError(request=r) # we send the bad requests to hell
+            else:
+                if usingWynnAPI:
+                    remaining = int(r.headers.get("ratelimit-remaining", 120)) # if we cant get it, act like its 120
+                    if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
+                        logger.warning("We are under 12. PANIC!!")
+                        time.sleep(2)
+                    elif remaining < 30:
+                        logger.warning("We are under 30. PANIC!!")
+                        time.sleep(0.75)
+                    elif remaining < 60:
+                        time.sleep(0.25)
+                else: # Nori api doesnt have ratelimit headers yet, but we know ratelimits are usually 3/s
+                    if "API rate limit exceeded" in str(r.json()): # Nori doesnt like to tell us when we've hit our limit, so we gotta infer
+                        retries += 1
+                        time.sleep(2.5)
+                        continue
+                    time.sleep(0.6) 
+                return True, r
         except requests.exceptions.RequestException as err:
-            if "404" in str(err):  # Catch 404s that might raise as exceptions
-                logger.info(f"Guild not found (404) for URL: {URL}")
-                return None
-            logger.info(f"Request failed, retrying in 3s... Error: {err}")
-            time.sleep(3)
-            continue
+            status = getattr(err.response, 'status_code', None)
+            retryable = [408, 425, 429, 500, 502, 503, 504]
+            if status in retryable: # if its retryable, retry. idk why i had to make this comment.
+                logger.warning(f"{url} failed with {status}. Current retry is at {retries}.")
+                retries += 1
+                time.sleep(2)
+                continue
+            else:
+                logger.error(f"Non-retryable error {status} for {url}: {err}")
+                return False, {} 
 
-        if r.ok:
-            return r
-        else:
-            logger.info("Request not OK, retrying in 3s...")
-            time.sleep(3)
-            continue
+    logger.error(f"Max retries exceeded for {url}")
+    return False, {} 
 
 
 def connect_to_db():
@@ -85,6 +134,131 @@ def connect_to_db():
     logger.info("Database connection established")
     return conn
 
+def connect_to_player_db():
+    os.makedirs(DATABASE_DIR, exist_ok=True)
+    db_path = os.path.join(DATABASE_DIR, "player_activity.db")
+    conn = sqlite3.connect(db_path, isolation_level=None)
+
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA auto_vacuum=FULL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-20000")  # 20MB cache
+    conn.execute("PRAGMA temp_store=MEMORY")
+
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT NOT NULL,
+        uuid TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        online INTEGER NOT NULL,
+        server TEXT,
+        firstJoin TEXT,
+        lastJoin TEXT,
+        playtime INTEGER,
+        guildUUID TEXT,
+        publicprofile INTEGER,
+        forumLink TEXT,
+        PRIMARY KEY (uuid, timestamp)
+    );
+    ''')
+
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS users_global (
+        username TEXT NOT NULL,
+        uuid TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        wars INTEGER,
+        totalLevel INTEGER,
+        killedMobs INTEGER,
+        chestsFound INTEGER,
+        totalDungeons INTEGER,
+        dungeonsDict TEXT,
+        totalRaids INTEGER,
+        raidsDict TEXT,
+        completedQuests INTEGER,
+        pvpKills INTEGER,
+        pvpDeaths INTEGER,
+        PRIMARY KEY (uuid, timestamp)
+    );
+    ''')
+
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS users_characters (
+        username TEXT NOT NULL,
+        uuid TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        characterUUID TEXT NOT NULL,
+        characterDict TEXT,
+        PRIMARY KEY (uuid, timestamp, characterUUID)
+    );
+    ''')
+
+    # Corrected table names in index creation
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_users_uuid_timestamp ON users(uuid, timestamp);')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_usersglobal_uuid_timestamp ON users_global(uuid, timestamp);')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_userscharacters_uuid_timestamp ON users_characters(uuid, timestamp);')
+    return conn
+
+def fetch_and_store_player_data(player_db_conn, uuid):
+    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{uuid}")
+    if not success:
+        logger.error(f"Unsuccessful request! Success is {success}, r is {r}, r.json() is {r.json()}")
+    try:
+            jsonData = r.json()
+
+            if str(jsonData["online"]) == "True":
+                online = 1
+            else:
+                online = 0
+            if online == 1:
+                server = jsonData["server"]
+            else:
+                server = None
+
+            if jsonData["guild"] is None:
+                guildUUID = None
+            else:
+                guildUUID = jsonData["guild"]["uuid"]
+
+            if str(jsonData["publicProfile"]) == "True":
+                publicProfile = 1
+            else:
+                publicProfile = 0
+
+            player_db_conn.execute(
+                """
+                INSERT INTO users (username, uuid, timestamp, online, server, firstJoin, lastJoin, playtime, guildUUID, publicprofile, forumLink)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (jsonData["username"], uuid, get_utc_now().isoformat(), online, server, jsonData["firstJoin"], jsonData["lastJoin"], jsonData["playtime"], guildUUID, publicProfile, jsonData["forumLink"] )
+            )
+
+
+            dungeonsDict = str(jsonData["globalData"]["dungeons"]["list"])
+            raidsDict = str(jsonData["globalData"]["raids"]["list"])
+            player_db_conn.execute(
+                """
+                INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests, pvpKills, pvpDeaths)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (jsonData["username"], uuid, get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["killedMobs"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
+            )
+
+            for character in jsonData["characters"]:
+                characterUUID =  character
+                characterDict = str(jsonData["characters"][character])
+                player_db_conn.execute(
+                    """
+                    INSERT INTO users_characters (username, uuid, timestamp, characterUUID, characterDict)
+                    VALUES (?, ?, ?, ?, ?)
+                """,
+                    (jsonData["username"], uuid, get_utc_now().isoformat(), characterUUID, characterDict)
+                )
+    except Exception as e:
+        logger.error(f"Unsuccessful request2! Success is {success}, r is {r}, r.json() is {r.json()}")
+        logger.error(f"Failed to fetch/store player {uuid}: {e}")
 
 def analyze_database_performance(conn):
     try:
@@ -224,10 +398,85 @@ def cleanup_old_data(conn, batch_size=500):
 
         if deleted < batch_size:
             break
+        logger.info("Starting player database cleanup...")
+    player_conn = connect_to_player_db()
+    player_cur = player_conn.cursor()
+    
+    try:
+        # Create indexes for player tables
+        logger.info("Ensuring player indexes exist...")
+        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_users_timestamp ON users(timestamp)")
+        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_usersglobal_timestamp ON users_global(timestamp)")
+        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_userscharacters_timestamp ON users_characters(timestamp)")
 
-    logger.info(
-        f"Cleanup completed. Total records deleted - Guild: {total_guild_deleted}, Member: {total_member_deleted}"
-    )
+        # Cleanup users table
+        total_users_deleted = 0
+        logger.info("Cleaning users table...")
+        while True:
+            player_cur.execute("""
+                DELETE FROM users 
+                WHERE timestamp < ? 
+                AND rowid IN (
+                    SELECT rowid FROM users 
+                    WHERE timestamp < ? 
+                    LIMIT ?
+                )
+            """, (cutoff_date, cutoff_date, batch_size))
+            deleted = player_cur.rowcount
+            total_users_deleted += deleted
+            if deleted > 0:
+                logger.info(f"Deleted {deleted} user records (Total: {total_users_deleted})")
+                player_conn.commit()
+            if deleted < batch_size:
+                break
+
+        # Cleanup users_global table
+        total_global_deleted = 0
+        logger.info("Cleaning users_global table...")
+        while True:
+            player_cur.execute("""
+                DELETE FROM users_global 
+                WHERE timestamp < ? 
+                AND rowid IN (
+                    SELECT rowid FROM users_global 
+                    WHERE timestamp < ? 
+                    LIMIT ?
+                )
+            """, (cutoff_date, cutoff_date, batch_size))
+            deleted = player_cur.rowcount
+            total_global_deleted += deleted
+            if deleted > 0:
+                logger.info(f"Deleted {deleted} global records (Total: {total_global_deleted})")
+                player_conn.commit()
+            if deleted < batch_size:
+                break
+
+        # Cleanup users_characters table
+        total_characters_deleted = 0
+        logger.info("Cleaning users_characters table...")
+        while True:
+            player_cur.execute("""
+                DELETE FROM users_characters 
+                WHERE timestamp < ? 
+                AND rowid IN (
+                    SELECT rowid FROM users_characters 
+                    WHERE timestamp < ? 
+                    LIMIT ?
+                )
+            """, (cutoff_date, cutoff_date, batch_size))
+            deleted = player_cur.rowcount
+            total_characters_deleted += deleted
+            if deleted > 0:
+                logger.info(f"Deleted {deleted} character records (Total: {total_characters_deleted})")
+                player_conn.commit()
+            if deleted < batch_size:
+                break
+
+        logger.info(f"Player cleanup completed. Deleted - Users: {total_users_deleted}, Global: {total_global_deleted}, Characters: {total_characters_deleted}")
+
+    finally:
+        logger.info("Closing player database connection...")
+        player_conn.close()
 
 
 def create_monthly_backup():
@@ -242,25 +491,40 @@ def create_monthly_backup():
                 logger.info("Monthly backup already exists, skipping...")
                 return
 
-    # Only backup on day 2
+    # Only backup on day 1
     if datetime.now().day != 1:
         return
 
     logger.info("Starting monthly backup creation...")
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
-    zip_path = os.path.join(BACKUP_DIR, f"guild_activity_backup_{current_month}.zip")
+    guildPath = os.path.join(DATABASE_DIR, "guild_activity.db")
+    guildZipPath = os.path.join(BACKUP_DIR, f"guild_activity_backup_{current_month}.zip")
+    playerPath = os.path.join(DATABASE_DIR, "player_activity.db")
+    playerZipPath = os.path.join(BACKUP_DIR, f"player_activity_backup_{current_month}.zip")
 
     try:
         logger.info("Creating zip backup...")
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(db_path, os.path.basename(db_path))
+        with zipfile.ZipFile(guildZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(guildPath, os.path.basename(guildPath))
 
         with open(backup_flag_file, "w") as f:
             f.write(current_month)
 
-        backup_size = os.path.getsize(zip_path) / (1024 * 1024)  # Convert to MB
-        logger.info(f"Monthly backup created: {zip_path} (Size: {backup_size:.2f} MB)")
+        backup_size = os.path.getsize(guildZipPath) / (1024 * 1024)
+        logger.info(f"Monthly backup created: {guildZipPath} (Size: {backup_size:.2f} MB)")
+    except Exception as e:
+        logger.info(f"Error creating monthly backup: {e}")
+
+    try:
+        logger.info("Creating zip backup...")
+        with zipfile.ZipFile(playerZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(playerPath, os.path.basename(playerPath))
+
+        with open(backup_flag_file, "w") as f:
+            f.write(current_month)
+
+        backup_size = os.path.getsize(playerZipPath) / (1024 * 1024)
+        logger.info(f"Monthly backup created: {playerZipPath} (Size: {backup_size:.2f} MB)")
     except Exception as e:
         logger.info(f"Error creating monthly backup: {e}")
 
@@ -356,38 +620,52 @@ def main():
     logger.info("Starting main data collection...")
     guildlist_path = os.path.join(DATABASE_DIR, "guildlist.csv")
 
-    # Read guild list
     with open(guildlist_path, mode="r") as file:
         reader = csv.reader(file)
         uuids = [row[0] for row in reader]
+
     logger.info(f"Found {len(uuids)} guilds to process")
 
     conn = connect_to_db()
+    player_db_conn = connect_to_player_db()
+
     try:
         for i, uuid in enumerate(uuids, 1):
             logger.info(f"Processing guild {i}/{len(uuids)} (UUID: {uuid})")
-            response = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
-            # Skip this guild if we got a 404
-            if response is None:
+            success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
+            if not success:
                 logger.info(f"Skipping guild {uuid} as it no longer exists")
                 continue
-            guild_data = response.json()
+            guild_data = r.json()
             insert_or_update_guild(conn, guild_data)
             insert_guild_snapshot(conn, guild_data)
             insert_or_update_members(conn, guild_data["uuid"], guild_data["members"])
             conn.commit()
 
-            # Checkpoint WAL periodically
-            if i % 10 == 0:  # Every 10 guilds
-                logger.info("Performing periodic WAL checkpoint...")
-                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            # Fetch data for online players
+            #logger.info(f'guild_data["members"]: {guild_data["members"]}')
+            for role, members in guild_data["members"].items():
+                #logger.info(f'role: {role}')
+                #logger.info(f'members: {members}')
+                if role == "total":
+                    continue
+                for member in members.values():
+                    #logger.info(f'member: {member}')
+                    if member["online"]:
+                        fetch_and_store_player_data(player_db_conn, member["uuid"])
 
-            time.sleep(1.25)  # Rate limit
+            time.sleep(0.33)  # Rate limit ourselves
 
     except Exception as e:
         logger.info(f"Error in main data collection: {e}")
     finally:
+        logger.info("Final WAL checkpoint for guild_activity.db...")
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+        logger.info("Final WAL checkpoint for player_activity.db...")
+        player_db_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         cleanup_database(conn)
+        cleanup_database(player_db_conn)
 
 def vacuum_database(conn):
     # This function is a bitch on linux but finally works.

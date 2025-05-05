@@ -42,7 +42,11 @@ class Detector(commands.GroupCog, name="detector"):
             self.guildsBeingTracked = dict(detectorStorage)
         
         # Get new data
-        r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
+        success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
+        if not success:
+            logger.error("Error while getting territory data.")
+            return
+            
         stringdata = str(r.json())
         new_data = r.json()
         

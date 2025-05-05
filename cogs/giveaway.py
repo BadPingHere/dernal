@@ -260,7 +260,11 @@ class giveaway(commands.Cog):
             await interaction.response.send_message("Please configure a guild first using /giveaway configure", ephemeral=True)
             return
         
-        r = makeRequest("https://api.wynncraft.com/v3/guild/uuid/"+str(guildUUID))
+        success, r = makeRequest("https://api.wynncraft.com/v3/guild/uuid/"+str(guildUUID))
+        if not success:
+            logger.error("Error while getting request in /giveaway roll")
+            await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
+            return
 
         if r is None:
             logger.error(f"R is None in roll. Here is r: {r}.")

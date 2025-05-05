@@ -23,19 +23,20 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents) # i learned recently that this means people can run commands with @dernal command, and you can send me errors with @dernal message!
 
 # TODO:
 #* 1. Fix commands blocking heartbeat 
 #! 2. Debug what is causing the database to corrupt 
 #* 3. Fix all forward-facing times to show UTC rather than server time
-#! 4. Implement proxies for heavy tasks, which would allow us to hold more data
+#* 4. Implement proxies for heavy tasks, which would allow us to hold more data
 #? 5. Improve performance on database commands.
 #! 6. Have a webhook or something ping on discord when the bot or database is down for more than 30 minutes
 #* 7. Fix giveaway selection for players, for sure making it alphabetical and using the api since its only 1 request. Also, if possible, a search function
 #* 8. Fix cooldowns being for all users, and make it user-specific; also make giveaway command server-specific, and add a 1hr cooldown, and possibly check permissions for who can use it?
 #* 9. Change Detector to cache territory data, giving way to allowing a infinite amount of servers use detector.
 #* 10. Change detector and giveaway to allow only certain role names to run them, rather than hardcoded role id's
+#! 11. Add front-facing errors to ALL commands, no command should time out because of either a user or bot error.
 
 def checkUpdates(localVersionFile='version.json'):
     try:

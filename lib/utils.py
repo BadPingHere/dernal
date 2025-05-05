@@ -8,6 +8,7 @@ import logging
 import time
 import sqlite3
 from datetime import datetime
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.dates import HourLocator, DateFormatter
 from collections import defaultdict, deque
@@ -17,68 +18,91 @@ import seaborn as sns
 import pandas as pd
 import bisect
 import random
+import ast
 
+#TODO: Line commands should get data in intervals of 6 hours, for a total of 7 days for better rounding.    
 logger = logging.getLogger('discord')
 
 ratelimitmultiplier = 1
 ratelimitwait = 0.1 
 cooldownHolder = {}
-
 sns.set_style("whitegrid")
+mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
-def makeRequest(URL): # the world is built on nested if else statements.
-    global ratelimitmultiplier
-    global ratelimitwait
-
-    retries = 0
-    maxRetries = 10 # So we dont constantly spam a url if we cant find it or something.
+def makeRequest(url): # the world is built on nested if else statements.
     session = requests.Session()
     session.trust_env = False
-    while True:
+    apiSwapDict = { # ts pmo icl; also we'd like to use nori as a choice, but with player db using nori, it simply is too straining since we cant know the rate limit.
+        "https://api.wynncraft.com/v3/guild/list/territory{}": "https://api.wynncraft.com/v3/guild/list/territory{}", # they call me the goat of hacks.
+        "https://api.wynncraft.com/v3/guild/uuid/{}": "https://api.wynncraft.com/v3/guild/uuid/{}", # wait, i got one more in me
+        #"https://api.wynncraft.com/v3/guild/prefix/{}": "https://nori.fish/api/guild/{}",
+        #"https://api.wynncraft.com/v3/guild/{}": "https://nori.fish/api/guild/{}",
+        # "https://api.wynncraft.com/v3/player/{}": "https://nori.fish/api/player/{}", Currently i'd like to save this for player activity sql
+    }
+        
+    usingWynnAPI = True  # Default to official
+    for wynn, nori in apiSwapDict.items():
+        wynnPrefix = wynn.split("{}")[0] # just the beginning of url before {}
+        if url.startswith(wynnPrefix):
+            suffix = url[len(wynnPrefix):]  # Extract suffix from official URL
+            url = nori.format(suffix)
+            usingWynnAPI = False
+            break
+
+    retries = 0
+    maxRetries = 5
+
+    while retries < maxRetries:
         try:
-            r = session.get(URL)
-            r.raise_for_status()
+            r = session.get(url)
+            # Nori currently doesnt support multiple responses, itll just go code 500
+            if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
+                if "/guild/" in url: # In guild endpoint, just select the first option.
+                    jsonData = r.json()
+                    prefix = jsonData[next(iter(jsonData))]["prefix"]
+                    success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
+                    return success, r
+                if "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
+                    jsonData = r.json()
+                    username = jsonData[list(jsonData)[-1]]["storedName"]
+                    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}")   
+                    return success, r
+
+            elif r.status_code >= 400:
+                raise requests.exceptions.HTTPError(request=r) # we send the bad requests to hell
+            else:
+                if usingWynnAPI:
+                    remaining = int(r.headers.get("ratelimit-remaining", 120)) # if we cant get it, act like its 120
+                    if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
+                        logger.warning("We are under 12. PANIC!!")
+                        time.sleep(2)
+                    elif remaining < 30:
+                        logger.warning("We are under 30. PANIC!!")
+                        time.sleep(0.75)
+                    elif remaining < 60:
+                        time.sleep(0.25)
+                else: # Nori api doesnt have ratelimit headers yet, but we know ratelimits are usually 3/s
+                    if "API rate limit exceeded" in str(r.json()): # Nori doesnt like to tell us when we've hit our limit, so we gotta infer
+                        retries += 1
+                        time.sleep(2)
+                        continue
+                    time.sleep(0.6) 
+                return True, r
         except requests.exceptions.RequestException as err:
-            statusCode = getattr(err.response, 'status_code', None) # status code we got from the error
-            retryCodes = [408, 425, 429, 500, 502, 503, 504]
-            if statusCode in retryCodes: # only retry reasonable codes
-                logger.error(f"{URL} returned {statusCode}: {err}")
-                time.sleep(2)
+            status = getattr(err.response, 'status_code', None)
+            retryable = [408, 425, 429, 500, 502, 503, 504]
+            if status in retryable: # if its retryable, retry. idk why i had to make this comment.
+                logger.warning(f"{url} failed with {status}. Current retry is at {retries}.")
                 retries += 1
-                if retries >= maxRetries: # if we passed our limit, make sure the bartender doesnt serve us any more.
-                    logger.critical(f"Max retries exceeded for {URL}")
-                    raise
+                time.sleep(2)
                 continue
-            else: # no need to retry
-                logger.error(f"{URL} returned {statusCode}, will not be retried: {err}")
-                time.sleep(3)
-                raise
-        if r.ok:
-            if "nori" in URL: # We should be using a tad amount of resouces, and i think caches are route specific, so uhhh dont worry about rate limiting!
-                return r
-            else: # we are on main api, we gotta rate limit ourselves
-                ratelimitRemaining = int(r.headers['RateLimit-Remaining']) 
-                if ratelimitRemaining > 60:
-                    ratelimitmultiplier = 1
-                    ratelimitwait = 0 # ive gotten to the point in development when ive forgot what these two
-                else:
-                    if ratelimitRemaining < 60: # We making too many requests, slow it down
-                        logger.warning(f"Ratelimit-Remaining is under 60.")
-                        ratelimitmultiplier = 1.5
-                        ratelimitwait = 0.70
-                    if ratelimitRemaining < 30: # We making too many requests, slow it down
-                        logger.warning(f"Ratelimit-Remaining is under 30.")
-                        ratelimitmultiplier = 2
-                        ratelimitwait = 1.25
-                    if ratelimitRemaining < 10: # We making too many requests, slow it down
-                        logger.warning(f"Ratelimit-Remaining is under 10.")
-                        ratelimitmultiplier = 4
-                        ratelimitwait = 3
-                return r
-        else:
-            logger.error(f"Error getting {URL}. Status code is {r.status_code}")
-            time.sleep(3)
+            else:
+                logger.error(f"Non-retryable error {status} for {url}: {err}")
+                return False, {} 
+
+    logger.error(f"Max retries exceeded for {url}")
+    return False, {} 
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
@@ -112,87 +136,48 @@ def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save
 
 
 def findAttackingMembers(attacker):
-    r = makeRequest("https://nori.fish/api/guild/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
-    if r.status_code == 200:
-        jsonData = r.json()
-        onlineMembers = []
-        warringMembers = []
+    success, r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
+    if not success:
+        logger.error("Unsuccessful request in findAttackingMembers - 1.")
+        return [["Unknown", "Unknown", 1738]]
+    jsonData = r.json()
+    onlineMembers = []
+    warringMembers = []
 
-        for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
-            if isinstance(jsonData["members"][rank], dict):
-                for member in jsonData["members"][rank].values(): 
-                    if member['online']: # checks if online is set to true or false
-                        onlineMembers.append(member['uuid'])
+    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+        if isinstance(jsonData["members"][rank], dict):
+            for member in jsonData["members"][rank].values(): 
+                if member['online']: # checks if online is set to true or false
+                    onlineMembers.append(member['uuid'])
 
-        for i in onlineMembers:
-            r = makeRequest("https://nori.fish/api/player/"+str(i))
-            json = r.json()
-            #logger.info(f"json: {json}")
-            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
-                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+    for i in onlineMembers:
+        success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
+        if not success:
+            logger.error("Unsuccessful request in findAttackingMembers - 2.")
+            return [["Unknown", "Unknown", 1738]]
+        json = r.json()
+        #logger.info(f"json: {json}")
+        if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+            warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
 
-        if not warringMembers: # if for some reason this comes back with no one (offline or sum)
-            attackingMembers = [["Unknown", "Unknown", 1738]] # ay
-            #(f"Attacking Members: {attackingMembers}")
-            return attackingMembers
-        
-        worldStrings = [sublist[1] for sublist in warringMembers]
-        mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
-
-        if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
-            # no majority world, so we just send who has the most amount of wars
-            highestWars = max(warringMembers, key=lambda x: x[2])
-            attackingMembers = [highestWars]
-        else:
-            # majority world, just chop shit up and whatnot
-            string = mostCommonWorld[0][0]
-            attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-        #logger.info(f"Attacking Members: {attackingMembers}")
+    if not warringMembers: # if for some reason this comes back with no one (offline or sum)
+        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
+        #(f"Attacking Members: {attackingMembers}")
         return attackingMembers
-    else: # Nori API issues, fallback to offical api
-        logger.warning(f"Nori api failed. Falling back to offical api. r: {r}, r.status_code: {r.status_code}")
-        r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker))
-        time.sleep(ratelimitwait)
-        if r is None:
-            logger.error(f"R is None in findAttackingMembers. Here is r: {r}.")
-            return [["Unknown", "Unknown", 1738]]  # failed request, so just give a unknown. also ay.
+    
+    worldStrings = [sublist[1] for sublist in warringMembers]
+    mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
 
-        jsonData = r.json()
-        onlineMembers = []
-        warringMembers = []
-        attackingMembers = []
-
-        for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
-            if isinstance(jsonData["members"][rank], dict):
-                for member in jsonData["members"][rank].values(): 
-                    if member['online']: # checks if online is set to true or false
-                        onlineMembers.append([member['uuid'], member['server']])
-        #logger.info(f"Online Members: {onlineMembers}")
-        for i in onlineMembers:
-            r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i[0]))
-            json = r.json()
-            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
-                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
-        #logger.info(f"Warring Members: {warringMembers}")
-
-        if not warringMembers: # if for some reason this comes back with no one (offline or sum)
-            attackingMembers = [["Unknown", "Unknown", 1738]] # ay
-            #logger.info(f"Attacking Members: {attackingMembers}")
-            return attackingMembers
-        
-        worldStrings = [sublist[1] for sublist in warringMembers]
-        mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
-
-        if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
-            # no majority world, so we just send who has the most amount of wars
-            highestWars = max(warringMembers, key=lambda x: x[2])
-            attackingMembers = [highestWars]
-        else:
-            # majority world, just chop shit up and whatnot
-            string = mostCommonWorld[0][0]
-            attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-        #logger.info(f"Attacking Members: {attackingMembers}")
-        return attackingMembers
+    if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
+        # no majority world, so we just send who has the most amount of wars
+        highestWars = max(warringMembers, key=lambda x: x[2])
+        attackingMembers = [highestWars]
+    else:
+        # majority world, just chop shit up and whatnot
+        string = mostCommonWorld[0][0]
+        attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
+    #logger.info(f"Attacking Members: {attackingMembers}")
+    return attackingMembers
         
 def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, intervalForPing, timesinceping):
     if guildPrefix not in timesinceping:
@@ -312,7 +297,7 @@ def guildLookup(guildPrefixorName, r):
         {"## "+'🐝 **Fruman Bee (FUB)** 🐝' if jsonData['prefix'] == 'FUB' else '**'+jsonData['name']+' ('+jsonData['prefix']+')**'}
         \n‎\nOwned By: **{list(jsonData["members"]["owner"].keys())[0]}**
         Online: **{online_count}**/**{jsonData["members"]["total"]}**
-        Guild Level: **{jsonData["level"]}** (**{jsonData["xpPercent"]}**% until {int(jsonData["level"])+1})\n
+        Guild Level: **{jsonData["level"]}** (**{jsonData.get("xpPercent", jsonData.get("xp_percent", "N/A"))}**% until level {int(jsonData["level"])+1})\n
         Territory Count: **{jsonData["territories"]}**
         Wars: **{"{:,}".format(warCount)}**\n
         Top Season Rankings:
@@ -391,8 +376,11 @@ def lookupUser(memberList):
         "Active Users": [],
     }
     for member in memberList:
-        URL = "https://api.wynncraft.com/v3/player/"+str(member)
-        r = makeRequest(URL)
+        time.sleep(0.5) # Slow down inactivity because we need to preserve our ratelimits
+        success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
+        if not success:
+            logger.error("Unsuccessful request in lookupUser.")
+            continue # i think thisll work
         jsonData = r.json()
         lastJoinDate = jsonData["lastJoin"]
 
@@ -419,19 +407,14 @@ def lookupUser(memberList):
             inactivityDict["Active Users"].append((jsonData["username"], int(epochTime)))
     return inactivityDict
 
-def lookupGuild(name):
-    # All this does is gets all the users in the guild and puts them in a list
-    if len(name) >= 5:
-        URL = f"https://api.wynncraft.com/v3/guild/{name}"
-    else:
-        URL = f"https://api.wynncraft.com/v3/guild/prefix/{name}"
-    r = makeRequest(URL)
+def lookupGuild(r):
     jsonData = r.json()
     memberList = []
     for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
         if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
             for member, value in jsonData["members"][rank].items(): 
                 memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
+    #logger.info(f"memberlist-2: {memberList}")
     return lookupUser(memberList)
 
 # because not everything happens in a second.
@@ -1238,65 +1221,35 @@ def guildLeaderboardPlaytime():
 
 def playerActivityPlaytime(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
-    conn = sqlite3.connect('database/guild_activity.db')
+    conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    # Fetch snapshots from the last 14 days
     cursor.execute("""
-        SELECT timestamp, online
-        FROM member_snapshots
-        WHERE member_uuid = ?
-        AND timestamp >= datetime('now', '-14 days')
-        ORDER BY timestamp
+        SELECT DATE(timestamp) AS day, 
+               ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
+        FROM users
+        WHERE uuid = ?
+          AND DATE(timestamp) >= DATE('now', '-14 days')
+        GROUP BY DATE(timestamp)
+        ORDER BY day
     """, (player_uuid,))
-    snapshots = cursor.fetchall()
+    daily_data = cursor.fetchall()
 
-    if not snapshots:
+    if not daily_data:
         conn.close()
         return None, None
 
-    parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), online) for ts, online in snapshots]
-    #print(parsed_snapshots)
-
-    # Calculate playtime
-    total_playtime_seconds = 0
-    daily_playtimes = defaultdict(int)
-
-    for i in range(len(parsed_snapshots)):
-        timestamp, onlineStatus = parsed_snapshots[i]
-        if onlineStatus == 1:
-            # Get the difference between the timestamp before us (i-1), and the timestamp now (i)
-            if i > 0: # Checks if it exists
-                pastTimestamp, pastOnlineStatus = parsed_snapshots[i-1]
-                timeDifference = timestamp - pastTimestamp
-                secondTimeDifference = timeDifference.total_seconds()
-                total_playtime_seconds += secondTimeDifference
-                daily_playtimes[timestamp.date()] += int(divmod(secondTimeDifference, 60)[0])
-            else: # Doesnt exist, so default to 30.
-                timeDifference = 30
-                total_playtime_seconds += timeDifference * 60
-                daily_playtimes[timestamp.date()] += timeDifference
-        daily_playtimes[timestamp.date()] += 0
-
-    dates = sorted(daily_playtimes.keys())
-    playtime_values = [daily_playtimes[date] for date in dates]
-    total_playtime_minutes = sum(playtime_values)
-
-    averageDailyPlaytime = total_playtime_minutes / len(dates) if dates else 0
-    
-    df = pd.DataFrame(parsed_snapshots, columns=["timestamp", "online"])
-    df['hour'] = df['timestamp'].dt.hour
-    hourly_activity = df.groupby('hour')['online'].sum()
-    peak_hours = hourly_activity[hourly_activity == hourly_activity.max()].index.tolist()
-
-    estimated_timezone = None
-    if peak_hours:
-        avg_peak_hour = sum(peak_hours) / len(peak_hours)
-        utc_offset = round(avg_peak_hour - 20)  # Assuming peaks would be around 8pm, after work and schooling.
-        estimated_timezone = f"UTC{'+' if utc_offset >= 0 else ''}{utc_offset}"
+    dailyPlaytimes = {
+        datetime.strptime(day, '%Y-%m-%d').date(): minutes
+        for day, minutes in daily_data
+    }
+    dates = sorted(dailyPlaytimes.keys())
+    playtimeValues = [dailyPlaytimes[date] for date in dates]
+    totalPlaytimeinMinutes = sum(playtimeValues)
+    averageDailyPlaytime = totalPlaytimeinMinutes / len(dates) if dates else 0
 
     plt.figure(figsize=(12, 6))
-    plt.bar(dates, playtime_values, width=0.8, color=blue)
+    plt.bar(dates, playtimeValues, width=0.8, color=blue)
     plt.axhline(y=averageDailyPlaytime, color='red', linestyle='-', 
                 label=f'Daily Average: {averageDailyPlaytime:.2f} minutes')
     plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
@@ -1323,9 +1276,8 @@ def playerActivityPlaytime(player_uuid, name):
         title=f"Playtime Analysis for {name}",
         description=(
             f"Daily Average: {averageDailyPlaytime:.0f} min\n"
-            f"Highest Day: {max(playtime_values) if playtime_values else 0} min\n"
-            f"Lowest Day: {min(playtime_values) if playtime_values else 0} min\n"
-            f"Estimated Timezone: {estimated_timezone}"
+            f"Highest Day: {max(playtimeValues) if playtimeValues else 0} min\n"
+            f"Lowest Day: {min(playtimeValues) if playtimeValues else 0} min\n"
         ),
         color=discord.Color.red()
     )
@@ -1337,8 +1289,8 @@ def playerActivityPlaytime(player_uuid, name):
     
     return file, embed
 
-def playerActivityXP(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityXP")
+def playerActivityContributions(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityContributions")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
 
@@ -1413,6 +1365,635 @@ def playerActivityXP(player_uuid, name):
     buf.close()
     return file, embed
 
+def playerActivityDungeons(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityDungeons")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT DATE(u.timestamp) AS day, u.totalDungeons
+    FROM users_global u
+    JOIN (
+        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
+        FROM users_global
+        WHERE uuid = ?
+        AND DATE(timestamp) >= DATE('now', '-7 days')
+        GROUP BY DATE(timestamp)
+    ) last_snapshots
+    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    ORDER BY u.timestamp;
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    total_dungeons = [row[1] for row in snapshots]
+
+    # Highest total and daily gain
+    highestTotal = total_dungeons[-1] if total_dungeons else 0
+    highestGain = max((total_dungeons[i] - total_dungeons[i - 1]) for i in range(1, len(total_dungeons))) if len(total_dungeons) > 1 else 0
+    maxDungeons = max(total_dungeons) if total_dungeons else 0
+    minDungeons = min(filter(lambda x: x > 0, total_dungeons)) if total_dungeons else 0
+
+    # Plot
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, total_dungeons, '-', label='Dungeon Count', color=blue, lw=3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = maxDungeons - minDungeons
+    min_y = max(0, minDungeons - (y_range * 0.1))
+    max_y = maxDungeons + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'Dungeon History - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of Dungeon\'s completed', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.margins(x=0.01)
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='player_dungeon_graph.png')
+    embed = discord.Embed(
+        title=f"Dungeon Runs for {name}",
+        description=(
+            f"Total Dungeons: {highestTotal} dungeons\n"
+            f"Highest Gain in One Day: {highestGain} dungeons\n"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_dungeon_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    conn.close()
+    buf.close()
+    return file, embed
+
+def playerActivityTotalDungeons(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityTotalDungeons")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT dungeonsDict
+        FROM users_global
+        WHERE uuid = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+    
+    dungeons = ast.literal_eval(snapshots[0][0])
+
+    sorted_dungeons = dict(sorted(dungeons.items(), key=lambda item: item[1], reverse=True))
+
+    labels = list(sorted_dungeons.keys())
+    sizes = list(sorted_dungeons.values())
+
+
+    plt.figure(figsize=(10, 8))
+    sorted_dungeons = dict(sorted(dungeons.items(), key=lambda item: item[1], reverse=True))
+    labels = list(sorted_dungeons.keys())
+    sizes = list(sorted_dungeons.values())
+    total = sum(sizes)
+    percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
+    wedges, _ = plt.pie(sizes)
+    plt.legend(wedges, percent_labels, title="Dungeons", loc="center left", bbox_to_anchor=(1, 0.5))
+    plt.title(f"Dungeon Pie Chart - {name}")
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    buf.seek(0)
+    plt.close
+
+    file = discord.File(buf, filename='player_dungeon_pie.png')
+    embed = discord.Embed(
+        title=f"Dungeon pie chart for {name}",
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_dungeon_pie.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    buf.close()
+    return file, embed
+
+def playerActivityRaids(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityRaids")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT DATE(u.timestamp) AS day, u.totalRaids
+    FROM users_global u
+    JOIN (
+        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
+        FROM users_global
+        WHERE uuid = ?
+        AND DATE(timestamp) >= DATE('now', '-7 days')
+        GROUP BY DATE(timestamp)
+    ) last_snapshots
+    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    ORDER BY u.timestamp;
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    totalRaids = [row[1] for row in snapshots]
+
+    # Highest total and daily gain
+    highestTotal = totalRaids[-1] if totalRaids else 0
+    highestGain = max((totalRaids[i] - totalRaids[i - 1]) for i in range(1, len(totalRaids))) if len(totalRaids) > 1 else 0
+    maxRaids = max(totalRaids) if totalRaids else 0
+    minRaids = min(filter(lambda x: x > 0, totalRaids)) if totalRaids else 0
+
+    # Plot
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, totalRaids, '-', label='Raid Count', color=blue, lw=3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = maxRaids - minRaids
+    min_y = max(0, minRaids - (y_range * 0.1))
+    max_y = maxRaids + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'Raid History - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of Raid\'s completed', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.margins(x=0.01)
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='player_raid_graph.png')
+    embed = discord.Embed(
+        title=f"Raid Runs for {name}",
+        description=(
+            f"Total Raids: {highestTotal} raids\n"
+            f"Highest Gain in One Day: {highestGain} raids\n"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_raid_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    conn.close()
+    buf.close()
+    return file, embed
+
+def playerActivityTotalRaids(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityTotalRaids")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT raidsDict
+        FROM users_global
+        WHERE uuid = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+    
+    raids = ast.literal_eval(snapshots[0][0])
+
+    sortedRaids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
+
+    labels = list(sortedRaids.keys())
+    sizes = list(sortedRaids.values())
+
+
+    plt.figure(figsize=(10, 8))
+    sortedRaids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
+    labels = list(sortedRaids.keys())
+    sizes = list(sortedRaids.values())
+    total = sum(sizes)
+    percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
+    wedges, _ = plt.pie(sizes)
+    plt.legend(wedges, percent_labels, title="Raids", loc="center left", bbox_to_anchor=(1, 0.5))
+    plt.title(f"Raid Pie Chart - {name}")
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+    buf.seek(0)
+    plt.close
+
+    file = discord.File(buf, filename='player_raid_pie.png')
+    embed = discord.Embed(
+        title=f"Raid pie chart for {name}",
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_raid_pie.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    buf.close()
+    return file, embed
+
+def playerActivityMobsKilled(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityMobsKilled")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT DATE(u.timestamp) AS day, u.killedMobs
+    FROM users_global u
+    JOIN (
+        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
+        FROM users_global
+        WHERE uuid = ?
+        AND DATE(timestamp) >= DATE('now', '-7 days')
+        GROUP BY DATE(timestamp)
+    ) last_snapshots
+    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    ORDER BY u.timestamp;
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    totalKills = [row[1] for row in snapshots]
+
+    # Highest total and daily gain
+    highestTotal = totalKills[-1] if totalKills else 0
+    highestGain = max((totalKills[i] - totalKills[i - 1]) for i in range(1, len(totalKills))) if len(totalKills) > 1 else 0
+    maxKills = max(totalKills) if totalKills else 0
+    minKills = min(filter(lambda x: x > 0, totalKills)) if totalKills else 0
+
+    # Plot
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, totalKills, '-', label='Mob Kill Count', color=blue, lw=3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = maxKills - minKills
+    min_y = max(0, minKills - (y_range * 0.1))
+    max_y = maxKills + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'Mob Kill History - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of Kill\'s', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.margins(x=0.01)
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='player_mob_kill_graph.png')
+    embed = discord.Embed(
+        title=f"Mob's killed for {name}",
+        description=(
+            f"Total Kills: {highestTotal} kills\n"
+            f"Highest Gain in One Day: {highestGain} kills\n"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_mob_kill_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    conn.close()
+    buf.close()
+    return file, embed
+
+def playerActivityWars(player_uuid, name):
+    logger.info(f"player_uuid: {player_uuid}, playerActivityWars")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT DATE(u.timestamp) AS day, u.wars
+    FROM users_global u
+    JOIN (
+        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
+        FROM users_global
+        WHERE uuid = ?
+        AND DATE(timestamp) >= DATE('now', '-7 days')
+        GROUP BY DATE(timestamp)
+    ) last_snapshots
+    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    ORDER BY u.timestamp;
+    """, (player_uuid,))
+    snapshots = cursor.fetchall()
+
+    if not snapshots:
+        conn.close()
+        return None, None
+
+    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    totalWars = [row[1] for row in snapshots]
+
+    # Highest total and daily gain
+    highestTotal = totalWars[-1] if totalWars else 0
+    highestGain = max((totalWars[i] - totalWars[i - 1]) for i in range(1, len(totalWars))) if len(totalWars) > 1 else 0
+    maxWars = max(totalWars) if totalWars else 0
+    minWars = min(filter(lambda x: x > 0, totalWars)) if totalWars else 0
+
+    logger.info(f"Plotting {len(dates)} points: {list(zip(dates, totalWars))}")
+    # Plot
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, totalWars, '-', label='War Count', color=blue, lw=3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
+    y_range = maxWars - minWars
+    min_y = max(0, minWars - (y_range * 0.1))
+    max_y = maxWars + (y_range * 0.1)
+    plt.ylim(min_y, max_y)
+    plt.title(f'War Count History - {name}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Number of War\'s', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.margins(x=0.01)
+    plt.tight_layout()
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+
+    file = discord.File(buf, filename='player_wars_graph.png')
+    embed = discord.Embed(
+        title=f"War Count for {name}",
+        description=(
+            f"Total Kills: {highestTotal} wars\n"
+            f"Highest Gain in One Day: {highestGain} wars\n"
+        ),
+        color=discord.Color.red()
+    )
+    embed.set_image(url="attachment://player_wars_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    conn.close()
+    buf.close()
+    return file, embed
+
+def playerLeaderboardRaids():
+    logger.info(f"playerLeaderboardRaids")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT username, totalRaids
+    FROM (
+        SELECT *
+        FROM users_global
+        WHERE (uuid, timestamp) IN (
+            SELECT uuid, MAX(timestamp)
+            FROM users_global
+            GROUP BY uuid
+        )
+    )
+    ORDER BY totalRaids DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Raids")
+    separator = "-" * 40 + "\n"
+    rankNum = 0
+    leaderboard_description += separator
+    for row in snapshots:
+        rankNum+=1
+        username = row[0]
+        totalRaids = row[1]
+        rank = rankNum
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalRaids)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Player Raid Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+def playerLeaderboardDungeons():
+    logger.info(f"playerLeaderboardDungeons")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT username, totalDungeons
+    FROM (
+        SELECT *
+        FROM users_global
+        WHERE (uuid, timestamp) IN (
+            SELECT uuid, MAX(timestamp)
+            FROM users_global
+            GROUP BY uuid
+        )
+    )
+    ORDER BY totalDungeons DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Dungeons")
+    separator = "-" * 40 + "\n"
+    rankNum = 0
+    leaderboard_description += separator
+    for row in snapshots:
+        rankNum+=1
+        username = row[0]
+        totalDungeons = row[1]
+        rank = rankNum
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalDungeons)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Player Dungeon Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+def playerLeaderboardPVPKills():
+    logger.info(f"playerLeaderboardPVPKills")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT username, pvpKills
+    FROM (
+        SELECT *
+        FROM users_global
+        WHERE (uuid, timestamp) IN (
+            SELECT uuid, MAX(timestamp)
+            FROM users_global
+            GROUP BY uuid
+        )
+    )
+    ORDER BY pvpKills DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "PVP Kills")
+    separator = "-" * 40 + "\n"
+    rankNum = 0
+    leaderboard_description += separator
+    for row in snapshots:
+        rankNum+=1
+        username = row[0]
+        kills = row[1]
+        rank = rankNum
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, kills)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Player PVP Kills Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+def playerLeaderboardTotalLevel():
+    logger.info(f"playerLeaderboardTotalLevel")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT username, totalLevel
+    FROM (
+        SELECT *
+        FROM users_global
+        WHERE (uuid, timestamp) IN (
+            SELECT uuid, MAX(timestamp)
+            FROM users_global
+            GROUP BY uuid
+        )
+    )
+    ORDER BY totalLevel DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Total Level")
+    separator = "-" * 40 + "\n"
+    rankNum = 0
+    leaderboard_description += separator
+    for row in snapshots:
+        rankNum+=1
+        username = row[0]
+        totalLevel = row[1]
+        rank = rankNum
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalLevel)
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Player Total Level Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
+def playerLeaderboardPlaytime():
+    logger.info(f"playerLeaderboardPlaytime")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT username, playtime
+    FROM (
+        SELECT *
+        FROM users
+        WHERE (uuid, timestamp) IN (
+            SELECT uuid, MAX(timestamp)
+            FROM users
+            GROUP BY uuid
+        )
+    )
+    ORDER BY playtime DESC
+    LIMIT 10;
+    """)
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+
+    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Playtime (Hours)")
+    separator = "-" * 46 + "\n"
+    rankNum = 0
+    leaderboard_description += separator
+    for row in snapshots:
+        rankNum+=1
+        username = row[0]
+        playtime = row[1]
+        rank = rankNum
+        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, round(playtime))
+    leaderboard_description += "```"
+
+    embed = discord.Embed(
+        title="Player Playtime Leaderboard",
+        description=leaderboard_description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    conn.close()
+    return embed
+
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
     
@@ -1461,8 +2042,8 @@ def rollGiveaway(weeklyNames, rollcount):
         
         if not snapshots:
             logger.warning(f"No snapshots found for player {player_name}")
-            chances[player_name] = 0
-            tickets[player_name] = 0
+            tickets[player_name] = 1 # they still get their completition tickets
+            # TODO: Fix this code to get their chances
             continue
             
         # Calculate playtime
@@ -1503,9 +2084,11 @@ def rollGiveaway(weeklyNames, rollcount):
 
         completion_tickets = 1.0 # Base ticket count, everyone will have 1 ticket because they did weekly
         total_player_tickets = completion_tickets + playtimeTickets + xpTickets
+        logger.info(f"total_player_tickets: {total_player_tickets}")
         total_tickets += total_player_tickets
         chances[player_name] = total_player_tickets
         tickets[player_name] = total_player_tickets
+        logger.info(f"tickets[player_name]: {tickets[player_name]}")
         
         logger.info(f"Player {player_name} processing completed")
         logger.info(
