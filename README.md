@@ -43,7 +43,18 @@ This is a quite versitile discord bot, with commands, like:
   - Allows configuiring what guild you want to track for weekly giveaways, and gives better odds to win the givaway based on serveral factors. For example, Having 300 minutes of playtime and 50m xp contributed over the past 7 days, along with weekly, will triple your chances of winning the giveaway versus someone who only did their weekly. All chances are hard-coded atm, however you can edit these as you like. This is primarily built for distributing tomes gained from weekly's, however this can be used for absolutely anything.
 - **Player Commands**, a couple of commands, like:
   - Activity playtime: Shows the graph displaying the average amount minutes played every day for the past 2 weeks.
-  - Activity xp: Shows a bar graph displaying the total xp a player gained every day, for the past 2 weeks.
+  - Activity contribution: Shows the graph displaying the amount of XP contribution to the player's guild over the past 2 weeks.
+  - Activity mobs_killed: Shows the graph displaying the amount of mobs killed by the player over the past week.
+  - Activity wars: Shows the graph displaying the amount of wars completed by the player ofer the past week.
+  - Activity raids: Shows the graph displaying the amount of raids completed by the player over the past week.
+  - Activity raids_pie: Shows a pie chart displaying the percentages of different types of raids done for the user.
+  - Activity dungeons: Shows the graph displaying the amount of dungeons completed by the player over the past week.
+  - Activity dungeons_pie: Shows a pie chart displaying the percentages of different types of dungeons done for the user.
+  - leaderboard dungeons: Shows a top 10 list of the players with the most amount of dungeons completed.
+  - leaderboard playtime: Shows a top 10 list of the players with the most amount of playtime total.
+  - leaderboard pvp_kills: Shows a top 10 list of the players with the most amount of pvp kills..
+  - leaderboard raids: Shows a top 10 list of the players with the most amount of raids completed.
+  - leaderboard total_level: Shows a top 10 list of the players with the most amount of levels total.
 - **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
   - Based on what your guild owns, or can be switched for the best hq in the whole map.
 - **Overview**, a command that shows stats like:
