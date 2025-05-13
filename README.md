@@ -55,6 +55,9 @@ This is a quite versitile discord bot, with commands, like:
   - leaderboard pvp_kills: Shows a top 10 list of the players with the most amount of pvp kills..
   - leaderboard raids: Shows a top 10 list of the players with the most amount of raids completed.
   - leaderboard total_level: Shows a top 10 list of the players with the most amount of levels total.
+- **Territory Maps**, two commands that can:
+  - Map: Generates the current wynncraft territory map.
+  - Heatmap: Generates a heatmap for all territories.
 - **HQ Calculator**, a command that allows you to calculate the best HQ locations based on strength
   - Based on what your guild owns, or can be switched for the best hq in the whole map.
 - **Overview**, a command that shows stats like:
@@ -103,7 +106,7 @@ To clone and run this webhook script, you'll need [Git](https://git-scm.com), [P
 $ git clone https://github.com/badpinghere/dernal
 
 # Go into the repository
-$ cd dernal
+$ cd dernal/legacy
 
 # Install dependencies
 $ pip install -r requirements_legacy.txt

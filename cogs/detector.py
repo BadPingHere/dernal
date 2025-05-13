@@ -4,11 +4,11 @@ from discord import app_commands
 from typing import Optional, Union
 import logging
 import os
-import json
 import shelve
 from dotenv import load_dotenv
 from lib.utils import checkterritories, makeRequest
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger('discord')
 load_dotenv()
@@ -27,8 +27,11 @@ class Detector(commands.GroupCog, name="detector"):
         self.serverID = int(os.getenv("SERVER_ID") or 0)
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.detectorFilePath = os.path.join(rootDir, 'database', 'detector')
+        self.territoryFilePath = os.path.join(rootDir, 'database', 'territory')
         with shelve.open(self.detectorFilePath) as db:
             self.guildsBeingTracked = dict(db)
+        with shelve.open(self.territoryFilePath) as territoryStorage:
+            self.historicalTerritories = territoryStorage.get("historicalTerritories", {})
         self.backgroundDetector.start()
 
             
@@ -40,7 +43,8 @@ class Detector(commands.GroupCog, name="detector"):
 
         with shelve.open(self.detectorFilePath) as detectorStorage:
             self.guildsBeingTracked = dict(detectorStorage)
-        
+    
+
         # Get new data
         success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
         if not success:
@@ -66,6 +70,20 @@ class Detector(commands.GroupCog, name="detector"):
             # Process data for each guild
             guilds_to_check = list(self.guildsBeingTracked.keys())
             
+            # Get Heatmap data, sadlt the best place to run it at.
+            dateMonth = str(datetime.now().month)+"/"+str(datetime.now().day)
+            for territory, data in new_data.items():
+                oldGuild = old_data[str(territory)]['guild']['prefix']
+                newGuild = data['guild']['prefix']
+                if dateMonth not in self.historicalTerritories: # init today's date
+                    self.historicalTerritories[dateMonth] = {}
+                if territory not in self.historicalTerritories[dateMonth]: # Init territory to 0
+                    self.historicalTerritories[dateMonth][territory] = 0
+                if oldGuild != newGuild: # Means a change of hands, we add to our heatmap shit
+                    self.historicalTerritories[dateMonth][territory] += 1
+            with shelve.open(self.territoryFilePath) as territoryStorage:
+                territoryStorage["historicalTerritories"] = self.historicalTerritories
+
             for guild_id in guilds_to_check:
                 config = self.guildsBeingTracked[guild_id]
                 guildPrefix = config['guildPrefix']
@@ -186,8 +204,6 @@ class Detector(commands.GroupCog, name="detector"):
             if role and interval:
                 message += f' Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.'
             success = True
-        elif len(self.guildsBeingTracked) > 10:
-            message = f'You have too many guilds being tracked with Detector! The maximum limit you can have is 10. You can remove tracked guilds with /detector remove.'
         else:
             if role and interval:
                 message = f'<#{channel.id}> now set! Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.'

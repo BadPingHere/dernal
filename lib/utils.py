@@ -1,5 +1,4 @@
 import requests
-import asyncio
 import discord
 from datetime import datetime, timezone
 import json
@@ -12,13 +11,15 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.dates import HourLocator, DateFormatter
 from collections import defaultdict, deque
-from datetime import timedelta
 import io
 import seaborn as sns
-import pandas as pd
 import bisect
 import random
 import ast
+import os
+from PIL import Image, ImageDraw, ImageFont
+from io import BytesIO
+import shelve
 
 #TODO: Line commands should get data in intervals of 6 hours, for a total of 7 days for better rounding.    
 logger = logging.getLogger('discord')
@@ -26,6 +27,9 @@ logger = logging.getLogger('discord')
 ratelimitmultiplier = 1
 ratelimitwait = 0.1 
 cooldownHolder = {}
+rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+territoryFilePath = os.path.join(rootDir, 'database', 'territory')
+
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
@@ -134,7 +138,6 @@ def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save
     #logger.info(cooldownHolder)
     return True
 
-
 def findAttackingMembers(attacker):
     success, r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
     if not success:
@@ -214,7 +217,6 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
     lostTerritories = {}
     terrcount = {}
     messagesToSend = []
-    #logger.info(f"guildPrefix: {guildPrefix}")
     
     for territory, data in untainteddata.items():
         old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
@@ -225,6 +227,8 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
             gainedTerritories[territory] = data
     #logger.info(f"Gained Territories: {gainedTerritories}")
     #logger.info(f"Lost Territories: {lostTerritories}")
+    #logger.info(f"historicalTerritories: {historicalTerritories}")
+
     terrcount[guildPrefix] = expectedterrcount[guildPrefix] # this is what will fix (40 -> 38)
     if lostTerritories: # checks if its empty, no need to run if it is
         for i in lostTerritories:
@@ -2151,3 +2155,140 @@ def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Chances: {chances}")
     logger.info(f"Winners: {winners}")
     return chances, winners
+
+def mapCreator():
+    map_img = Image.open("main-map.png").convert("RGBA")
+    font = ImageFont.truetype("arial.ttf", 80)
+
+    def coordToPixel(x, z):
+        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+
+    color_map = {
+        g["prefix"]: g.get("color", "#FFFFFF")
+        for g in requests.get("https://athena.wynntils.com/cache/get/guildList").json()
+        if g.get("prefix")}
+
+    # get territory data
+    territory_data = requests.get("https://api.wynncraft.com/v3/guild/list/territory").json()
+
+    overlay = Image.new("RGBA", map_img.size)
+    overlay_draw = ImageDraw.Draw(overlay)
+    draw = ImageDraw.Draw(map_img)
+
+    # Loops through all territories, 
+    for name, info in territory_data.items():
+        try:
+            startX, startZ = info["location"]["start"]
+            endX, endZ = info["location"]["end"]
+            prefix = info["guild"]["prefix"]
+        except (KeyError, TypeError):
+            continue
+
+        color_hex = color_map.get(prefix, "#FFFFFF")
+        try:
+            color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
+        except:
+            color_rgb = (255, 255, 255)
+
+        x1, y1 = coordToPixel(startX, startZ)
+        x2, y2 = coordToPixel(endX, endZ)
+        xMin, xMax = sorted([x1, x2])
+        yMin, yMax = sorted([y1, y2])
+
+        overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color_rgb, 64)) # Draws the inside with the opacity
+        draw.rectangle([xMin, yMin, xMax, yMax], outline=color_rgb, width=8) # Draws border of territory
+
+        bbox = font.getbbox(prefix)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        text_x = (xMin + xMax) // 2 - text_w // 2
+        text_y = (yMin + yMax) // 2 - text_h // 2
+
+        # Adds the black outline to the text
+        for dx in (-2, 0, 2):
+            for dy in (-2, 0, 2):
+                if dx or dy:
+                    draw.text((text_x + dx, text_y + dy), prefix, font=font, fill="black")
+
+        draw.text((text_x, text_y), prefix, font=font, fill=color_rgb)
+
+    # Blend the full overlay just once
+    mapImg = Image.alpha_composite(map_img, overlay)
+    scale_factor = 0.4
+    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
+    mapImg = mapImg.resize(new_size, Image.LANCZOS)
+    mapBytes = BytesIO()
+    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    mapBytes.seek(0)
+    file = discord.File(mapBytes, filename="wynn_map.png")
+    embed = discord.Embed(
+        title=f"Current Territory Map",
+        color=discord.Color.green()
+    )
+    embed.set_image(url="attachment://wynn_map.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    return file, embed
+
+def heatmapCreator():
+    map_img = Image.open("main-map.png").convert("RGBA")
+
+    def coordToPixel(x, z):
+        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+
+    with shelve.open(territoryFilePath) as territoryStorage:
+        historicalTerritories = territoryStorage.get("historicalTerritories", {})
+
+    territory_data = requests.get("https://api.wynncraft.com/v3/guild/list/territory").json()
+    activityCount = defaultdict(int)
+    for day in historicalTerritories.values():
+        for territory, count in day.items():
+            activityCount[territory] += count
+
+    maxCount = max(activityCount.values(), default=1)
+
+    def heatToColor(heat): # I'd like to make this better in the future
+        heat = max(0.0, min(1.0, heat))
+        r = int(255 * heat)
+        g = 0
+        b = int(255 * (1 - heat))
+        return (r, g, b)
+
+    overlay = Image.new("RGBA", map_img.size)
+    overlay_draw = ImageDraw.Draw(overlay)
+    for name, info in territory_data.items():
+        try:
+            startX, startZ = info["location"]["start"]
+            endX, endZ = info["location"]["end"]
+        except (KeyError, TypeError):
+            continue
+
+        switchCount = activityCount.get(name, 0)
+        heat = switchCount / maxCount if maxCount else 0
+        color = heatToColor(heat)
+        alpha = int(64 + 191 * heat) if switchCount > 0 else 128 # my genius is frightening
+
+        x1, y1 = coordToPixel(startX, startZ)
+        x2, y2 = coordToPixel(endX, endZ)
+        xMin, xMax = sorted([x1, x2])
+        yMin, yMax = sorted([y1, y2])
+        overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color, alpha))
+
+    mapImg = Image.alpha_composite(map_img, overlay)
+    mapBytes = BytesIO()
+    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    mapBytes.seek(0)
+
+    scale_factor = 0.4
+    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
+    mapImg = mapImg.resize(new_size, Image.LANCZOS)
+    mapBytes = BytesIO()
+    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    mapBytes.seek(0)
+    file = discord.File(mapBytes, filename="wynn_heatmap.png")
+    embed = discord.Embed(
+        title=f"Current Territory Heatmap",
+        color=discord.Color.green()
+    )
+    embed.set_image(url="attachment://wynn_heatmap.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    return file, embed

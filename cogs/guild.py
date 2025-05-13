@@ -405,7 +405,7 @@ class Guild(commands.GroupCog, name="guild"):
     async def inactivity(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 5:
+        if int(current_time - self.guildLookupCooldown) <= 120: # Inactivity is a bitch to run, so i'd like to discourage it with insane cooldowns
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
             return
         self.guildLookupCooldown = current_time
