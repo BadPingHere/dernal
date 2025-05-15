@@ -15,7 +15,7 @@ class Player(commands.GroupCog, name="player"):
     def __init__(self, bot):
         self.bot = bot
         self.guildLookupCooldown = 0
-    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.")
+    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.")
     
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day over the past two weeks.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
@@ -289,7 +289,7 @@ class Player(commands.GroupCog, name="player"):
         else:
             await interaction.followup.send("No data available for the last 7 days.")
     
-    leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the fuck out if its not here.",)
+    leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="raids", description="Shows the leaderboard of the top 10 players with the highest total raids completed.")
     async def leaderboardRaids(self, interaction: discord.Interaction):
         logger.info(f"Command /player leaderboard raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")

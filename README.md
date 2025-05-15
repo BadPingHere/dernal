@@ -64,7 +64,7 @@ This is a quite versitile discord bot, with commands, like:
   - Owner, Online, Total members, Wars and territory count, Top Season Ratings and Top Contributing Members.
 
 > [!NOTE]  
-> For self-hosting, you will need to run dernal with the activitySQL script to use /guild activity/leaderboard commands, /player activity commands, and /giveaway commands. Or you can join the [Fruman Bee](https://discord.gg/Nq3BTr9Pqf) discord to use our database.
+> For self-hosting, you will need to run dernal with the activitySQL script to use /guild activity/leaderboard commands, /player activity commands, and /giveaway commands. Or you can join the [Dernal Support Discord](https://discord.gg/MHbMGjKdfe) discord to use our database.
 
 ## How To Use
 
@@ -133,7 +133,7 @@ This software was inspired or uses assets from:
 
 ## Bug Reporting
 
-If you are having any issues, that being a command is running improperly, the grammar on an error is weird, or having issues getting the bot up and running, please do not hesitate to either contact me on discord or submit an issue [here](https://github.com/BadPingHere/dernal/issues).
+If you are having any issues, that being a command is running improperly, the grammar on an error is weird, or having issues getting the bot up and running, please do not hesitate to either contact me on discord, join the [Dernal Support Discord](https://discord.gg/MHbMGjKdfe) or submit an issue on [Github](https://github.com/BadPingHere/dernal/issues).
 
 ## License
 

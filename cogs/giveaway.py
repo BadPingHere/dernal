@@ -185,7 +185,7 @@ class giveaway(commands.Cog):
         with shelve.open(self.giveawayFilePath) as db:
             self.giveawayGuild = dict(db)
     
-    giveawayCommands = app_commands.Group(name="giveaway", description="this is never seen, yet discord flips the fuck out if its not here.",)
+    giveawayCommands = app_commands.Group(name="giveaway", description="this is never seen, yet discord flips the x out if its not here.",)
     
     @giveawayCommands.command(name="configure", description="Configure the giveaway system with a guild prefix")
     @app_commands.describe(prefix='The guild prefix to configure for giveaways')

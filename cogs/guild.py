@@ -60,7 +60,7 @@ class Guild(commands.GroupCog, name="guild"):
         self.bot = bot
         self.guildLookupCooldown = 0
     
-    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the fuck out if its not here.",)
+    activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.",)
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of players online over the past day.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)  
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
@@ -294,7 +294,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 24 hours")
     
-    leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the fuck out if its not here.",)
+    leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
     async def leaderboardOnline_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
