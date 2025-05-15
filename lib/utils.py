@@ -1735,7 +1735,6 @@ def playerActivityWars(player_uuid, name):
     maxWars = max(totalWars) if totalWars else 0
     minWars = min(filter(lambda x: x > 0, totalWars)) if totalWars else 0
 
-    logger.info(f"Plotting {len(dates)} points: {list(zip(dates, totalWars))}")
     # Plot
     plt.figure(figsize=(12, 6))
     plt.plot(dates, totalWars, '-', label='War Count', color=blue, lw=3)

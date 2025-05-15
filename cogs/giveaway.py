@@ -194,7 +194,7 @@ class giveaway(commands.Cog):
         #logger.info(f"interaction.user.roles: {interaction.user.roles}")
         permission = 0
         for role in interaction.user.roles:
-            logger.info(f"role.name: {role.name}")
+            #logger.info(f"role.name: {role.name}")
             if role.name.lower() == requiredRoleName.lower():
                 permission = 1
         if permission != 1:
@@ -246,13 +246,10 @@ class giveaway(commands.Cog):
             return
 
         with shelve.open(self.giveawayFilePath) as db:
-            print(db)
             key = str(interaction.guild_id)
             if key in db: # If user is in there
                 config = db[key]
                 guildUUID = config['guildUUID']
-            else:
-                print("This server has not configured giveaways yet.")
                 
         logger.info(f"Command /giveaway roll was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         
