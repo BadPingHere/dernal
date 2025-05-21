@@ -1,8 +1,8 @@
 <h1 align="center">
-  Dernal.py
+  Dernal
 </h1>
 
-<h4 align="center">A lightweight and easy-to-use discord bot for all guild activities in <a href="https://wynncraft.com/" target="_blank">Wynncraft</a>.</h4>
+<h4 align="center">A lightweight and easy-to-use discord bot for everything in <a href="https://wynncraft.com/" target="_blank">Wynncraft</a>.</h4>
 
 <p align="center">
   <a href="#features">Features</a> •
