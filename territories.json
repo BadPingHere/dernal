@@ -4438,7 +4438,7 @@
       "wood": "3600"
     },
     "Trading Routes": [
-      "Aldorei's North Exit",
+      "Waterfall Cave",
       "Cinfras's Small Farm",
       "Aldorei Cliffside Waterfalls"
     ],
@@ -5404,7 +5404,7 @@
     },
     "Trading Routes": [
       "Silverbull Headquarters",
-      "Aldorei's North Exit",
+      "Waterfall Cave",
       "Cinfras's Small Farm"
     ],
     "Guild": {
@@ -7419,7 +7419,7 @@
       "end": [-670, -780]
     }
   },
-  "Aldorei's North Exit": {
+  "Waterfall Cave": {
     "resources": {
       "emeralds": "1800",
       "ore": "900",
@@ -8007,7 +8007,7 @@
       "wood": "0"
     },
     "Trading Routes": [
-      "Aldorei's North Exit",
+      "Waterfall Cave",
       "Timeworn Arch",
       "Evergreen Outbreak"
     ],
