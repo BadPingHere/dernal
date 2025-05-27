@@ -26,9 +26,13 @@ class HQ(commands.Cog):
             logger.error("Error while getting request in /hq")
             await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
             return
-        untainteddata = r.json()
-        embed = await asyncio.to_thread(getTerritoryNames, untainteddata, guild if guild else None)
-        await interaction.response.send_message(embed=embed)
+        if guild: # Check if they own territory before even running it
+            if guild not in str(r.json()):
+                await interaction.response.send_message(f"The guild you inputted does not own any territories. If this is incorrect, check if the prefix is exactly right, including capitals, and if it is, report this bug.", ephemeral=True)
+            else:
+                untainteddata = r.json()
+                embed = await asyncio.to_thread(getTerritoryNames, untainteddata, guild if guild else None)
+                await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(HQ(bot))

@@ -173,7 +173,8 @@
     "Trading Routes": [
       "Trunkstump Goblin Camp",
       "Brigand Outpost",
-      "Cliffhearth Orc Camp"
+      "Cliffhearth Orc Camp",
+      "Sanguine Spider Den"
     ],
     "Location": {
       "start": [-2060, -4831],
@@ -853,7 +854,7 @@
       "wood": "3600"
     },
     "Trading Routes": [
-      "Gylia Rese Cabin",
+      "Gylia Research Cabin",
       "Cinfras Outskirts",
       "Weird Clearing"
     ],
@@ -965,7 +966,7 @@
       "Iron Road",
       "Entrance to Olux",
       "Bloody Trail",
-      "Swamp Mountain "
+      "Swamp Mountain Arch"
     ],
     "Location": {
       "start": [-1649, -5134],
@@ -1136,7 +1137,7 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Panda Kingdom", "Aldorei's "],
+    "Trading Routes": ["Panda Kingdom", "Timeworn Arch"],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3497,8 +3498,7 @@
       "Road to Mine",
       "Corkus Forest",
       "Industrial Clearing",
-      "Corkus City",
-      "Picnic Pond"
+      "Corkus City"
     ],
     "Guild": {
       "uuid": "",
@@ -4924,7 +4924,7 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cliffhearth Orc Camp", "Llevigar Gate"],
+    "Trading Routes": ["Cliffhearth Orc Camp", "Llevigar Gate", "Meteor Trail"],
     "Location": {
       "start": [-2060, -4746],
       "end": [-2171, -4644]
@@ -6113,8 +6113,7 @@
     "Trading Routes": [
       "Avos Territory",
       "Corkus Forest",
-      "Corkus City",
-      "Corkus City Crossroads"
+      "Corkus City"
     ],
     "Guild": {
       "uuid": "",

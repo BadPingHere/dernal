@@ -12,7 +12,7 @@
   <a href="#license">License</a>
 </p>
 
-![img](example_image.png)
+![img](/lib/documents/example_image.png)
 
 ## Features
 
