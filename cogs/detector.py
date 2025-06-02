@@ -30,6 +30,7 @@ class Detector(commands.GroupCog, name="detector"):
         self.territoryFilePath = os.path.join(rootDir, 'database', 'territory')
         with shelve.open(self.detectorFilePath) as db:
             self.guildsBeingTracked = dict(db)
+            #logger.info(f"self.guildsBeingTracked: {self.guildsBeingTracked}")
         with shelve.open(self.territoryFilePath) as territoryStorage:
             self.historicalTerritories = territoryStorage.get("historicalTerritories", {})
         self.backgroundDetector.start()
@@ -51,16 +52,16 @@ class Detector(commands.GroupCog, name="detector"):
             logger.error("Error while getting territory data.")
             return
             
-        stringdata = str(r.json())
         new_data = r.json()
         
         # Initialize expected territory counts for all tracked guilds
-        for guild_id in self.guildsBeingTracked:
-            config = self.guildsBeingTracked[guild_id]
-            guildPrefix = config['guildPrefix']
-            if guildPrefix not in self.expectedterrcount:
-                self.expectedterrcount[guildPrefix] = stringdata.count(guildPrefix)
-                self.hasbeenran[guild_id] = True
+        for guildID, configList in self.guildsBeingTracked.items():
+            for config in configList:
+                guildPrefix = config['guildPrefix']
+                key = (guildID, guildPrefix)
+                if guildPrefix not in self.expectedterrcount and guildPrefix.lower() != "global":
+                    self.expectedterrcount[guildPrefix] = sum(1 for data in new_data.values() if data["guild"]["prefix"] == guildPrefix) # Fixes guilds like Aeq being doubled, since it'd hit both Aeq and Aequatis, or whatver their dumbass name is.
+                    self.hasbeenran[key] = True
         
         # Only process territory checks if we have both current and old data
         if self.untainteddata:  # Only if we already have some data
@@ -84,32 +85,33 @@ class Detector(commands.GroupCog, name="detector"):
             with shelve.open(self.territoryFilePath) as territoryStorage:
                 territoryStorage["historicalTerritories"] = self.historicalTerritories
 
-            for guild_id in guilds_to_check:
-                config = self.guildsBeingTracked[guild_id]
-                guildPrefix = config['guildPrefix']
-                pingRoleID = config["pingRoleID"]
-                #logger.info(f"guildPrefix: {guildPrefix}")
-                try:
-                    channel_id = config['channelForMessages']
-                    guild = await self.bot.fetch_guild(guild_id)
-                    channelForMessages = await guild.fetch_channel(channel_id)
-                except Exception as e: # if someone kicks the bot or similar, theyll enter here and always be pinging discord servers every 20s. As much as I care about discord's api, i dont care enough to change the code.
-                    continue
+            for guildID in guilds_to_check:
+                configList = self.guildsBeingTracked[guildID]
+                for config in configList:
+                    guildPrefix = config['guildPrefix']
+                    pingRoleID = config["pingRoleID"]
+                    #logger.info(f"guildPrefix: {guildPrefix}")
+                    try:
+                        channel_id = config['channelForMessages']
+                        guild = await self.bot.fetch_guild(guildID)
+                        channelForMessages = await guild.fetch_channel(channel_id)
+                    except Exception as e: # if someone kicks the bot or similar, theyll enter here and always be pinging discord servers every 20s. As much as I care about discord's api, i dont care enough to change the code.
+                        continue
 
-                intervalForPing = config["intervalForPing"]
-                
-                # Check territories using current and old data
-                messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping)
-                #logger.info(f"messagesToSend: {messagesToSend}")
-                if messagesToSend:
-                    for message_info in messagesToSend:
-                        try:
-                            await channelForMessages.send(embed=message_info['embed'])
-                                
-                            if message_info["shouldPing"]:
-                                await channelForMessages.send(f"<@&{message_info['roleID']}>")
-                        except discord.DiscordException as err:
-                            logger.error(f"Error sending message: {err}")
+                    intervalForPing = config["intervalForPing"]
+                    
+                    # Check territories using current and old data
+                    messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping, guildID)
+                    #logger.info(f"messagesToSend: {messagesToSend}")
+                    if messagesToSend:
+                        for message_info in messagesToSend:
+                            try:
+                                await channelForMessages.send(embed=message_info['embed'])
+                                    
+                                if message_info["shouldPing"]:
+                                    await channelForMessages.send(f"<@&{message_info['roleID']}>")
+                            except discord.DiscordException as err:
+                                logger.error(f"Error sending message: {err}")
         
         # Update the current data for next iteration
         self.untainteddata = new_data
@@ -129,17 +131,28 @@ class Detector(commands.GroupCog, name="detector"):
         logger.info(f"Command /detector remove was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter prefix is: {prefix}.")
         serverID = str(interaction.guild.id)
 
-        if serverID in self.guildsBeingTracked: # Search the guild id in tracked guilds
-            trackedData = self.guildsBeingTracked[serverID]
-            if trackedData.get('guildPrefix') == prefix: # check if the prefix is the same, which it should be
-                del self.guildsBeingTracked[serverID] # deletes from running
-                with shelve.open(self.detectorFilePath) as detectorStorage:
-                    if serverID in detectorStorage:
-                        del detectorStorage[serverID] # deletes from storage
-                await interaction.response.send_message(f"{prefix} is no longer being detected.")
-                return
+        if serverID not in self.guildsBeingTracked:
+            await interaction.response.send_message(f"No guilds are currently being tracked in this server.", ephemeral=True)
+            return
+        
+        trackedList = self.guildsBeingTracked[serverID]
+        newTrackedList = [config for config in trackedList if config.get('guildPrefix') != prefix]
+        if len(trackedList) == len(newTrackedList): # Checks if the inputted prefix is even in there
+            await interaction.response.send_message(f"{prefix} not found for this server.", ephemeral=True)
+            return
+        
+        if newTrackedList:
+            self.guildsBeingTracked[serverID] = newTrackedList
+        else:
+            del self.guildsBeingTracked[serverID]
 
-        await interaction.response.send_message(f"{prefix} not found for this server.", ephemeral=True)
+        with shelve.open(self.detectorFilePath) as detectorStorage:
+            if newTrackedList:
+                detectorStorage[serverID] = newTrackedList
+            else:
+                if serverID in detectorStorage:
+                    del detectorStorage[serverID]
+        await interaction.response.send_message(f"{prefix} is no longer being detected.")
 
     @remove.autocomplete('prefix')
     async def autocomplete_remove(self, interaction: discord.Interaction, current: str):
@@ -155,30 +168,37 @@ class Detector(commands.GroupCog, name="detector"):
             return choices # This is so the user in question doesnt get info on the currently-running detector
         
         serverID = str(interaction.guild.id)  # This gets the current server ID
+        if serverID not in self.guildsBeingTracked:
+            return choices
+        def truncate(text: str, max_length: int = 15) -> str:
+            return text if len(text) <= max_length else text[:12] + "..."
         #logger.info(f"self.guildsBeingTracked.items(): {self.guildsBeingTracked.items()}")
-        for server_id, data in self.guildsBeingTracked.items():
-            if server_id == serverID: # make sure we are only showing results for the server we are in
-                guildPrefix = data.get('guildPrefix', '')
-                if current.lower() in guildPrefix.lower():  # Match prefix based on current input
-                    roleID = data.get('pingRoleID', '')
-                    roleName = "No Role" if not roleID else (interaction.guild.get_role(int(roleID)).name or "Unknown Role")
-                    interval = data.get('intervalForPing', 'No Interval')
-                    choices.append(
-                        app_commands.Choice(
-                            name=f"Guild: {guildPrefix} | Channel: {data['channelForMessages']} | Role: {roleName} | Interval: {interval}",
-                            value=guildPrefix
-                        )
+        for config in self.guildsBeingTracked[serverID]:
+            guildPrefix = config.get('guildPrefix', '')
+            if current.lower() in guildPrefix.lower():
+                roleID = config.get('pingRoleID', '')
+                roleName = "No Role"
+                if roleID:
+                    role = interaction.guild.get_role(int(roleID))
+                    if role:
+                        roleName = truncate(role.name)
+                    else: # If they delete it or similar
+                        roleName = "Unknown Role"
+                interval = config.get('intervalForPing', 'No Interval')
+                channelID = config.get('channelForMessages', '') # This should always be there, but redundancy type shit
+                choices.append(
+                    app_commands.Choice(
+                        name=f"Guild Prefix: {guildPrefix} | Channel ID: {channelID} | Role Name: {roleName} | Interval: {interval}",
+                        value=guildPrefix
                     )
-        
-        if not choices:
-            logger.info(f"No autocomplete options found for current input: {current} in guild {serverID}")
+                )
         
         return choices
 
     @app_commands.command(description="Add a guild to detect.")
     @app_commands.describe(
         channel='Channel to set',
-        guild_prefix='Prefix of the guild to track Ex: SEQ, ICo. (Case Sensitive)',
+        guild_prefix='Prefix of the guild to track Ex: SEQ, ICo. (Case Sensitive); Or \'Global\' for global detection.',
         role='Role to be pinged on territory loss (optional)',
         interval='The cooldown of the pings in minutes (optional)',
     )  
@@ -200,7 +220,6 @@ class Detector(commands.GroupCog, name="detector"):
         success = False
 
         if guild_prefix in self.guildsBeingTracked:
-            message = f'This guild is already being detected, so we will change its configurations.\n<#{channel.id}> now set!'
             if role and interval:
                 message += f' Role "{role}" will be pinged every time you lose territory, with a cooldown of {interval} minutes.'
             success = True
@@ -210,15 +229,22 @@ class Detector(commands.GroupCog, name="detector"):
             success = True
 
         if success:
-            self.guildsBeingTracked[interaction.guild.id] = {
+            serverID = str(interaction.guild.id)
+            new_config = {
                 'channelForMessages': channel.id,
                 'guildPrefix': guild_prefix,
                 'pingRoleID': str(role.id) if role else "",
                 'intervalForPing': interval if interval else ""
             }
+            if serverID not in self.guildsBeingTracked:
+                self.guildsBeingTracked[serverID] = []
+            existing = [cfg for cfg in self.guildsBeingTracked[serverID] if cfg['guildPrefix'] == guild_prefix] 
+            if existing: # We check if prefix is already there, if it is re replace
+                self.guildsBeingTracked[serverID] = [cfg for cfg in self.guildsBeingTracked[serverID] if cfg['guildPrefix'] != guild_prefix]
+            self.guildsBeingTracked[serverID].append(new_config) # append
             logger.info(self.guildsBeingTracked)
             with shelve.open(self.detectorFilePath) as detectorStorage:
-                detectorStorage[str(interaction.guild.id)] = self.guildsBeingTracked[interaction.guild.id]
+                detectorStorage[str(serverID)] = self.guildsBeingTracked[serverID]
             logger.info(f"War detector now running in background for guild prefix {guild_prefix} for guild id {interaction.guild.id}")
 
         await interaction.response.send_message(message)

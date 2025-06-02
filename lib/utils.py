@@ -20,8 +20,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import shelve
-
-#TODO: Line commands should get data in intervals of 6 hours, for a total of 7 days for better rounding.    
+  
 logger = logging.getLogger('discord')
 
 ratelimitmultiplier = 1
@@ -182,9 +181,10 @@ def findAttackingMembers(attacker):
     #logger.info(f"Attacking Members: {attackingMembers}")
     return attackingMembers
         
-def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, intervalForPing, timesinceping):
-    if guildPrefix not in timesinceping:
-        timesinceping[guildPrefix] = 0  # setup 0 first, never again
+def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID):
+    key = (guildID, guildPrefix)
+    if key not in timesinceping:
+        timesinceping[key] = 0  # setup 0 first, never again
         
     shouldPing = False
     if attacker != guildPrefix:
@@ -203,21 +203,23 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
     # Check if we should ping
     if pingRoleID and intervalForPing and attacker != guildPrefix:
         current_time = time.time()
-        if current_time - int(timesinceping[guildPrefix]) >= intervalForPing*60:
-            timesinceping[guildPrefix] = current_time
+        if current_time - int(timesinceping[key]) >= intervalForPing*60:
+            timesinceping[key] = current_time
             shouldPing = True
-    logger.info(f"Sending Embed - {'Gained Territory' if attacker == guildPrefix else 'Lost Territory'}, {terrInQuestion}, Attacker: {attacker} ({attackerTerrBefore} -> {attackerTerrAfter}), Defender: {defender} ({defenderTerrBefore} -> {defenderTerrAfter}), lasted {timeLasted}. {'{}: **{}**'.format(world, ', '.join(username)) if attacker != guildPrefix else ''}") # linux FUCKING SUCKS i hate the bird
+    #logger.info(f"Sending Embed - {'Gained Territory' if attacker == guildPrefix else 'Lost Territory'}, {terrInQuestion}, Attacker: {attacker} ({attackerTerrBefore} -> {attackerTerrAfter}), Defender: {defender} ({defenderTerrBefore} -> {defenderTerrAfter}), lasted {timeLasted}. {'{}: **{}**'.format(world, ', '.join(username)) if attacker != guildPrefix else ''}") # linux FUCKING SUCKS i hate the bird
     return {
         "embed": embed,
         "shouldPing": shouldPing,
         "roleID": pingRoleID if shouldPing  else None
     }
 
-def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping):
+def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping, guildID):
+    #TODO: Fix timesinceping being for only prefix, whereas other instances of same guild could rewrite the timesinceping
     gainedTerritories = {}
     lostTerritories = {}
     terrcount = {}
     messagesToSend = []
+    key = (guildID, guildPrefix)
     
     for territory, data in untainteddata.items():
         old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
@@ -229,7 +231,41 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
     #logger.info(f"Gained Territories: {gainedTerritories}")
     #logger.info(f"Lost Territories: {lostTerritories}")
     #logger.info(f"historicalTerritories: {historicalTerritories}")
+    if guildPrefix.lower() == 'global': # We check and then enter, never to leave again
+        messagesToSend = []
+        for territory, data in untainteddata.items():
+            oldGuild = untainteddataOLD[str(territory)]['guild']['prefix']
+            newGuild = data['guild']['prefix']
+            if oldGuild != newGuild and newGuild != "None":
+                reworkedDate = datetime.fromisoformat(untainteddataOLD[territory]['acquired'].replace("Z", "+00:00"))
+                reworkedDateNew = datetime.fromisoformat(data['acquired'].replace("Z", "+00:00"))
+                elapsed_time = int(reworkedDateNew.timestamp() - reworkedDate.timestamp())
 
+                attackerOldCount = sum(1 for d in untainteddataOLD.values() if d["guild"]["prefix"] == newGuild)
+                attackerNewCount = sum(1 for d in untainteddata.values() if d["guild"]["prefix"] == newGuild)
+                defenderOldCount = sum(1 for d in untainteddataOLD.values() if d["guild"]["prefix"] == oldGuild)
+                defenderNewCount = sum(1 for d in untainteddata.values() if d["guild"]["prefix"] == oldGuild)
+
+                embed = discord.Embed(
+                    description=f"### ⚪ **Territory Change**\n\n**{territory}**\nAttacker: **{newGuild}** ({attackerOldCount} -> {attackerNewCount})\nDefender: **{oldGuild}** ({defenderOldCount} -> {defenderNewCount})\n\nThe territory lasted {human_time_duration(elapsed_time)}.",
+                    color=0xffffff
+                )
+                embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+                shouldPing = False
+                if pingRoleID and intervalForPing:
+                    if key not in timesinceping:
+                        timesinceping[key] = 0
+                    current_time = time.time()
+                    if current_time - int(timesinceping[key]) >= intervalForPing*60:
+                        timesinceping[key] = current_time
+                        shouldPing = True
+                messagesToSend.append({
+                    "embed": embed,
+                    "shouldPing": shouldPing,
+                    "roleID": pingRoleID if shouldPing  else None
+                })
+        return messagesToSend
     terrcount[guildPrefix] = expectedterrcount[guildPrefix] # this is what will fix (40 -> 38)
     if lostTerritories: # checks if its empty, no need to run if it is
         for i in lostTerritories:
@@ -239,10 +275,10 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew) - int(timestamp)
             
-            opponentTerrCountBefore = str(untainteddataOLD).count(lostTerritories[str(i)]['guild']['prefix'])
-            opponentTerrCountAfter = str(untainteddata).count(lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            opponentTerrCountBefore = sum(1 for data in untainteddataOLD.values()if data["guild"]["prefix"] == lostTerritories[str(i)]['guild']['prefix'])
+            opponentTerrCountAfter = sum(1 for data in untainteddata.values()if data["guild"]["prefix"] == lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix] -= 1
-            embedInfo = sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, intervalForPing, timesinceping)
+            embedInfo = sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID)
             messagesToSend.append(embedInfo)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories: # checks if its empty, no need to run if it is
@@ -253,16 +289,16 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
             timestampNew = reworkedDateNew.timestamp() 
             elapsed_time = int(timestampNew)- int(timestamp)
             
-            opponentTerrCountBefore = str(untainteddataOLD).count(untainteddataOLD[str(i)]['guild']['prefix'])
-            opponentTerrCountAfter = str(untainteddata).count(untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
+            opponentTerrCountBefore = sum(1 for data in untainteddataOLD.values()if data["guild"]["prefix"] == untainteddataOLD[str(i)]['guild']['prefix'])
+            opponentTerrCountAfter = sum(1 for data in untainteddata.values()if data["guild"]["prefix"] == untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
             terrcount[guildPrefix]+=1
-            embedInfo = sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, intervalForPing, timesinceping)
+            embedInfo = sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID)
             messagesToSend.append(embedInfo)
             expectedterrcount[guildPrefix] = terrcount[guildPrefix]
     if gainedTerritories or lostTerritories: # just for resetting our variables
-        hasbeenran[guildPrefix] = False
+        hasbeenran[key] = False
     else:
-        hasbeenran[guildPrefix] = True
+        hasbeenran[key] = True
     return messagesToSend
 
 def printTop3(list, word, word2):
@@ -386,7 +422,7 @@ def lookupUser(memberList):
         "Active Users": [],
     }
     for member in memberList:
-        time.sleep(0.5) # Slow down inactivity because we need to preserve our ratelimits
+        time.sleep(1) # Slow down inactivity because we need to preserve our ratelimits
         success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
         if not success:
             logger.error("Unsuccessful request in lookupUser.")
@@ -394,7 +430,10 @@ def lookupUser(memberList):
         jsonData = r.json()
         lastJoinDate = jsonData["lastJoin"]
 
-        joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+        try: # This should hopefully fix the offchance that someone's last time has no millisecond
+            joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+        except ValueError:
+            joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%SZ")
         joinTime = joinTime.replace(tzinfo=timezone.utc)
         currentTime = datetime.now(timezone.utc)
         timeDifference = currentTime - joinTime
@@ -415,6 +454,9 @@ def lookupUser(memberList):
             inactivityDict["Three Day Inactive Users"].append((jsonData["username"], int(epochTime)))
         else:  # Less than 3 days
             inactivityDict["Active Users"].append((jsonData["username"], int(epochTime)))
+    
+    for key in inactivityDict:
+        inactivityDict[key].sort(key=lambda x: x[1])  # Sort by timestamp, so we can go from oldest to newest
     return inactivityDict
 
 def lookupGuild(r):
@@ -1235,13 +1277,26 @@ def playerActivityPlaytime(player_uuid, name):
     cursor = conn.cursor()
 
     cursor.execute("""
+    WITH RECURSIVE dates(day) AS (
+        SELECT DATE('now', '-13 days')
+        UNION ALL
+        SELECT DATE(day, '+1 day')
+        FROM dates
+        WHERE day < DATE('now')
+    ),
+    playtime_per_day AS (
         SELECT DATE(timestamp) AS day, 
-               ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
+            ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
         FROM users
         WHERE uuid = ?
-          AND DATE(timestamp) >= DATE('now', '-14 days')
+        AND DATE(timestamp) >= DATE('now', '-14 days')
         GROUP BY DATE(timestamp)
-        ORDER BY day
+    )
+    SELECT d.day,
+        COALESCE(p.playtime_minutes, 0) AS playtime_minutes
+    FROM dates d
+    LEFT JOIN playtime_per_day p ON d.day = p.day
+    ORDER BY d.day;
     """, (player_uuid,))
     daily_data = cursor.fetchall()
 
@@ -1381,16 +1436,10 @@ def playerActivityDungeons(player_uuid, name):
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT DATE(u.timestamp) AS day, u.totalDungeons
+    SELECT u.timestamp, u.totalDungeons
     FROM users_global u
-    JOIN (
-        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
-        FROM users_global
-        WHERE uuid = ?
-        AND DATE(timestamp) >= DATE('now', '-7 days')
-        GROUP BY DATE(timestamp)
-    ) last_snapshots
-    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    WHERE u.uuid = ?
+        AND u.timestamp >= DATETIME('now', '-7 days')
     ORDER BY u.timestamp;
     """, (player_uuid,))
     snapshots = cursor.fetchall()
@@ -1399,12 +1448,16 @@ def playerActivityDungeons(player_uuid, name):
         conn.close()
         return None, None
 
-    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
     total_dungeons = [row[1] for row in snapshots]
 
     # Highest total and daily gain
     highestTotal = total_dungeons[-1] if total_dungeons else 0
-    highestGain = max((total_dungeons[i] - total_dungeons[i - 1]) for i in range(1, len(total_dungeons))) if len(total_dungeons) > 1 else 0
+    dungeons_by_day = defaultdict(list)
+    for dt, count in zip(dates, total_dungeons):
+        dungeons_by_day[dt.date()].append(count)
+    dailyGain = [max(counts) - min(counts) for counts in dungeons_by_day.values() if len(counts) > 1]
+    highestGain = max(dailyGain) if dailyGain else 0
     maxDungeons = max(total_dungeons) if total_dungeons else 0
     minDungeons = min(filter(lambda x: x > 0, total_dungeons)) if total_dungeons else 0
 
@@ -1510,16 +1563,10 @@ def playerActivityRaids(player_uuid, name):
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT DATE(u.timestamp) AS day, u.totalRaids
+    SELECT u.timestamp, u.totalRaids
     FROM users_global u
-    JOIN (
-        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
-        FROM users_global
-        WHERE uuid = ?
-        AND DATE(timestamp) >= DATE('now', '-7 days')
-        GROUP BY DATE(timestamp)
-    ) last_snapshots
-    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    WHERE u.uuid = ?
+        AND u.timestamp >= DATETIME('now', '-7 days')
     ORDER BY u.timestamp;
     """, (player_uuid,))
     snapshots = cursor.fetchall()
@@ -1528,12 +1575,16 @@ def playerActivityRaids(player_uuid, name):
         conn.close()
         return None, None
 
-    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
     totalRaids = [row[1] for row in snapshots]
 
     # Highest total and daily gain
     highestTotal = totalRaids[-1] if totalRaids else 0
-    highestGain = max((totalRaids[i] - totalRaids[i - 1]) for i in range(1, len(totalRaids))) if len(totalRaids) > 1 else 0
+    raids_by_day = defaultdict(list)
+    for dt, count in zip(dates, totalRaids):
+        raids_by_day[dt.date()].append(count)
+    dailyGain = [max(counts) - min(counts) for counts in raids_by_day.values() if len(counts) > 1]
+    highestGain = max(dailyGain) if dailyGain else 0
     maxRaids = max(totalRaids) if totalRaids else 0
     minRaids = min(filter(lambda x: x > 0, totalRaids)) if totalRaids else 0
 
@@ -1639,16 +1690,10 @@ def playerActivityMobsKilled(player_uuid, name):
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT DATE(u.timestamp) AS day, u.killedMobs
+    SELECT u.timestamp, u.killedMobs
     FROM users_global u
-    JOIN (
-        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
-        FROM users_global
-        WHERE uuid = ?
-        AND DATE(timestamp) >= DATE('now', '-7 days')
-        GROUP BY DATE(timestamp)
-    ) last_snapshots
-    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    WHERE u.uuid = ?
+        AND u.timestamp >= DATETIME('now', '-7 days')
     ORDER BY u.timestamp;
     """, (player_uuid,))
     snapshots = cursor.fetchall()
@@ -1657,12 +1702,15 @@ def playerActivityMobsKilled(player_uuid, name):
         conn.close()
         return None, None
 
-    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
     totalKills = [row[1] for row in snapshots]
-
-    # Highest total and daily gain
     highestTotal = totalKills[-1] if totalKills else 0
-    highestGain = max((totalKills[i] - totalKills[i - 1]) for i in range(1, len(totalKills))) if len(totalKills) > 1 else 0
+    kills_by_day = defaultdict(list)
+    for dt, count in zip(dates, totalKills):
+        kills_by_day[dt.date()].append(count)
+
+    daily_gains = [max(counts) - min(counts) for counts in kills_by_day.values() if len(counts) > 1]
+    highestGain = max(daily_gains) if daily_gains else 0
     maxKills = max(totalKills) if totalKills else 0
     minKills = min(filter(lambda x: x > 0, totalKills)) if totalKills else 0
 
@@ -1714,16 +1762,10 @@ def playerActivityWars(player_uuid, name):
     cursor = conn.cursor()
 
     cursor.execute("""
-    SELECT DATE(u.timestamp) AS day, u.wars
+    SELECT u.timestamp, u.wars
     FROM users_global u
-    JOIN (
-        SELECT uuid, DATE(timestamp) AS day, MAX(timestamp) AS max_ts
-        FROM users_global
-        WHERE uuid = ?
-        AND DATE(timestamp) >= DATE('now', '-7 days')
-        GROUP BY DATE(timestamp)
-    ) last_snapshots
-    ON u.uuid = last_snapshots.uuid AND u.timestamp = last_snapshots.max_ts
+    WHERE u.uuid = ?
+        AND u.timestamp >= DATETIME('now', '-7 days')
     ORDER BY u.timestamp;
     """, (player_uuid,))
     snapshots = cursor.fetchall()
@@ -1732,12 +1774,14 @@ def playerActivityWars(player_uuid, name):
         conn.close()
         return None, None
 
-    dates = [datetime.strptime(row[0], '%Y-%m-%d').date() for row in snapshots]
+    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
     totalWars = [row[1] for row in snapshots]
-
-    # Highest total and daily gain
     highestTotal = totalWars[-1] if totalWars else 0
-    highestGain = max((totalWars[i] - totalWars[i - 1]) for i in range(1, len(totalWars))) if len(totalWars) > 1 else 0
+    wars_by_day = defaultdict(list)
+    for dt, count in zip(dates, totalWars):
+        wars_by_day[dt.date()].append(count)
+    daily_gains = [max(counts) - min(counts) for counts in wars_by_day.values() if len(counts) > 1]
+    highestGain = max(daily_gains) if daily_gains else 0
     maxWars = max(totalWars) if totalWars else 0
     minWars = min(filter(lambda x: x > 0, totalWars)) if totalWars else 0
 
@@ -1771,7 +1815,7 @@ def playerActivityWars(player_uuid, name):
     embed = discord.Embed(
         title=f"War Count for {name}",
         description=(
-            f"Total Kills: {highestTotal} wars\n"
+            f"Total Wars: {highestTotal} wars\n"
             f"Highest Gain in One Day: {highestGain} wars\n"
         ),
         color=discord.Color.red()
