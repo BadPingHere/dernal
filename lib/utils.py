@@ -214,7 +214,6 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
     }
 
 def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping, guildID):
-    #TODO: Fix timesinceping being for only prefix, whereas other instances of same guild could rewrite the timesinceping
     gainedTerritories = {}
     lostTerritories = {}
     terrcount = {}
@@ -2207,10 +2206,15 @@ def rollGiveaway(weeklyNames, rollcount):
 
 def mapCreator():
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
-    font = ImageFont.truetype("lib/documents/arial.ttf", 80)
+    font = ImageFont.truetype("lib/documents/arial.ttf", 40)
+    territoryCounts = defaultdict(int)
+    namePrefixMap = {}
 
     def coordToPixel(x, z):
         return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+
+    with open("territories.json", "r") as f:
+        local_territories = json.load(f)
 
     color_map = {
         g["prefix"]: g.get("color", "#FFFFFF")
@@ -2225,6 +2229,28 @@ def mapCreator():
     draw = ImageDraw.Draw(map_img)
 
     # Loops through all territories, 
+    for name, data in local_territories.items():
+        if "Trading Routes" not in data: #shouldnt happen but 
+            continue
+        try:
+            x1 = (data["Location"]["start"][0] + data["Location"]["end"][0]) // 2
+            z1 = (data["Location"]["start"][1] + data["Location"]["end"][1]) // 2
+            px1, py1 = coordToPixel(x1, z1)
+        except KeyError:
+            continue
+
+        for destinationName in data["Trading Routes"]:
+            destData = local_territories.get(destinationName)
+            if not destData: # Shouldnt happen but
+                continue
+            try:
+                x2 = (destData["Location"]["start"][0] + destData["Location"]["end"][0]) // 2
+                z2 = (destData["Location"]["start"][1] + destData["Location"]["end"][1]) // 2
+                px2, py2 = coordToPixel(x2, z2)
+            except KeyError:
+                continue
+
+            draw.line([(px1, py1), (px2, py2)], fill=(10, 10, 10), width=5) # lines are not fully black
     for name, info in territory_data.items():
         try:
             startX, startZ = info["location"]["start"]
@@ -2261,6 +2287,36 @@ def mapCreator():
 
         draw.text((text_x, text_y), prefix, font=font, fill=color_rgb)
 
+    for info in territory_data.values():
+        try: 
+            prefix = info["guild"]["prefix"]
+            name = info["guild"]["name"]
+            territoryCounts[prefix] += 1
+            namePrefixMap[prefix] = name
+        except (KeyError, TypeError):
+            continue
+    leaderboardGuilds = sorted(territoryCounts.items(), key=lambda x: x[1], reverse=True)
+    legendLines = [
+        f"{i+1}. {namePrefixMap[prefix]} ({prefix}) - {count} Territories"
+        for i, (prefix, count) in enumerate(leaderboardGuilds)
+    ]
+
+    legendPadding = 20
+    lineHeight = font.getbbox("Hg")[3] - font.getbbox("Hg")[1] + 10
+    # Bottom left
+    boxX = 50
+    boxY = map_img.height - (lineHeight * len(legendLines) + legendPadding * 2) - 50
+
+    for i, (prefix, count) in enumerate(leaderboardGuilds):
+        color_hex = color_map.get(prefix, "#FFFFFF")
+        try:
+            text_color = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
+        except:
+            text_color = (255, 255, 255)
+        
+        text = f"{i+1}. {namePrefixMap[prefix]} ({prefix}) - {count} Territories"
+        draw.text((boxX + legendPadding, boxY + legendPadding + i * lineHeight), text, font=font, fill=text_color)
+    
     # Blend the full overlay just once
     mapImg = Image.alpha_composite(map_img, overlay)
     scale_factor = 0.4

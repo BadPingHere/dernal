@@ -7,7 +7,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Bantisu Approach"],
+    "Trading Routes": [
+      "Bantisu Approach"
+    ],
     "Location": {
       "start": [570, -4833],
       "end": [445, -4692]
@@ -27,7 +29,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Tree Island", "Skien's Island"],
+    "Trading Routes": [
+      "Tree Island",
+      "Skien's Island"
+    ],
     "Location": {
       "start": [-41, -4174],
       "end": [453, -3793]
@@ -59,7 +64,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-435, -1883],
+      "end": [-270, -1653]
+    }
   },
   "Path to Thanos": {
     "resources": {
@@ -195,13 +204,21 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Nesaak", "Bob's Tomb", "Frigid Crossroads"],
+    "Trading Routes": [
+      "Nesaak",
+      "Bob's Tomb",
+      "Frigid Crossroads"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [76, -757],
+      "end": [230, -660]
+    }
   },
   "Trunkstump Goblin Camp": {
     "resources": {
@@ -261,7 +278,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Olux", "Lizardman Lake", "Fading Forest"],
+    "Trading Routes": [
+      "Olux",
+      "Lizardman Lake",
+      "Fading Forest"
+    ],
     "Location": {
       "start": [-1519, -5492],
       "end": [-1626, -5607]
@@ -319,7 +340,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [545, -1520],
+      "end": [650, -1670]
+    }
   },
   "Mangled Lake": {
     "resources": {
@@ -428,7 +453,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Frosty Spikes", "Time Valley"],
+    "Trading Routes": [
+      "Frosty Spikes",
+      "Time Valley"
+    ],
     "Location": {
       "start": [-324, -1130],
       "end": [-192, -993]
@@ -448,7 +476,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cascading Oasis", "Almuj"],
+    "Trading Routes": [
+      "Cascading Oasis",
+      "Almuj"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -571,7 +602,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Scorpion Nest", "Infested Sinkhole", "Naga Lake"],
+    "Trading Routes": [
+      "Scorpion Nest",
+      "Infested Sinkhole",
+      "Naga Lake"
+    ],
     "Location": {
       "start": [-2127, -5466],
       "end": [-2066, -5603]
@@ -591,7 +626,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Wolves' Den", "Florist's Hut", "Nesaak"],
+    "Trading Routes": [
+      "Wolves' Den",
+      "Florist's Hut",
+      "Nesaak"
+    ],
     "Location": {
       "start": [246, -747],
       "end": [380, -867]
@@ -686,7 +725,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Otherworldly Monolith", "Azure Frontier"],
+    "Trading Routes": [
+      "Otherworldly Monolith",
+      "Azure Frontier"
+    ],
     "Location": {
       "start": [-775, -6164],
       "end": [-827, -6010]
@@ -757,7 +799,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Broken Road", "Mine Base Plains"],
+    "Trading Routes": [
+      "Broken Road",
+      "Mine Base Plains"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -777,7 +822,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Temple of Legends", "Sulphuric Hollow", "Troms Lake"],
+    "Trading Routes": [
+      "Temple of Legends",
+      "Sulphuric Hollow",
+      "Troms Lake"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -797,7 +846,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Fallen Village", "Gylia Lakehouse", "Cosmic Fissures"],
+    "Trading Routes": [
+      "Fallen Village",
+      "Gylia Lakehouse",
+      "Cosmic Fissures"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -817,7 +870,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Field of Life"],
+    "Trading Routes": [
+      "Field of Life"
+    ],
     "Location": {
       "start": [-894, -6244],
       "end": [-1026, -6066]
@@ -837,13 +892,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Perilous Grotto", "Canyon Walkway"],
+    "Trading Routes": [
+      "Perilous Grotto",
+      "Canyon Walkway"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [271, -5039],
+      "end": [337, -4948]
+    }
   },
   "Fallen Village": {
     "resources": {
@@ -877,7 +939,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Cliffside Passage South", "Protector's Pathway"],
+    "Trading Routes": [
+      "Cliffside Passage South",
+      "Protector's Pathway"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -922,7 +987,9 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Twain Lake"],
+    "Trading Routes": [
+      "Twain Lake"
+    ],
     "Location": {
       "start": [95, -407],
       "end": [140, -310]
@@ -942,7 +1009,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Lava Springs", "Ternaves", "Entrance to Almuj"],
+    "Trading Routes": [
+      "Lava Springs",
+      "Ternaves",
+      "Entrance to Almuj"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -987,7 +1058,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Lion Lair", "Savannah Plains"],
+    "Trading Routes": [
+      "Lion Lair",
+      "Savannah Plains"
+    ],
     "Location": {
       "start": [760, -2070],
       "end": [615, -2120]
@@ -1056,7 +1130,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Troll's Challenge"],
+    "Trading Routes": [
+      "Troll's Challenge"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1076,7 +1152,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Llevigar", "Volcanic Excavation"],
+    "Trading Routes": [
+      "Llevigar",
+      "Volcanic Excavation"
+    ],
     "Location": {
       "start": [-2048, -4250],
       "end": [-1932, -4403]
@@ -1096,7 +1175,10 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Freezing Heights", "Pyroclastic Flow"],
+    "Trading Routes": [
+      "Freezing Heights",
+      "Pyroclastic Flow"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1127,7 +1209,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [405, -2846],
+      "end": [504, -2972]
+    }
   },
   "Panda Path": {
     "resources": {
@@ -1137,7 +1223,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Panda Kingdom", "Timeworn Arch"],
+    "Trading Routes": [
+      "Panda Kingdom",
+      "Timeworn Arch"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1308,7 +1397,9 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Avos Territory"],
+    "Trading Routes": [
+      "Avos Territory"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1328,7 +1419,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Panda Path", "Parasitic Slime Mine"],
+    "Trading Routes": [
+      "Panda Path",
+      "Parasitic Slime Mine"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1447,7 +1541,9 @@
       "fish": "7200",
       "wood": "0"
     },
-    "Trading Routes": ["Lighthouse Lookout"],
+    "Trading Routes": [
+      "Lighthouse Lookout"
+    ],
     "Location": {
       "start": [-1822, -1995],
       "end": [-2015, -1725]
@@ -1467,7 +1563,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Toxic Drip", "Lutho"],
+    "Trading Routes": [
+      "Toxic Drip",
+      "Lutho"
+    ],
     "Location": {
       "start": [1040, -767],
       "end": [892, -870]
@@ -1513,7 +1612,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Faltach Manor", "Twisted Housing", "Gelibord"],
+    "Trading Routes": [
+      "Faltach Manor",
+      "Twisted Housing",
+      "Gelibord"
+    ],
     "Location": {
       "start": [-942, -5227],
       "end": [-1050, -5116]
@@ -1558,7 +1661,12 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Selchar", "Durum Malt Islet", "Bear Zoo", "Nemract"],
+    "Trading Routes": [
+      "Selchar",
+      "Durum Malt Islet",
+      "Bear Zoo",
+      "Nemract"
+    ],
     "Location": {
       "start": [-128, -2448],
       "end": [-30, -2538]
@@ -1578,7 +1686,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Entamis Village", "Iboju Village", "Delnar Manor"],
+    "Trading Routes": [
+      "Entamis Village",
+      "Iboju Village",
+      "Delnar Manor"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1623,7 +1735,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Bizarre Passage", "Gateway to Nothing"],
+    "Trading Routes": [
+      "Bizarre Passage",
+      "Gateway to Nothing"
+    ],
     "Location": {
       "start": [1388, -869],
       "end": [1254, -932]
@@ -1668,7 +1783,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Featherfall Cliffs", "Rocky Bend"],
+    "Trading Routes": [
+      "Featherfall Cliffs",
+      "Rocky Bend"
+    ],
     "Location": {
       "start": [334, -4518],
       "end": [269, -4395]
@@ -1714,7 +1832,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Aldorei Springs", "Aldorei Valley"],
+    "Trading Routes": [
+      "Aldorei Springs",
+      "Aldorei Valley"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1734,7 +1855,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Path to Thanos", "Celestial Impact", "Cosmic Fissures"],
+    "Trading Routes": [
+      "Path to Thanos",
+      "Celestial Impact",
+      "Cosmic Fissures"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -1780,7 +1905,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ragni North Entrance", "Riverbank Knoll"],
+    "Trading Routes": [
+      "Ragni North Entrance",
+      "Riverbank Knoll"
+    ],
     "Location": {
       "start": [-914, -1860],
       "end": [-748, -1955]
@@ -1874,7 +2002,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mangled Lake", "Centerworld Fortress"],
+    "Trading Routes": [
+      "Mangled Lake",
+      "Centerworld Fortress"
+    ],
     "Location": {
       "start": [-1460, -5024],
       "end": [-1282, -4870]
@@ -1919,7 +2050,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Thanos", "Troll's Challenge"],
+    "Trading Routes": [
+      "Thanos",
+      "Troll's Challenge"
+    ],
     "Location": {
       "start": [260, -5298],
       "end": [199, -5169]
@@ -1939,7 +2073,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Broken Road", "Grey Ruins"],
+    "Trading Routes": [
+      "Broken Road",
+      "Grey Ruins"
+    ],
     "Location": {
       "start": [641, -767],
       "end": [543, -640]
@@ -1983,7 +2120,9 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Icy Descent"],
+    "Trading Routes": [
+      "Icy Descent"
+    ],
     "Location": {
       "start": [-400, -450],
       "end": [-315, -330]
@@ -2009,6 +2148,10 @@
       "Nodguj Nation",
       "Maro Peaks"
     ],
+    "Location": {
+      "start": [527, -3386],
+      "end": [297, -3644]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2029,6 +2172,10 @@
       "Dragonbone Graveyard",
       "Lava Lakes"
     ],
+    "Location": {
+      "start": [1233, -5553],
+      "end": [1379, -5369]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2044,13 +2191,19 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Canyon High Path"],
+    "Trading Routes": [
+      "Canyon High Path"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [440, -5183],
+      "end": [563, -5080]
+    }
   },
   "Elefolk Stomping Grounds": {
     "resources": {
@@ -2071,7 +2224,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [435, -4511],
+      "end": [341, -4670]
+    }
   },
   "Frozen Fort": {
     "resources": {
@@ -2081,7 +2238,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Sky Falls"],
+    "Trading Routes": [
+      "Sky Falls"
+    ],
     "Location": {
       "start": [1501, -4513],
       "end": [1586, -4789]
@@ -2101,7 +2260,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["The Forgery", "Entrance to Cinfras", "Mesquis Tower"],
+    "Trading Routes": [
+      "The Forgery",
+      "Entrance to Cinfras",
+      "Mesquis Tower"
+    ],
     "Location": {
       "start": [-734, -4842],
       "end": [-818, -4953]
@@ -2174,7 +2337,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Nested Cliffside", "Nomads' Refuge", "Arachnid Woods"],
+    "Trading Routes": [
+      "Nested Cliffside",
+      "Nomads' Refuge",
+      "Arachnid Woods"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2194,7 +2361,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Great Bridge", "Frigid Crossroads"],
+    "Trading Routes": [
+      "Great Bridge",
+      "Frigid Crossroads"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2265,7 +2435,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Mushroom Hill", "Lexdale", "Decayed Basin"],
+    "Trading Routes": [
+      "Mushroom Hill",
+      "Lexdale",
+      "Decayed Basin"
+    ],
     "Location": {
       "start": [-598, -5580],
       "end": [-454, -5518]
@@ -2310,7 +2484,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Shineridge Orc Camp", "Harnort Compound", "Llevigar"],
+    "Trading Routes": [
+      "Shineridge Orc Camp",
+      "Harnort Compound",
+      "Llevigar"
+    ],
     "Location": {
       "start": [-1776, -4352],
       "end": [-1609, -4524]
@@ -2330,7 +2508,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ragni South Entrance", "Abandoned Farm"],
+    "Trading Routes": [
+      "Ragni South Entrance",
+      "Abandoned Farm"
+    ],
     "Location": {
       "start": [-784, -1398],
       "end": [-617, -1317]
@@ -2350,7 +2531,11 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Maiden Tower", "Infested Sinkhole", "Ogre Den"],
+    "Trading Routes": [
+      "Maiden Tower",
+      "Infested Sinkhole",
+      "Ogre Den"
+    ],
     "Location": {
       "start": [-2171, -5190],
       "end": [-2060, -5309]
@@ -2370,7 +2555,11 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Owl Tribe", "Ruined Prospect", "Sunrise Plateau"],
+    "Trading Routes": [
+      "Owl Tribe",
+      "Ruined Prospect",
+      "Sunrise Plateau"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2390,13 +2579,19 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Avos Temple"],
+    "Trading Routes": [
+      "Avos Temple"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-1681, -3178],
+      "end": [-1888, -3375]
+    }
   },
   "Scorpion Nest": {
     "resources": {
@@ -2406,7 +2601,9 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Secluded Workshop"],
+    "Trading Routes": [
+      "Secluded Workshop"
+    ],
     "Location": {
       "start": [-2173, -5466],
       "end": [-2128, -5603]
@@ -2426,7 +2623,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Dogun Ritual Site", "Rodoroc", "Lava Lakes"],
+    "Trading Routes": [
+      "Dogun Ritual Site",
+      "Rodoroc",
+      "Lava Lakes"
+    ],
     "Location": {
       "start": [1383, -5238],
       "end": [1230, -5067]
@@ -2446,7 +2647,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Lifeless Forest", "Jofash Tunnel", "Regular Island"],
+    "Trading Routes": [
+      "Lifeless Forest",
+      "Jofash Tunnel",
+      "Regular Island"
+    ],
     "Location": {
       "start": [1178, -4175],
       "end": [1445, -4012]
@@ -2466,7 +2671,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Wayward Split", "Perilous Grotto"],
+    "Trading Routes": [
+      "Wayward Split",
+      "Perilous Grotto"
+    ],
     "Location": {
       "start": [264, -4877],
       "end": [203, -4971]
@@ -2486,7 +2694,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ragni", "Emerald Trail", "Ragni Countryside South"],
+    "Trading Routes": [
+      "Ragni",
+      "Emerald Trail",
+      "Ragni Countryside South"
+    ],
     "Location": {
       "start": [-747, -1530],
       "end": [-616, -1652]
@@ -2506,7 +2718,10 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Harpy's Haunt South", "Elefolk Stomping Grounds"],
+    "Trading Routes": [
+      "Harpy's Haunt South",
+      "Elefolk Stomping Grounds"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2654,7 +2869,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Burning Airship", "Evergreen Outbreak"],
+    "Trading Routes": [
+      "Burning Airship",
+      "Evergreen Outbreak"
+    ],
     "Location": {
       "start": [107, -4755],
       "end": [35, -4857]
@@ -2699,7 +2917,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Grey Ruins", "Forest of Eyes"],
+    "Trading Routes": [
+      "Grey Ruins",
+      "Forest of Eyes"
+    ],
     "Location": {
       "start": [480, -493],
       "end": [734, -355]
@@ -2719,7 +2940,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Rocky Shore", "Mount Wynn Inn", "Nested Cliffside"],
+    "Trading Routes": [
+      "Rocky Shore",
+      "Mount Wynn Inn",
+      "Nested Cliffside"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2766,7 +2991,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Barren Sands"],
+    "Trading Routes": [
+      "Barren Sands"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2786,7 +3013,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ternaves Tunnel", "Savannah Plains", "Almuj"],
+    "Trading Routes": [
+      "Ternaves Tunnel",
+      "Savannah Plains",
+      "Almuj"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2882,7 +3113,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Jitak's Farm", "Gylia Watchtower"],
+    "Trading Routes": [
+      "Jitak's Farm",
+      "Gylia Watchtower"
+    ],
     "Location": {
       "start": [30, -5447],
       "end": [-83, -5605]
@@ -2902,7 +3136,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Entrance to Thesead", "Thesead Suburbs"],
+    "Trading Routes": [
+      "Entrance to Thesead",
+      "Thesead Suburbs"
+    ],
     "Location": {
       "start": [747, -5104],
       "end": [872, -4964]
@@ -2922,7 +3159,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Kitrios Barracks", "Troll's Challenge"],
+    "Trading Routes": [
+      "Kitrios Barracks",
+      "Troll's Challenge"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2949,6 +3189,10 @@
       "Volcanic Excavation",
       "Light Peninsula"
     ],
+    "Location": {
+      "start": [-929, -3831],
+      "end": [-722, -3530]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -2990,7 +3234,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Path to Light", "Azure Frontier"],
+    "Trading Routes": [
+      "Path to Light",
+      "Azure Frontier"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3034,7 +3281,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["The Shiar", "Mantis Nest", "Aldorei Springs"],
+    "Trading Routes": [
+      "The Shiar",
+      "Mantis Nest",
+      "Aldorei Springs"
+    ],
     "Location": {
       "start": [-736, -4428],
       "end": [-802, -4553]
@@ -3054,7 +3305,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Protector's Pathway"],
+    "Trading Routes": [
+      "Protector's Pathway"
+    ],
     "Location": {
       "start": [607, -4579],
       "end": [760, -4372]
@@ -3074,7 +3327,14 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Sky Island Ascent", "Raiders' Airbase"],
+    "Trading Routes": [
+      "Sky Island Ascent",
+      "Raiders' Airbase"
+    ],
+    "Location": {
+      "start": [1380, -4457],
+      "end": [1551, -4316]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3115,7 +3375,10 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Apprentice Huts", "Fountain of Youth"],
+    "Trading Routes": [
+      "Apprentice Huts",
+      "Fountain of Youth"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3196,7 +3459,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-929, -4552],
+      "end": [-1014, -4706]
+    }
   },
   "Kitrios Armory": {
     "resources": {
@@ -3206,13 +3473,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Kitrios Barracks", "Thanos"],
+    "Trading Routes": [
+      "Kitrios Barracks",
+      "Thanos"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [51, -5297],
+      "end": [166, -5391]
+    }
   },
   "Unicorn Trail": {
     "resources": {
@@ -3247,7 +3521,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Featherfall Cliffs"],
+    "Trading Routes": [
+      "Featherfall Cliffs"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3292,7 +3568,10 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Zhight Island", "Southern Outpost"],
+    "Trading Routes": [
+      "Zhight Island",
+      "Southern Outpost"
+    ],
     "Location": {
       "start": [-1212, -2576],
       "end": [-1001, -2342]
@@ -3312,7 +3591,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mining Base Camp", "Abandoned Mines Entrance"],
+    "Trading Routes": [
+      "Mining Base Camp",
+      "Abandoned Mines Entrance"
+    ],
     "Location": {
       "start": [881, -1225],
       "end": [1019, -1380]
@@ -3358,7 +3640,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Detlas Suburbs", "Essren's Hut", "Scorched Trail"],
+    "Trading Routes": [
+      "Detlas Suburbs",
+      "Essren's Hut",
+      "Scorched Trail"
+    ],
     "Location": {
       "start": [402, -1657],
       "end": [536, -1518]
@@ -3403,7 +3689,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Founder's Statue", "Corkus Sea Cove", "Road to Mine"],
+    "Trading Routes": [
+      "Founder's Statue",
+      "Corkus Sea Cove",
+      "Road to Mine"
+    ],
     "Location": {
       "start": [-1394, -2750],
       "end": [-1466, -2831]
@@ -3423,7 +3713,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Canyon Dropoff"],
+    "Trading Routes": [
+      "Canyon Dropoff"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3519,7 +3811,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Pirate Town", "Legendary Island", "Bear Zoo"],
+    "Trading Routes": [
+      "Pirate Town",
+      "Legendary Island",
+      "Bear Zoo"
+    ],
     "Location": {
       "start": [-727, -2846],
       "end": [-440, -2629]
@@ -3539,7 +3835,9 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Toxic Drip"],
+    "Trading Routes": [
+      "Toxic Drip"
+    ],
     "Location": {
       "start": [1017, -1146],
       "end": [844, -993]
@@ -3571,7 +3869,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [110, -873],
+      "end": [240, -1035]
+    }
   },
   "Desolate Valley": {
     "resources": {
@@ -3581,7 +3883,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Nesaak Transition", "Corrupted River", "Plains Lake"],
+    "Trading Routes": [
+      "Nesaak Transition",
+      "Corrupted River",
+      "Plains Lake"
+    ],
     "Location": {
       "start": [330, -1040],
       "end": [450, -1170]
@@ -3725,7 +4031,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Relos", "Southern Outpost", "Lighthouse Lookout"],
+    "Trading Routes": [
+      "Relos",
+      "Southern Outpost",
+      "Lighthouse Lookout"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3820,7 +4130,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cascading Oasis"],
+    "Trading Routes": [
+      "Cascading Oasis"
+    ],
     "Location": {
       "start": [990, -2270],
       "end": [1120, -2400]
@@ -3840,7 +4152,9 @@
       "fish": "0",
       "wood": "7200"
     },
-    "Trading Routes": ["Fountain of Youth"],
+    "Trading Routes": [
+      "Fountain of Youth"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -3860,7 +4174,10 @@
       "fish": "0",
       "wood": "7200"
     },
-    "Trading Routes": ["Twisted Ridge", "Path to the Penitentiary"],
+    "Trading Routes": [
+      "Twisted Ridge",
+      "Path to the Penitentiary"
+    ],
     "Location": {
       "start": [-873, -5518],
       "end": [-772, -5585]
@@ -3880,7 +4197,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Central Islands", "Ahmsord Outskirts", "Sky Falls"],
+    "Trading Routes": [
+      "Central Islands",
+      "Ahmsord Outskirts",
+      "Sky Falls"
+    ],
     "Location": {
       "start": [1355, -4700],
       "end": [1253, -4595]
@@ -4327,7 +4648,11 @@
       "fish": "7200",
       "wood": "0"
     },
-    "Trading Routes": ["Volcanic Isles", "Tree Island", "Pirate Town"],
+    "Trading Routes": [
+      "Volcanic Isles",
+      "Tree Island",
+      "Pirate Town"
+    ],
     "Location": {
       "start": [-472, -3590],
       "end": [-688, -3385]
@@ -4421,13 +4746,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Parasitic Slime Mine", "Featherfall Cliffs"],
+    "Trading Routes": [
+      "Parasitic Slime Mine",
+      "Featherfall Cliffs"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [338, -4628],
+      "end": [269, -4522]
+    }
   },
   "Big Mushroom Cave": {
     "resources": {
@@ -4472,7 +4804,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [194, -5165],
+      "end": [111, -5045]
+    }
   },
   "Luxuriant Pond": {
     "resources": {
@@ -4506,7 +4842,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Eagle Tribe", "Rymek", "Sunset Plateau"],
+    "Trading Routes": [
+      "Eagle Tribe",
+      "Rymek",
+      "Sunset Plateau"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -4526,7 +4866,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Iron Road", "Bloody Trail", "Goblin Plains East"],
+    "Trading Routes": [
+      "Iron Road",
+      "Bloody Trail",
+      "Goblin Plains East"
+    ],
     "Location": {
       "start": [-1603, -4969],
       "end": [-1529, -5100]
@@ -4546,7 +4890,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Icy Descent"],
+    "Trading Routes": [
+      "Icy Descent"
+    ],
     "Location": {
       "start": [-267, -348],
       "end": [-91, -250]
@@ -4614,13 +4960,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Krolton's Cave", "Elefolk Stomping Grounds"],
+    "Trading Routes": [
+      "Krolton's Cave",
+      "Elefolk Stomping Grounds"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [440, -4672],
+      "end": [341, -4838]
+    }
   },
   "Gateway to Nothing": {
     "resources": {
@@ -4630,7 +4983,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Final Step", "Toxic Drip", "Void Valley"],
+    "Trading Routes": [
+      "Final Step",
+      "Toxic Drip",
+      "Void Valley"
+    ],
     "Location": {
       "start": [1120, -882],
       "end": [1244, -1058]
@@ -4675,7 +5032,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mage Island"],
+    "Trading Routes": [
+      "Mage Island"
+    ],
     "Location": {
       "start": [900, -2660],
       "end": [1100, -2480]
@@ -4745,7 +5104,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Great Bridge", "Monte's Village", "Herb Cave"],
+    "Trading Routes": [
+      "Great Bridge",
+      "Monte's Village",
+      "Herb Cave"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -4765,7 +5128,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cyclospordial Hazard", "Wayward Split"],
+    "Trading Routes": [
+      "Cyclospordial Hazard",
+      "Wayward Split"
+    ],
     "Location": {
       "start": [110, -4869],
       "end": [194, -4741]
@@ -4888,13 +5254,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Panda Path", "Pine Pillar Forest"],
+    "Trading Routes": [
+      "Panda Path",
+      "Pine Pillar Forest"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [33, -4367],
+      "end": [107, -4519]
+    }
   },
   "Castle Dullahan": {
     "resources": {
@@ -4904,7 +5277,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Fading Forest", "Gelibord Watermill"],
+    "Trading Routes": [
+      "Fading Forest",
+      "Gelibord Watermill"
+    ],
     "Location": {
       "start": [-1027, -5470],
       "end": [-1180, -5600]
@@ -4924,7 +5300,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cliffhearth Orc Camp", "Llevigar Gate", "Meteor Trail"],
+    "Trading Routes": [
+      "Cliffhearth Orc Camp",
+      "Llevigar Gate",
+      "Meteor Trail"
+    ],
     "Location": {
       "start": [-2060, -4746],
       "end": [-2171, -4644]
@@ -4971,7 +5351,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Jungle Entrance", "Icy Vigil"],
+    "Trading Routes": [
+      "Jungle Entrance",
+      "Icy Vigil"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -4991,7 +5374,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Royal Gate", "Balloon Airbase"],
+    "Trading Routes": [
+      "Royal Gate",
+      "Balloon Airbase"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5011,7 +5397,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Sky Island Ascent", "Jofash Docks"],
+    "Trading Routes": [
+      "Sky Island Ascent",
+      "Jofash Docks"
+    ],
     "Location": {
       "start": [1304, -4354],
       "end": [1126, -4176]
@@ -5080,7 +5469,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Lexdale", "Path to Talor", "Path to the Penitentiary"],
+    "Trading Routes": [
+      "Lexdale",
+      "Path to Talor",
+      "Path to the Penitentiary"
+    ],
     "Location": {
       "start": [-659, -5424],
       "end": [-766, -5508]
@@ -5100,7 +5493,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Silent Road", "Worm Tunnel"],
+    "Trading Routes": [
+      "Silent Road",
+      "Worm Tunnel"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5120,13 +5516,21 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Big Mushroom Cave", "Aldorei Valley", "Felroc Fields"],
+    "Trading Routes": [
+      "Big Mushroom Cave",
+      "Aldorei Valley",
+      "Felroc Fields"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-237, -4514],
+      "end": [-321, -4648]
+    }
   },
   "Gylia Lakehouse": {
     "resources": {
@@ -5161,7 +5565,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Fountain of Youth", "Monte's Village"],
+    "Trading Routes": [
+      "Fountain of Youth",
+      "Monte's Village"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5231,7 +5638,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Sinister Forest", "Forgotten Town"],
+    "Trading Routes": [
+      "Sinister Forest",
+      "Forgotten Town"
+    ],
     "Location": {
       "start": [813, -333],
       "end": [1043, -504]
@@ -5251,7 +5661,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Gateway to Nothing"],
+    "Trading Routes": [
+      "Gateway to Nothing"
+    ],
     "Location": {
       "start": [1082, -1161],
       "end": [1250, -1078]
@@ -5271,7 +5683,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Kandon Ridge"],
+    "Trading Routes": [
+      "Kandon Ridge"
+    ],
     "Location": {
       "start": [710, -4587],
       "end": [614, -4682]
@@ -5291,7 +5705,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Iron Road", "Sunspark Orc Camp", "Sablestone Orc Camp"],
+    "Trading Routes": [
+      "Iron Road",
+      "Sunspark Orc Camp",
+      "Sablestone Orc Camp"
+    ],
     "Location": {
       "start": [-1800, -5099],
       "end": [-1690, -4969]
@@ -5311,7 +5729,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Swamp Island", "Dragonling Nests"],
+    "Trading Routes": [
+      "Swamp Island",
+      "Dragonling Nests"
+    ],
     "Location": {
       "start": [1102, -5016],
       "end": [1250, -4916]
@@ -5331,7 +5752,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Invaded Barracks", "Accursed Dunes", "Gloopy Cave"],
+    "Trading Routes": [
+      "Invaded Barracks",
+      "Accursed Dunes",
+      "Gloopy Cave"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5426,7 +5851,10 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Dreary Docks", "Lifeless Forest"],
+    "Trading Routes": [
+      "Dreary Docks",
+      "Lifeless Forest"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5472,7 +5900,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Jagged Foothills", "Nemract", "Blackstring Den"],
+    "Trading Routes": [
+      "Jagged Foothills",
+      "Nemract",
+      "Blackstring Den"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5492,7 +5924,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Barren Sands", "Eagle Tribe", "Ruined Villa"],
+    "Trading Routes": [
+      "Barren Sands",
+      "Eagle Tribe",
+      "Ruined Villa"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5564,7 +6000,13 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Raiders' Stronghold"],
+    "Trading Routes": [
+      "Raiders' Stronghold"
+    ],
+    "Location": {
+      "start": [1558, -4316],
+      "end": [1305, -4253]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5630,7 +6072,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Burning Farm", "Pine Pillar Forest"],
+    "Trading Routes": [
+      "Burning Farm",
+      "Pine Pillar Forest"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5700,7 +6145,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Path to Ozoth's Spire", "Perilous Grotto"],
+    "Trading Routes": [
+      "Path to Ozoth's Spire",
+      "Perilous Grotto"
+    ],
     "Location": {
       "start": [111, -5043],
       "end": [194, -4958]
@@ -5730,7 +6178,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [244, -5407],
+      "end": [168, -5315]
+    }
   },
   "Canyon Walkway": {
     "resources": {
@@ -5740,7 +6192,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Molten Passage", "Bandit's Toll", "Wizard's Warning"],
+    "Trading Routes": [
+      "Molten Passage",
+      "Bandit's Toll",
+      "Wizard's Warning"
+    ],
     "Location": {
       "start": [271, -5165],
       "end": [338, -5041]
@@ -5836,7 +6292,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mudspring Orc Camp", "Brigand Outpost", "Ogre Den"],
+    "Trading Routes": [
+      "Mudspring Orc Camp",
+      "Brigand Outpost",
+      "Ogre Den"
+    ],
     "Location": {
       "start": [-2060, -5003],
       "end": [-2171, -5075]
@@ -5880,7 +6340,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Karoc Quarry", "Entrance to Gavel", "Llevigar Gate"],
+    "Trading Routes": [
+      "Karoc Quarry",
+      "Entrance to Gavel",
+      "Llevigar Gate"
+    ],
     "Location": {
       "start": [-1800, -4643],
       "end": [-2171, -4405]
@@ -5900,7 +6364,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Thesead Suburbs", "Eltom", "Rodoroc"],
+    "Trading Routes": [
+      "Thesead Suburbs",
+      "Eltom",
+      "Rodoroc"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -5920,7 +6388,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Mantis Nest", "Collapsed Bridge", "Chasm Chokepoint"],
+    "Trading Routes": [
+      "Mantis Nest",
+      "Collapsed Bridge",
+      "Chasm Chokepoint"
+    ],
     "Location": {
       "start": [-738, -4708],
       "end": [-818, -4840]
@@ -5940,7 +6412,9 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Corkus City"],
+    "Trading Routes": [
+      "Corkus City"
+    ],
     "Location": {
       "start": [-1555, -2968],
       "end": [-1452, -2835]
@@ -5960,7 +6434,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Temple Island", "Dragonling Nests"],
+    "Trading Routes": [
+      "Temple Island",
+      "Dragonling Nests"
+    ],
     "Location": {
       "start": [949, -4885],
       "end": [1057, -4804]
@@ -6004,7 +6481,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Path to Ahmsord"],
+    "Trading Routes": [
+      "Path to Ahmsord"
+    ],
     "Location": {
       "start": [954, -4425],
       "end": [854, -4340]
@@ -6024,7 +6503,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Parasitic Slime Mine", "Cyclospordial Hazard"],
+    "Trading Routes": [
+      "Parasitic Slime Mine",
+      "Cyclospordial Hazard"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -6070,7 +6552,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Bizarre Passage"],
+    "Trading Routes": [
+      "Bizarre Passage"
+    ],
     "Location": {
       "start": [1350, -520],
       "end": [1265, -410]
@@ -6090,7 +6574,9 @@
       "fish": "0",
       "wood": "7200"
     },
-    "Trading Routes": ["Road to Light Forest"],
+    "Trading Routes": [
+      "Road to Light Forest"
+    ],
     "Location": {
       "start": [-1390, -4594],
       "end": [-1254, -4351]
@@ -6134,7 +6620,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Lutho", "Forest of Eyes"],
+    "Trading Routes": [
+      "Lutho",
+      "Forest of Eyes"
+    ],
     "Location": {
       "start": [815, -506],
       "end": [1059, -629]
@@ -6180,7 +6669,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Pigmen Ravines", "Ragni", "Sulphuric Hollow"],
+    "Trading Routes": [
+      "Pigmen Ravines",
+      "Ragni",
+      "Sulphuric Hollow"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -6274,7 +6767,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cinfras"],
+    "Trading Routes": [
+      "Cinfras"
+    ],
     "Location": {
       "start": [-349, -5093],
       "end": [-137, -4814]
@@ -6294,7 +6789,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Corrupted Tower", "Mount Wynn Inn"],
+    "Trading Routes": [
+      "Corrupted Tower",
+      "Mount Wynn Inn"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -6390,7 +6888,11 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Mangled Lake", "Twisted Housing", "Overtaken Outpost"],
+    "Trading Routes": [
+      "Mangled Lake",
+      "Twisted Housing",
+      "Overtaken Outpost"
+    ],
     "Location": {
       "start": [-1237, -5116],
       "end": [-1144, -5268]
@@ -6436,7 +6938,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Efilim", "Path to the Forgery"],
+    "Trading Routes": [
+      "Efilim",
+      "Path to the Forgery"
+    ],
     "Location": {
       "start": [-1014, -4944],
       "end": [-949, -5079]
@@ -6481,7 +6986,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Path to Cinfras", "Path to the Forgery"],
+    "Trading Routes": [
+      "Path to Cinfras",
+      "Path to the Forgery"
+    ],
     "Location": {
       "start": [-926, -4842],
       "end": [-831, -4945]
@@ -6501,7 +7009,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ranol's Farm", "Entrance to Molten Heights"],
+    "Trading Routes": [
+      "Ranol's Farm",
+      "Entrance to Molten Heights"
+    ],
     "Location": {
       "start": [1029, -5581],
       "end": [828, -5376]
@@ -6521,7 +7032,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Dogun Ritual Site", "Angel Refuge"],
+    "Trading Routes": [
+      "Dogun Ritual Site",
+      "Angel Refuge"
+    ],
     "Location": {
       "start": [1251, -4894],
       "end": [1500, -4964]
@@ -6591,7 +7105,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Karoc Quarry", "Bucie Waterfall"],
+    "Trading Routes": [
+      "Karoc Quarry",
+      "Bucie Waterfall"
+    ],
     "Location": {
       "start": [-1391, -4352],
       "end": [-1607, -4524]
@@ -6611,7 +7128,10 @@
       "fish": "0",
       "wood": "7200"
     },
-    "Trading Routes": ["Snail Island", "Astraulus' Tower"],
+    "Trading Routes": [
+      "Snail Island",
+      "Astraulus' Tower"
+    ],
     "Location": {
       "start": [925, -4916],
       "end": [1101, -5016]
@@ -6631,7 +7151,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Worm Tunnel", "Forgotten Town"],
+    "Trading Routes": [
+      "Worm Tunnel",
+      "Forgotten Town"
+    ],
     "Location": {
       "start": [683, -619],
       "end": [462, -515]
@@ -6675,7 +7198,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Final Step", "The Gate"],
+    "Trading Routes": [
+      "Final Step",
+      "The Gate"
+    ],
     "Location": {
       "start": [1187, -680],
       "end": [1388, -530]
@@ -6695,7 +7221,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Bandit Cave", "Burning Farm", "Secluded Ponds"],
+    "Trading Routes": [
+      "Bandit Cave",
+      "Burning Farm",
+      "Secluded Ponds"
+    ],
     "Location": {
       "start": [35, -4859],
       "end": [107, -4955]
@@ -6915,7 +7445,9 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Azure Frontier"],
+    "Trading Routes": [
+      "Azure Frontier"
+    ],
     "Location": {
       "start": [-645, -6384],
       "end": [-855, -6561]
@@ -6935,7 +7467,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Outer Aldorei Town", "Aldorei Cliffside Waterfalls"],
+    "Trading Routes": [
+      "Outer Aldorei Town",
+      "Aldorei Cliffside Waterfalls"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -6955,7 +7490,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Gylia Lakehouse", "Mushroom Hill", "Gert Camp"],
+    "Trading Routes": [
+      "Gylia Lakehouse",
+      "Mushroom Hill",
+      "Gert Camp"
+    ],
     "Location": {
       "start": [-122, -5430],
       "end": [-218, -5567]
@@ -6975,7 +7514,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Twain Mansion", "Frigid Crossroads"],
+    "Trading Routes": [
+      "Twain Mansion",
+      "Frigid Crossroads"
+    ],
     "Location": {
       "start": [0, -330],
       "end": [80, -530]
@@ -6995,7 +7537,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Jungle Entrance", "Troms Lake"],
+    "Trading Routes": [
+      "Jungle Entrance",
+      "Troms Lake"
+    ],
     "Location": {
       "start": [-448, -813],
       "end": [-557, -876]
@@ -7015,7 +7560,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mage Island", "Durum Isles Barn", "Cathedral Harbour"],
+    "Trading Routes": [
+      "Mage Island",
+      "Durum Isles Barn",
+      "Cathedral Harbour"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7060,13 +7609,20 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Felroc Fields", "Cinfras"],
+    "Trading Routes": [
+      "Felroc Fields",
+      "Cinfras"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-437, -4656],
+      "end": [-338, -4756]
+    }
   },
   "Cliffside Passage North": {
     "resources": {
@@ -7076,7 +7632,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Cliffside Passage South", "Thesead Underpass"],
+    "Trading Routes": [
+      "Cliffside Passage South",
+      "Thesead Underpass"
+    ],
     "Location": {
       "start": [572, -4818],
       "end": [700, -4933]
@@ -7096,7 +7655,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Troms", "Troms Lake"],
+    "Trading Routes": [
+      "Troms",
+      "Troms Lake"
+    ],
     "Location": {
       "start": [-631, -973],
       "end": [-745, -1093]
@@ -7116,7 +7678,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Bremminglar"],
+    "Trading Routes": [
+      "Bremminglar"
+    ],
     "Location": {
       "start": [890, -2140],
       "end": [790, -2320]
@@ -7162,7 +7726,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Forgotten Burrows", "Olux", "Naga Lake"],
+    "Trading Routes": [
+      "Forgotten Burrows",
+      "Olux",
+      "Naga Lake"
+    ],
     "Location": {
       "start": [-1981, -5466],
       "end": [-1889, -5603]
@@ -7231,7 +7799,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Maltic Coast", "Ancient Waterworks", "Rocky Shore"],
+    "Trading Routes": [
+      "Maltic Coast",
+      "Ancient Waterworks",
+      "Rocky Shore"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7251,7 +7823,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Relos", "Fallen Factory", "Industrial Clearing"],
+    "Trading Routes": [
+      "Relos",
+      "Fallen Factory",
+      "Industrial Clearing"
+    ],
     "Location": {
       "start": [-1684, -2569],
       "end": [-1793, -2453]
@@ -7295,7 +7871,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Field of Life", "Path to Light's Secret"],
+    "Trading Routes": [
+      "Field of Life",
+      "Path to Light's Secret"
+    ],
     "Location": {
       "start": [-814, -6015],
       "end": [-894, -5928]
@@ -7341,7 +7920,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Sinister Forest", "Paths of Sludge"],
+    "Trading Routes": [
+      "Sinister Forest",
+      "Paths of Sludge"
+    ],
     "Location": {
       "start": [936, -654],
       "end": [1027, -754]
@@ -7361,7 +7943,9 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Kandon Ridge"],
+    "Trading Routes": [
+      "Kandon Ridge"
+    ],
     "Location": {
       "start": [719, -4778],
       "end": [885, -4900]
@@ -7406,7 +7990,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Monte's Village", "Iboju Village", "Troms Lake"],
+    "Trading Routes": [
+      "Monte's Village",
+      "Iboju Village",
+      "Troms Lake"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7436,7 +8024,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-127, -4639],
+      "end": [3, -4509]
+    }
   },
   "Path to Light's Secret": {
     "resources": {
@@ -7456,7 +8048,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-1134, -4548],
+      "end": [-1038, -4426]
+    }
   },
   "Cascading Oasis": {
     "resources": {
@@ -7466,7 +8062,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Gloopy Cave", "Mummy's Tomb", "Dusty Pit"],
+    "Trading Routes": [
+      "Gloopy Cave",
+      "Mummy's Tomb",
+      "Dusty Pit"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7486,7 +8086,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Legendary Island", "Balloon Airbase"],
+    "Trading Routes": [
+      "Legendary Island",
+      "Balloon Airbase"
+    ],
     "Location": {
       "start": [-1258, -2204],
       "end": [-1444, -2306]
@@ -7531,7 +8134,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Zhight Island", "Rooster Island"],
+    "Trading Routes": [
+      "Zhight Island",
+      "Rooster Island"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7551,7 +8157,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Jofash Docks", "Derelict Mansion", "Disturbed Crypt"],
+    "Trading Routes": [
+      "Jofash Docks",
+      "Derelict Mansion",
+      "Disturbed Crypt"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7571,7 +8181,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Path to the Dojo", "Ranol's Farm", "Displaced Housing"],
+    "Trading Routes": [
+      "Path to the Dojo",
+      "Ranol's Farm",
+      "Displaced Housing"
+    ],
     "Location": {
       "start": [699, -5378],
       "end": [575, -5551]
@@ -7591,7 +8205,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Krolton's Cave", "Bandit's Toll"],
+    "Trading Routes": [
+      "Krolton's Cave",
+      "Bandit's Toll"
+    ],
     "Location": {
       "start": [438, -5037],
       "end": [345, -4966]
@@ -7622,7 +8239,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [443, -4566],
+      "end": [570, -4392]
+    }
   },
   "Ruined Prospect": {
     "resources": {
@@ -7632,7 +8253,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Rymek", "Sunset Plateau"],
+    "Trading Routes": [
+      "Rymek",
+      "Sunset Plateau"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7702,13 +8326,21 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Fleris Cranny", "Harpy's Haunt North", "Wayward Split"],
+    "Trading Routes": [
+      "Fleris Cranny",
+      "Harpy's Haunt North",
+      "Wayward Split"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [337, -4855],
+      "end": [271, -4741]
+    }
   },
   "Kitrios Barracks": {
     "resources": {
@@ -7742,7 +8374,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Lusuco", "Tower of Ascension", "Frigid Crossroads"],
+    "Trading Routes": [
+      "Lusuco",
+      "Tower of Ascension",
+      "Frigid Crossroads"
+    ],
     "Location": {
       "start": [-311, -358],
       "end": [-104, -496]
@@ -7810,7 +8446,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ragni South Entrance", "Little Wood", "Troms"],
+    "Trading Routes": [
+      "Ragni South Entrance",
+      "Little Wood",
+      "Troms"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7830,7 +8470,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Owl Tribe", "Almuj Slums", "Ruined Villa"],
+    "Trading Routes": [
+      "Owl Tribe",
+      "Almuj Slums",
+      "Ruined Villa"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7850,7 +8494,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Pigmen Ravines", "Time Valley"],
+    "Trading Routes": [
+      "Pigmen Ravines",
+      "Time Valley"
+    ],
     "Location": {
       "start": [-577, -1395],
       "end": [-478, -1335]
@@ -7945,7 +8592,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Mining Base Camp", "Mine Base Plains"],
+    "Trading Routes": [
+      "Mining Base Camp",
+      "Mine Base Plains"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -7965,7 +8615,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Riverbank Knoll", "Ragni", "Katoa Ranch"],
+    "Trading Routes": [
+      "Riverbank Knoll",
+      "Ragni",
+      "Katoa Ranch"
+    ],
     "Location": {
       "start": [-944, -1761],
       "end": [-818, -1859]
@@ -7985,7 +8639,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Thesead Suburbs", "Eltom", "Cherry Blossom Grove"],
+    "Trading Routes": [
+      "Thesead Suburbs",
+      "Eltom",
+      "Cherry Blossom Grove"
+    ],
     "Location": {
       "start": [810, -5551],
       "end": [701, -5377]
@@ -8015,7 +8673,11 @@
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [35, -4521],
+      "end": [107, -4641]
+    }
   },
   "Guardian of the Forest": {
     "resources": {
@@ -8049,7 +8711,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Chasm Chokepoint", "Mantis Nest"],
+    "Trading Routes": [
+      "Chasm Chokepoint",
+      "Mantis Nest"
+    ],
     "Location": {
       "start": [-646, -4699],
       "end": [-733, -4559]
@@ -8094,7 +8759,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Field of Life"],
+    "Trading Routes": [
+      "Field of Life"
+    ],
     "Location": {
       "start": [-894, -5957],
       "end": [-962, -6066]
@@ -8114,7 +8781,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Ruined Prospect", "Sunrise Plateau"],
+    "Trading Routes": [
+      "Ruined Prospect",
+      "Sunrise Plateau"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8184,7 +8854,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Maltic Coast", "Ragni Countryside North", "Maltic"],
+    "Trading Routes": [
+      "Maltic Coast",
+      "Ragni Countryside North",
+      "Maltic"
+    ],
     "Location": {
       "start": [-747, -1946],
       "end": [-565, -2059]
@@ -8257,7 +8931,9 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Burning Airship"],
+    "Trading Routes": [
+      "Burning Airship"
+    ],
     "Location": {
       "start": [194, -4956],
       "end": [111, -4872]
@@ -8277,7 +8953,11 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Mycelial Expanse", "Chasm Overlook", "Unicorn Trail"],
+    "Trading Routes": [
+      "Mycelial Expanse",
+      "Chasm Overlook",
+      "Unicorn Trail"
+    ],
     "Location": {
       "start": [-834, -4839],
       "end": [-926, -4708]
@@ -8347,13 +9027,21 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Apprentice Huts", "Entamis Village", "Jungle Entrance"],
+    "Trading Routes": [
+      "Apprentice Huts",
+      "Entamis Village",
+      "Jungle Entrance"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-515, -610],
+      "end": [-600, -790]
+    }
   },
   "Cliffside Passage South": {
     "resources": {
@@ -8363,7 +9051,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Cliffside Passage North", "Elephelk Trail"],
+    "Trading Routes": [
+      "Cliffside Passage North",
+      "Elephelk Trail"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8383,13 +9074,20 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Corkus Outskirts", "Corkus City Mine"],
+    "Trading Routes": [
+      "Corkus Outskirts",
+      "Corkus City Mine"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [-1322, -2917],
+      "end": [-1393, -2836]
+    }
   },
   "The Hive": {
     "resources": {
@@ -8399,7 +9097,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Illuminant Path", "Path to the Dojo"],
+    "Trading Routes": [
+      "Illuminant Path",
+      "Path to the Dojo"
+    ],
     "Location": {
       "start": [381, -5413],
       "end": [286, -5593]
@@ -8470,7 +9171,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Wybel Island", "Sky Island Ascent", "Frozen Fort"],
+    "Trading Routes": [
+      "Wybel Island",
+      "Sky Island Ascent",
+      "Frozen Fort"
+    ],
     "Location": {
       "start": [1380, -4458],
       "end": [1466, -4653]
@@ -8490,7 +9195,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Crater Descent", "Entrance to Molten Heights"],
+    "Trading Routes": [
+      "Crater Descent",
+      "Entrance to Molten Heights"
+    ],
     "Location": {
       "start": [1200, -5067],
       "end": [965, -5238]
@@ -8542,6 +9250,10 @@
       "Workshop Glade",
       "Illuminant Path"
     ],
+    "Location": {
+      "start": [439, -5038],
+      "end": [345, -5181]
+    },
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8557,7 +9269,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Toxic Caves", "Paths of Sludge", "Gateway to Nothing"],
+    "Trading Routes": [
+      "Toxic Caves",
+      "Paths of Sludge",
+      "Gateway to Nothing"
+    ],
     "Location": {
       "start": [893, -876],
       "end": [1086, -992]
@@ -8577,7 +9293,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Wanderer's Way", "Illuminant Path", "Path to the Dojo"],
+    "Trading Routes": [
+      "Wanderer's Way",
+      "Illuminant Path",
+      "Path to the Dojo"
+    ],
     "Location": {
       "start": [562, -5313],
       "end": [440, -5191]
@@ -8597,7 +9317,11 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Accursed Dunes", "Sunrise Plateau", "Owl Tribe"],
+    "Trading Routes": [
+      "Accursed Dunes",
+      "Sunrise Plateau",
+      "Owl Tribe"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8667,7 +9391,11 @@
       "fish": "900",
       "wood": "900"
     },
-    "Trading Routes": ["Mage Island", "Icy Island", "Nodguj Nation"],
+    "Trading Routes": [
+      "Mage Island",
+      "Icy Island",
+      "Nodguj Nation"
+    ],
     "Location": {
       "start": [1057, -3077],
       "end": [1221, -3209]
@@ -8687,7 +9415,10 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Path to Ozoth's Spire", "Canyon Walkway"],
+    "Trading Routes": [
+      "Path to Ozoth's Spire",
+      "Canyon Walkway"
+    ],
     "Location": {
       "start": [199, -5164],
       "end": [260, -5042]
@@ -8732,7 +9463,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Aerial Descent", "Sky Castle", "Ahmsord"],
+    "Trading Routes": [
+      "Aerial Descent",
+      "Sky Castle",
+      "Ahmsord"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8752,7 +9487,11 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Path to Ahmsord", "Kandon Ridge", "Ahmsord"],
+    "Trading Routes": [
+      "Path to Ahmsord",
+      "Kandon Ridge",
+      "Ahmsord"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -8772,13 +9511,20 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Harpy's Haunt South", "Krolton's Cave"],
+    "Trading Routes": [
+      "Harpy's Haunt South",
+      "Krolton's Cave"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
       "prefix": ""
     },
-    "Acquired": ""
+    "Acquired": "",
+    "Location": {
+      "start": [271, -4946],
+      "end": [337, -4857]
+    }
   },
   "Bantisu Approach": {
     "resources": {
@@ -8863,7 +9609,9 @@
       "fish": "0",
       "wood": "0"
     },
-    "Trading Routes": ["Illuminant Path"],
+    "Trading Routes": [
+      "Illuminant Path"
+    ],
     "Location": {
       "start": [338, -5310],
       "end": [262, -5168]
@@ -8910,7 +9658,10 @@
       "fish": "3600",
       "wood": "0"
     },
-    "Trading Routes": ["Molten Reach", "Ahmsord Outskirts"],
+    "Trading Routes": [
+      "Molten Reach",
+      "Ahmsord Outskirts"
+    ],
     "Location": {
       "start": [1354, -4727],
       "end": [1484, -4877]
@@ -8954,7 +9705,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Frosty Spikes", "Frozen Homestead"],
+    "Trading Routes": [
+      "Frosty Spikes",
+      "Frozen Homestead"
+    ],
     "Guild": {
       "uuid": "",
       "name": "",
@@ -9050,7 +9804,10 @@
       "fish": "0",
       "wood": "3600"
     },
-    "Trading Routes": ["Time Valley", "Sulphuric Hollow"],
+    "Trading Routes": [
+      "Time Valley",
+      "Sulphuric Hollow"
+    ],
     "Location": {
       "start": [-812, -1177],
       "end": [-636, -1094]
