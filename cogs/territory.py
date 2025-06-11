@@ -13,7 +13,7 @@ class Territory(commands.GroupCog, name="territory"):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(description="Generates the current Wynncraft Territory Map")
+    @app_commands.command(description="Generates the current Wynncraft Territory Map.")
     async def map(self, interaction: discord.Interaction):
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 30)
         #logger.info(response)
@@ -30,7 +30,7 @@ class Territory(commands.GroupCog, name="territory"):
         else:
             await interaction.followup.send("An error occured while getting the territory map.")
 
-    @app_commands.command(description="Generates the current Wynncraft Territory Heatmap")
+    @app_commands.command(description="Generates the current Wynncraft Territory Heatmap.")
     async def heatmap(self, interaction: discord.Interaction):
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 30)
         #logger.info(response)

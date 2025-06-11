@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from typing import Optional
 import os
 import time
 from lib.utils import rollGiveaway, makeRequest, checkCooldown

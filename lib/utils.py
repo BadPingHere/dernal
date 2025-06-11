@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.dates import HourLocator, DateFormatter
+from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
 from collections import defaultdict, deque
 import io
 import seaborn as sns
@@ -20,6 +20,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import shelve
+import difflib
   
 logger = logging.getLogger('discord')
 
@@ -235,7 +236,7 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
         for territory, data in untainteddata.items():
             oldGuild = untainteddataOLD[str(territory)]['guild']['prefix']
             newGuild = data['guild']['prefix']
-            if oldGuild != newGuild and newGuild != "None":
+            if oldGuild != newGuild and newGuild and str(newGuild).lower() != "none": # This line has fucked me up 3-4
                 reworkedDate = datetime.fromisoformat(untainteddataOLD[territory]['acquired'].replace("Z", "+00:00"))
                 reworkedDateNew = datetime.fromisoformat(data['acquired'].replace("Z", "+00:00"))
                 elapsed_time = int(reworkedDateNew.timestamp() - reworkedDate.timestamp())
@@ -918,7 +919,7 @@ def guildActivityTotalMembers(guild_uuid, name):
         SELECT timestamp, total_members
         FROM guild_snapshots
         WHERE guild_uuid = ?
-        AND timestamp >= datetime('now', '-1 day')
+        AND timestamp >= datetime('now', '-7 day')
         ORDER BY timestamp
     """, (guild_uuid,))
     snapshots = cursor.fetchall()
@@ -939,13 +940,12 @@ def guildActivityTotalMembers(guild_uuid, name):
     plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
     plt.fill_between(times, 0, total_numbers, alpha=0.3)
     plt.axhline(y=overall_total, color='r', linestyle='-', label=f'Average: {overall_total:.1f} members')
-    time_formatter = DateFormatter('%H:%M')
+    time_formatter = DateFormatter('%D')
     plt.gca().xaxis.set_major_formatter(time_formatter)
-    hour_locator = HourLocator()
-    plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Total Members Activity - {name}', fontsize=14)
+    plt.gca().xaxis.set_major_locator(AutoDateLocator())
+    plt.title(f'Member Count - {name}', fontsize=14)
     plt.xlabel('Time (UTC)', fontsize=12)
-    plt.ylabel('Total Members', fontsize=12)
+    plt.ylabel('Members', fontsize=12)
     plt.grid(True, linestyle='-', alpha=0.5)
     plt.legend()
     plt.tight_layout()
@@ -960,11 +960,11 @@ def guildActivityTotalMembers(guild_uuid, name):
 
     file = discord.File(buf, filename='total_members_graph.png')
     embed = discord.Embed(
-        title=f"Total Members Analysis for {name}",
+        title=f" Members Analysis for {name}",
         description=(
-            f"Maximum total members: {max(total_numbers):.0f}\n"
-            f"Minimum total members: {min(total_numbers):.0f}\n"
-            f"Average total members: {overall_total:.0f}"
+            f"Maximum Member Count: {max(total_numbers):.0f}\n"
+            f"Minimum Member Count: {min(total_numbers):.0f}\n"
+            f"Average Member Count: {overall_total:.0f}"
         ),
         color=discord.Color.blue()
     )
@@ -2136,24 +2136,15 @@ def rollGiveaway(weeklyNames, rollcount):
 
         completion_tickets = 1.0 # Base ticket count, everyone will have 1 ticket because they did weekly
         total_player_tickets = completion_tickets + playtimeTickets + xpTickets
-        logger.info(f"total_player_tickets: {total_player_tickets}")
+        #logger.info(f"total_player_tickets: {total_player_tickets}")
         total_tickets += total_player_tickets
         chances[player_name] = total_player_tickets
         tickets[player_name] = total_player_tickets
-        logger.info(f"tickets[player_name]: {tickets[player_name]}")
+        #logger.info(f"tickets[player_name]: {tickets[player_name]}")
         
-        logger.info(f"Player {player_name} processing completed")
-        logger.info(
-            f"Player Stats - "
-            f"Average Daily Playtime: {avgDailyPlaytime:.1f} minutes, "
-            f"Weekly XP: {weeklyXP:,}"
-        )
-        logger.info(
-            f"Tickets breakdown - "
-            f"Completion: {completion_tickets}, "
-            f"Playtime: {playtimeTickets} (from {avgDailyPlaytime:.1f} min/day), "
-            f"XP: {xpTickets} (from {weeklyXP:,} XP)"
-        )
+        #logger.info(f"Player {player_name} processing completed")
+        #logger.info(f"Player Stats - "f"Average Daily Playtime: {avgDailyPlaytime:.1f} minutes, "f"Weekly XP: {weeklyXP:,}")
+        #logger.info(f"Tickets breakdown - "f"Completion: {completion_tickets}, "f"Playtime: {playtimeTickets} (from {avgDailyPlaytime:.1f} min/day), "f"XP: {xpTickets} (from {weeklyXP:,} XP)")
     
     if total_tickets > 0: # redardancy and whjatnot
         chances = {name: (tickets[name]/total_tickets) * 100 for name in chances}
@@ -2377,7 +2368,6 @@ def heatmapCreator():
         xMin, xMax = sorted([x1, x2])
         yMin, yMax = sorted([y1, y2])
         overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color, alpha))
-
     mapImg = Image.alpha_composite(map_img, overlay)
     mapBytes = BytesIO()
     mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
@@ -2397,3 +2387,344 @@ def heatmapCreator():
     embed.set_image(url="attachment://wynn_heatmap.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
+
+def getHelp(arg):
+    if not arg: # No arg, we can send out some basic shit
+        commands = {
+            "detector" : {
+                "add": "Add a guild to detect.",
+                "remove": "Remove a guild from being detected."
+            },
+            "giveaway" : {
+                "configure": "Configure the giveaway system with a guild prefix.",
+                "roll": "Roll for winners from the configured guild."
+            },
+            "guild" : {
+                "activity": {
+                    "playtime": "Shows the graph displaying the average amount of players online over the past day.",
+                    "xp": "Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.",
+                    "territories": "Shows a graph displaying the amount of territories a guild has for the past 3 days.",
+                    "wars": "Shows a graph displaying the total amount of wars a guild has done over the past 3 days.",
+                    "total_members": "Shows a graph displaying the total members a guild has for the past 7 days.",
+                    "online_members": "Shows a graph displaying the average amount of online members a guild has for the past day.",
+                },
+                "leaderboard": {
+                    "online_members": "Shows a leaderboard of the top 10 guild's average amount of online players.",
+                    "total_members": "Shows a leaderboard of the top 10 guild's total members.",
+                    "wars": "Shows a leaderboard of the top 10 guild's war amount.",
+                    "xp": "Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.",
+                    "playtime": "Shows a leaderboard of the top 10 guild's playtime percentage.",
+                },
+                "overview": "Configure the giveaway system with a guild prefix.",
+                "inactivity": "Roll for winners from the configured guild."
+            },
+            "player" : {
+                "activity": {
+                    "playtime": "Shows the graph displaying the average amount of playtime every day over the past two weeks.",
+                    "contribution": "Shows a graph displaying the amount of contributiond xp every day over the past two weeks.",
+                    "dungeons": "Shows a graph displaying the amount of dungeons completed total every day for the past week.",
+                    "dungeons_pie": "Shows a pie chart displaying the different dungeons's you have done.",
+                    "raids": "Shows a graph displaying the amount of raids completed total every day for the past week.",
+                    "raids_pie": "Shows a pie chart displaying the different raid's you have done.",
+                    "mobs_killed": "Shows a graph displaying the amount of total mobs killed every day for the past week.",
+                    "wars": "Shows a graph displaying the amount of total wars every day for the past week.",
+                },
+                "leaderboard": {
+                    "raids": "Shows the leaderboard of the top 10 players with the highest total raids completed.",
+                    "total_level": "Shows the leaderboard of the top 10 players with the highest total level.",
+                    "dungeons": "Shows the leaderboard of the top 10 players with the highest dungeons completed.",
+                    "playtime": "Shows the leaderboard of the top 10 players with the highest playtime in hours.",
+                    "pvp_kills": "Shows the leaderboard of the top 10 players with the highest PvP Kills.",
+                },
+            },
+            "territory" : {
+                "map": "Generates the current Wynncraft Territory Map.",
+                "heatmap": "Generates the current Wynncraft Territory Heatmap."
+            },
+            "hq": "Outputs the top hq locations.",
+            "help": "Provides help and info on commands.",
+        }
+        embed = discord.Embed(
+            title="Help",
+            color=0x016610E
+        )
+        
+        fieldsToAdd = []
+        
+        for key in commands:
+            if isinstance(commands[key], dict): # We check if there is more
+                for subkey in commands[key]:
+                    if isinstance(commands[key][subkey], dict): # multiple subcommands like guild leaderboard etc
+                        fieldValue = ""
+                        for subsubkey in commands[key][subkey]:
+                            fieldValue += f"`{subsubkey}` - {commands[key][subkey][subsubkey]}\n"
+                    
+                        fieldName = f"🔵 {key.title()} {subkey.title()}"
+                        fieldsToAdd.append((fieldName, fieldValue, True))
+                    else: # sum like hq
+                        if not any(isinstance(v, dict) for v in commands[key].values()):
+                            # If this is the first non-dict item in this category, create the field
+                            fieldValue = ""
+                            for sk, sv in commands[key].items():
+                                if not isinstance(sv, dict):
+                                    fieldValue += f"`{sk}` - {sv}\n"
+                            
+                            fieldName = f"🟠 {key.title()}"
+                            fieldsToAdd.append((fieldName, fieldValue, True))
+                            break  # Only add this field once per category
+            else:
+                # This is just for commands like hq
+                fieldsToAdd.append((f"🔴 {key.title()}", f"`{key}` - {commands[key]}", True))
+        
+        # Sort fields by length (longest first)
+        fieldsToAdd.sort(key=lambda x: len(x[1]), reverse=True)
+        
+        # add to embed
+        for fieldName, fieldValue, inline in fieldsToAdd:
+            embed.add_field(name=fieldName, value=fieldValue, inline=inline)
+        
+        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        return embed, True
+    else:
+        commands = {
+            "detector add": {
+                "desc": "Add a guild to detect using Detector, a feature to 'detect' when a guild loses or gains territory. Allows for global detection aswell. Requires the 'Detector Permission' role for users to use this command.", 
+                "usage": "detector add [channel] [guild_prefix] [role - optional] [interval - optional]",
+                "options": {
+                    "channel": "The channel you want the detector messages to be sent to.",
+                    "guild_prefix": "The guild prefix you want to track, or 'Global' for global detection.",
+                    "role": "The role you want pinged on territory loss. (optional)",
+                    "interval": "The number of minutes cooldown between pings, if you are using role. (optional)"
+                }
+            },
+            "detector remove": {
+                "desc": "Removes a configuration from Detector. Requires the 'Detector Permission' role for users to use this command.", 
+                "usage": "detector remove [prefix]",
+                "options": {
+                    "prefix": "The configuration of Detector you want to remove.",
+                }
+            },
+            "giveaway configure": {
+                "desc": "Add a guild configuration to use for Giveaways. Requires the 'Giveaway Permission' role for users to use this command.", 
+                "usage": "giveaway configure [prefix]",
+                "options": {
+                    "prefix": "The guild prefix you want to add.",
+                }
+            },
+            "giveaway roll": {
+                "desc": "Rolls a giveaway with a predetermined amount of winners, using user's playtime and xp contributions as more 'tickets' in a raffle. Requires the 'Giveaway Permission' role for users to use this command.", 
+                "usage": "giveaway roll [winners]",
+                "options": {
+                    "winners": "The amount of winners for the giveaway.",
+                }
+            },
+            "guild activity playtime": {
+                "desc": "Displays a graph showing the average playtime percentage over the past 24 hours for a specified guild.",
+                "usage": "guild activity playtime [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild activity xp": {
+                "desc": "Shows a bar graph of the guild's total XP contributed each day for the past 2 weeks.",
+                "usage": "guild activity xp [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild activity territories": {
+                "desc": "Displays a graph showing the number of territories owned by the guild over the past 3 days.",
+                "usage": "guild activity territories [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild activity wars": {
+                "desc": "Shows a graph of the total wars the guild has done, with 3 days of history.", # The wording here sounds dumb but i didnt want it to sound like it wasnt TOTAL
+                "usage": "guild activity wars [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild activity members": {
+                "desc": "Displays a graph showing the member count of the guild over the past 7 days.",
+                "usage": "guild activity members [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild activity online_members": {
+                "desc": "Shows a graph of the average number of online members over the past 24 hours.",
+                "usage": "guild activity online_members [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check.",
+                }
+            },
+            "guild leaderboard online_members": {
+                "desc": "Displays a leaderboard of the top 10 guilds by average online member count.",
+                "usage": "guild leaderboard online_members",
+                "options": {}
+            },
+            "guild leaderboard members": {
+                "desc": "Shows a leaderboard of the top 10 guilds by member count.",
+                "usage": "guild leaderboard members",
+                "options": {}
+            },
+            "guild leaderboard wars": {
+                "desc": "Displays a leaderboard of the top 10 guilds by total war count.",
+                "usage": "guild leaderboard wars",
+                "options": {}
+            },
+            "guild leaderboard xp": {
+                "desc": "Shows a leaderboard of the top 10 guilds by XP gained in the last 24 hours.",
+                "usage": "guild leaderboard xp",
+                "options": {}
+            },
+            "guild leaderboard playtime": {
+                "desc": "Displays a leaderboard of the top 10 guilds by average member playtime percentage.",
+                "usage": "guild leaderboard playtime",
+                "options": {}
+            },
+            "guild overview": {
+                "desc": "Shows a (kind of outdated) overview of a guild.",
+                "usage": "guild overview [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check. (Case-Sensitive)",
+                }
+            },
+            "guild inactivity": {
+                "desc": "Shows a list of inactive guild members sorted by their last login date.",
+                "usage": "guild inactivity [name]",
+                "options": {
+                    "name": "The name or prefix of the guild to check. (Case-Sensitive)",
+                }
+            },
+            "player activity playtime": {
+                "desc": "Shows a bar graph of a player's every day playtime over the past two weeks.",
+                "usage": "player activity playtime [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity contribution": {
+                "desc": "Displays a graph of a player's every day contribution XP over the past two weeks.",
+                "usage": "player activity contribution [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity dungeons": {
+                "desc": "Shows a graph of total dungeons completed every day over the past week.",
+                "usage": "player activity dungeons [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity dungeons_pie": {
+                "desc": "Displays a pie chart showing the amount of different dungeons completed.",
+                "usage": "player activity dungeons_pie [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity raids": {
+                "desc": "Shows a graph of total raids completed every day over the past week.",
+                "usage": "player activity raids [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity raids_pie": {
+                "desc": "Displays a pie chart showing the amount of different raids completed.",
+                "usage": "player activity raids_pie [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity mobs_killed": {
+                "desc": "Shows a graph of total mobs killed every day over the past week.",
+                "usage": "player activity mobs_killed [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player activity wars": {
+                "desc": "Displays a graph of total wars won every day over the past week.",
+                "usage": "player activity wars [name]",
+                "options": {
+                    "name": "The username of the player to check.",
+                }
+            },
+            "player leaderboard raids": {
+                "desc": "Shows the top 10 players with the highest total raid completions.",
+                "usage": "player leaderboard raids",
+                "options": {}
+            },
+            "player leaderboard total_level": {
+                "desc": "Shows the top 10 players with the highest total level across all classes.",
+                "usage": "player leaderboard total_level",
+                "options": {}
+            },
+            "player leaderboard dungeons": {
+                "desc": "Shows the top 10 players with the highest total dungeon completions.",
+                "usage": "player leaderboard dungeons",
+                "options": {}
+            },
+            "player leaderboard playtime": {
+                "desc": "Displays the top 10 players with the highest total playtime in hours.",
+                "usage": "player leaderboard playtime",
+                "options": {}
+            },
+            "player leaderboard pvp_kills": {
+                "desc": "Shows the top 10 players with the highest PvP kill count.",
+                "usage": "player leaderboard pvp_kills",
+                "options": {}
+            },
+            "territory map": {
+                "desc": "Generates and displays the current Wynncraft territory map displaying what guild owns what.",
+                "usage": "territory map",
+                "options": {}
+            },
+            "territory heatmap": {
+                "desc": "Generates and displays a heatmap showing territory activity.",
+                "usage": "territory heatmap",
+                "options": {}
+            },
+            "hq": {
+                "desc": "Lists the strongest headquarter territory location for a speciic guild or globally.",
+                "usage": "hq [guild - optional]",
+                "options": {"guild": "Prefix of the guild to check. (Case Sensitive), (optional)."
+                }
+            },
+            "help": {
+                "desc": "Displays help information about available commands and their usage.",
+                "usage": "help [command - optional]]",
+                "options": {
+                    "command": "The specific command to get help for (optional).",
+                }
+            }
+        }
+        desc = ""
+        arg = arg.lower()
+        if arg in commands.keys():
+            desc += f"**Description**: {commands[arg]['desc']}\n\n"
+            desc += f"**Usage**: /{commands[arg]['usage']}\n\n"
+            if commands[arg]["options"]: #Checks if there are options
+                desc += f"**Options**:\n"
+                for option in commands[arg]["options"]:
+                    desc += f"- **{option}**: {commands[arg]['options'][option]}\n"
+            embed = discord.Embed(
+                title=arg,
+                description=desc,
+                color=0x016610E
+            )
+            return embed, True
+        
+        else:
+            closeMatches = difflib.get_close_matches(arg, commands.keys(), n=1, cutoff=0.4)
+            if closeMatches:
+                suggestion = closeMatches[0]
+                message = f"The command you inputted is not valid. Did you mean **{suggestion}**?"
+            else:
+                message = "The command you inputted is not valid. Please try again."
+            return message, False

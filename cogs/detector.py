@@ -37,84 +37,89 @@ class Detector(commands.GroupCog, name="detector"):
 
             
 
-    @tasks.loop(seconds=15)
+    @tasks.loop(seconds=20)
     async def backgroundDetector(self):
-        if not self.guildsBeingTracked:
-            return
+        try:
+            if not self.guildsBeingTracked:
+                return
 
-        with shelve.open(self.detectorFilePath) as detectorStorage:
-            self.guildsBeingTracked = dict(detectorStorage)
-    
-
-        # Get new data
-        success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
-        if not success:
-            logger.error("Error while getting territory data.")
-            return
-            
-        new_data = r.json()
+            with shelve.open(self.detectorFilePath) as detectorStorage:
+                self.guildsBeingTracked = dict(detectorStorage)
         
-        # Initialize expected territory counts for all tracked guilds
-        for guildID, configList in self.guildsBeingTracked.items():
-            for config in configList:
-                guildPrefix = config['guildPrefix']
-                key = (guildID, guildPrefix)
-                if guildPrefix not in self.expectedterrcount and guildPrefix.lower() != "global":
-                    self.expectedterrcount[guildPrefix] = sum(1 for data in new_data.values() if data["guild"]["prefix"] == guildPrefix) # Fixes guilds like Aeq being doubled, since it'd hit both Aeq and Aequatis, or whatver their dumbass name is.
-                    self.hasbeenran[key] = True
-        
-        # Only process territory checks if we have both current and old data
-        if self.untainteddata:  # Only if we already have some data
-            # Store current data as old before processing
-            old_data = self.untainteddata
-            
-            # Process data for each guild
-            guilds_to_check = list(self.guildsBeingTracked.keys())
-            
-            # Get Heatmap data, sadlt the best place to run it at.
-            dateMonth = str(datetime.now().month)+"/"+str(datetime.now().day)
-            for territory, data in new_data.items():
-                oldGuild = old_data[str(territory)]['guild']['prefix']
-                newGuild = data['guild']['prefix']
-                if dateMonth not in self.historicalTerritories: # init today's date
-                    self.historicalTerritories[dateMonth] = {}
-                if territory not in self.historicalTerritories[dateMonth]: # Init territory to 0
-                    self.historicalTerritories[dateMonth][territory] = 0
-                if oldGuild != newGuild: # Means a change of hands, we add to our heatmap shit
-                    self.historicalTerritories[dateMonth][territory] += 1
-            with shelve.open(self.territoryFilePath) as territoryStorage:
-                territoryStorage["historicalTerritories"] = self.historicalTerritories
 
-            for guildID in guilds_to_check:
-                configList = self.guildsBeingTracked[guildID]
+            # Get new data
+            success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
+            if not success:
+                logger.error("Error while getting territory data.")
+                return
+                
+            new_data = r.json()
+            
+            # Initialize expected territory counts for all tracked guilds
+            for guildID, configList in self.guildsBeingTracked.items():
                 for config in configList:
                     guildPrefix = config['guildPrefix']
-                    pingRoleID = config["pingRoleID"]
-                    #logger.info(f"guildPrefix: {guildPrefix}")
-                    try:
-                        channel_id = config['channelForMessages']
-                        guild = await self.bot.fetch_guild(guildID)
-                        channelForMessages = await guild.fetch_channel(channel_id)
-                    except Exception as e: # if someone kicks the bot or similar, theyll enter here and always be pinging discord servers every 20s. As much as I care about discord's api, i dont care enough to change the code.
-                        continue
+                    key = (guildID, guildPrefix)
+                    if guildPrefix not in self.expectedterrcount and guildPrefix.lower() != "global":
+                        self.expectedterrcount[guildPrefix] = sum(1 for data in new_data.values() if data["guild"]["prefix"] == guildPrefix) # Fixes guilds like Aeq being doubled, since it'd hit both Aeq and Aequatis, or whatver their dumbass name is.
+                        self.hasbeenran[key] = True
+            
+            # Only process territory checks if we have both current and old data
+            if self.untainteddata:  # Only if we already have some data
+                # Store current data as old before processing
+                old_data = self.untainteddata
+                
+                # Process data for each guild
+                guilds_to_check = list(self.guildsBeingTracked.keys())
+                
+                # Get Heatmap data, sadlt the best place to run it at.
+                dateMonth = str(datetime.now().month)+"/"+str(datetime.now().day)
+                for territory, data in new_data.items():
+                    oldGuild = old_data[str(territory)]['guild']['prefix']
+                    newGuild = data['guild']['prefix']
+                    if dateMonth not in self.historicalTerritories: # init today's date
+                        self.historicalTerritories[dateMonth] = {}
+                    if territory not in self.historicalTerritories[dateMonth]: # Init territory to 0
+                        self.historicalTerritories[dateMonth][territory] = 0
+                    if oldGuild != newGuild: # Means a change of hands, we add to our heatmap shit
+                        self.historicalTerritories[dateMonth][territory] += 1
+                with shelve.open(self.territoryFilePath) as territoryStorage:
+                    territoryStorage["historicalTerritories"] = self.historicalTerritories
 
-                    intervalForPing = config["intervalForPing"]
-                    
-                    # Check territories using current and old data
-                    messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping, guildID)
-                    #logger.info(f"messagesToSend: {messagesToSend}")
-                    if messagesToSend:
-                        for message_info in messagesToSend:
-                            try:
-                                await channelForMessages.send(embed=message_info['embed'])
-                                    
-                                if message_info["shouldPing"]:
-                                    await channelForMessages.send(f"<@&{message_info['roleID']}>")
-                            except discord.DiscordException as err:
-                                logger.error(f"Error sending message: {err}")
-        
-        # Update the current data for next iteration
-        self.untainteddata = new_data
+                for guildID in guilds_to_check:
+                    if guildID not in self.guildsBeingTracked:
+                        continue  # thanks dvs for crashing my shit for like 6 hours ebcauser of this
+                    configList = self.guildsBeingTracked[guildID]
+                    for config in configList:
+                        guildPrefix = config['guildPrefix']
+                        pingRoleID = config["pingRoleID"]
+                        #logger.info(f"guildPrefix: {guildPrefix}")
+                        try:
+                            channel_id = config['channelForMessages']
+                            guild = await self.bot.fetch_guild(guildID)
+                            channelForMessages = await guild.fetch_channel(channel_id)
+                        except Exception as e: # if someone kicks the bot or similar, theyll enter here and always be pinging discord servers every 20s. As much as I care about discord's api, i dont care enough to change the code.
+                            continue
+
+                        intervalForPing = config["intervalForPing"]
+                        
+                        # Check territories using current and old data
+                        messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping, guildID)
+                        #logger.info(f"messagesToSend: {messagesToSend}")
+                        if messagesToSend:
+                            for message_info in messagesToSend:
+                                try:
+                                    await channelForMessages.send(embed=message_info['embed'])
+                                        
+                                    if message_info["shouldPing"]:
+                                        await channelForMessages.send(f"<@&{message_info['roleID']}>")
+                                except discord.DiscordException as err:
+                                    logger.error(f"Error sending message: {err}")
+            
+            # Update the current data for next iteration
+            self.untainteddata = new_data
+        except Exception as e: # For one of the many errors
+            logger.error(f"Unhandled exception in Detector: {e}", exc_info=True)
 
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):

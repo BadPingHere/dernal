@@ -26,12 +26,12 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents) # i learned recently that this means people can run commands with @dernal command, and you can send me errors with @dernal message!
 
 # TODO:
-#? 1. Debug what is causing the database to corrupt, however it hasnt happened since new hosting.
-#? 2. Improve performance on database commands.
-#! 3. Have a webhook or something ping on discord when the bot or database is down for more than 30 minutes
-#! 4. Add front-facing errors to ALL commands, no command should time out because of either a user or bot error.
-#! 5. New commands, being /guild leaderboard xp/playtime guild=x and /help
-#! 6. Allow guilds to change the hardcoded weightings of giveaways.
+#? 1. Improve performance on database commands.
+#! 2. Add front-facing errors to ALL commands, no command should time out because of either a user or bot error.
+#! 3. New commands, being /guild leaderboard xp/playtime guild=x and /help
+#! 4. Allow guilds to change the hardcoded weightings of giveaways.
+#! 5. Fix Inactivity and other long commands that can have too much chars
+#! 6. Debug Percentage and similar differences between activity vs leaderboard
 
 def checkUpdates(localVersionFile='version.json'):
     try:

@@ -218,10 +218,10 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 3 days")
 
-    @activityCommands.command(name="total_members", description="Shows a graph displaying the total members a guild has for the past day.")
+    @activityCommands.command(name="members", description="Shows a graph displaying the amount of members a guild has for the past 7 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityTotal_members(self, interaction: discord.Interaction, name: str):
-        logger.info(f"Command /guild activity total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
+        logger.info(f"Command /guild activity members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
@@ -311,9 +311,9 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available.")
     
-    @leaderboardCommands.command(name="total_members", description="Shows a leaderboard of the top 10 guild's total members.")
+    @leaderboardCommands.command(name="members", description="Shows a leaderboard of the top 10 guild's member count.")
     async def leaderboardTotal_members(self, interaction: discord.Interaction):
-        logger.info(f"Command /guild leaderboard total_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
+        logger.info(f"Command /guild leaderboard members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
