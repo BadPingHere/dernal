@@ -2,11 +2,13 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
+from typing import Optional
 import time
-from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildActivityPlaytime, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardPlaytime
+from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific
 import sqlite3
 import logging
 import asyncio
+from datetime import datetime, timezone
 
 logger = logging.getLogger('discord')
 class InactivityView(View):
@@ -53,6 +55,73 @@ class InactivityView(View):
         self.update_buttons()
         await self.update_embed(interaction)
 
+class LeaderboardPaginator(View):
+    def __init__(self, data, title, shorthandTitle):
+        super().__init__(timeout=None)
+        self.data = data
+        self.title = title
+        self.per_page = 10
+        self.page = 0
+        self.shorthandTitle = shorthandTitle
+        self.total_pages = (len(data) - 1) // 10 + 1 # page +1 ts
+        self.update_buttons()
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        page_data = self.data[start:end]
+
+        leaderboardDesc = "```\n{:<3} {:<30} {:<10}\n".format("#", "Name", f"{self.shorthandTitle}")
+        separator = "-" * 45 + "\n"
+        leaderboardDesc += separator
+        for i, (name, value) in enumerate(page_data, start=start + 1):
+            if value % 1 == 0: # Checks if int
+                formattedValue = f"{int(value):,}"
+            else:
+                formattedValue = f"{value:,.2f}"
+            leaderboardDesc += "{:<3} {:<30} {:<10}\n".format(i, name, formattedValue)
+        leaderboardDesc += "```"
+
+        embed = discord.Embed(
+            title=self.title,
+            description=leaderboardDesc,
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Page {self.page + 1}/{self.total_pages} • https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        return embed
+
+    def update_buttons(self): # disables when shits l;ike that
+        self.first.disabled = self.page == 0
+        self.prev.disabled = self.page == 0
+        self.next.disabled = self.page >= self.total_pages - 1
+        self.last.disabled = self.page >= self.total_pages - 1
+
+    @discord.ui.button(label="<<", style=discord.ButtonStyle.secondary) # go to front
+    async def first(self, interaction: discord.Interaction, button: Button):
+        self.page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="<", style=discord.ButtonStyle.primary) # up one
+    async def prev(self, interaction: discord.Interaction, button: Button):
+        self.page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary) #back one
+    async def next(self, interaction: discord.Interaction, button: Button):
+        self.page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label=">>", style=discord.ButtonStyle.secondary) # goto back
+    async def last(self, interaction: discord.Interaction, button: Button):
+        self.page = self.total_pages - 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+
+
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
 class Guild(commands.GroupCog, name="guild"):
@@ -61,46 +130,6 @@ class Guild(commands.GroupCog, name="guild"):
         self.guildLookupCooldown = 0
     
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.",)
-    @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of players online over the past day.")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)  
-    async def activityPlaytime(self, interaction: discord.Interaction, name: str):
-        logger.info(f"Command /guild activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
-        
-        await interaction.response.defer()
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
-        
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
-            return
-            
-        file, embed = await asyncio.to_thread(guildActivityPlaytime, result[0], name)
-        
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
-        else:
-            await interaction.followup.send("No data available for the last 24 hours")
-    
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)   
     async def activityXP(self, interaction: discord.Interaction, name: str):
@@ -295,8 +324,9 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available for the last 24 hours")
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
-    @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 10 guild's average amount of online players.")
-    async def leaderboardOnline_members(self, interaction: discord.Interaction):
+    @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    async def leaderboardOnline_members(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -305,13 +335,40 @@ class Guild(commands.GroupCog, name="guild"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(guildLeaderboardOnlineMembers)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        if not name: # Normal guild shit
+            data = await asyncio.to_thread(guildLeaderboardOnlineMembers)
+            view = LeaderboardPaginator(data, "Top 100 Guilds by Online Member Average", "Online Average")
+        else:
+            conn = sqlite3.connect('database/guild_activity.db')
+            cursor = conn.cursor()
+            
+            if len(name) <= 4:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            else:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            
+            if not result:
+                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+                conn.close()
+                return
+            data = await asyncio.to_thread(guildLeaderboardOnlineButGuildSpecific, result[0])
+            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Playtime Average", "Hours/day")
+
+        if data:
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
     
-    @leaderboardCommands.command(name="members", description="Shows a leaderboard of the top 10 guild's member count.")
+    
+    @leaderboardCommands.command(name="members", description="Shows a leaderboard of the top 100 guild's member count.")
     async def leaderboardTotal_members(self, interaction: discord.Interaction):
         logger.info(f"Command /guild leaderboard members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
@@ -321,14 +378,16 @@ class Guild(commands.GroupCog, name="guild"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(guildLeaderboardTotalMembers)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(guildLeaderboardTotalMembers)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Guilds by Member Count", "Members")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
     
-    @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 10 guild's war amount.")
-    async def leaderboardWars(self, interaction: discord.Interaction):
+    @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 100 guild's war amount.")
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    async def leaderboardWars(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -336,15 +395,42 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        
-        embed = await asyncio.to_thread(guildLeaderboardWars)
-        if embed:
-            await interaction.followup.send(embed=embed)
+
+        if not name: # Normal guild shit
+            data = await asyncio.to_thread(guildLeaderboardWars)
+            view = LeaderboardPaginator(data, "Top 100 Guilds by Wars Won", "Wars Won")
+        else:
+            conn = sqlite3.connect('database/guild_activity.db')
+            cursor = conn.cursor()
+            
+            if len(name) <= 4:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            else:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            
+            if not result:
+                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+                conn.close()
+                return
+            data = await asyncio.to_thread(guildLeaderboardWarsButGuildSpecific, result[0])
+            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Wars Won", "Wars Won")
+
+        if data:
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
-    @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.")
-    async def leaderboardXP(self, interaction: discord.Interaction):
+    @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 100 guild's xp gained over the past 24 hours.")
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    async def leaderboardXP(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -352,26 +438,36 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        
-        embed = await asyncio.to_thread(guildLeaderboardXP)
-        if embed:
-            await interaction.followup.send(embed=embed)
-        else:
-            await interaction.followup.send("No data available.")
 
-    @leaderboardCommands.command(name="playtime", description="Shows a leaderboard of the top 10 guild's playtime percentage.") 
-    async def leaderboardPlaytime(self, interaction: discord.Interaction):
-        logger.info(f"Command /guild leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
-        await interaction.response.defer()
-        
-        embed = await asyncio.to_thread(guildLeaderboardPlaytime)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        if not name: # Normal guild shit
+            data = await asyncio.to_thread(guildLeaderboardXP)
+            view = LeaderboardPaginator(data, "Top 100 Guilds by XP Gain", "XP")
+        else:
+            conn = sqlite3.connect('database/guild_activity.db')
+            cursor = conn.cursor()
+            
+            if len(name) <= 4:
+                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            else:
+                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
+                result = cursor.fetchone()
+                if not result:
+                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
+                    result = cursor.fetchone()
+            
+            if not result:
+                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
+                conn.close()
+                return
+            data = await asyncio.to_thread(guildLeaderboardXPButGuildSpecific, result[0])
+            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by XP Gain", "XP")
+
+        if data:
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
             

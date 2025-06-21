@@ -28,10 +28,8 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents) # i 
 # TODO:
 #? 1. Improve performance on database commands.
 #! 2. Add front-facing errors to ALL commands, no command should time out because of either a user or bot error.
-#! 3. New commands, being /guild leaderboard xp/playtime guild=x and /help
-#! 4. Allow guilds to change the hardcoded weightings of giveaways.
-#! 5. Fix Inactivity and other long commands that can have too much chars
-#! 6. Debug Percentage and similar differences between activity vs leaderboard
+#! 3. Allow guilds to change the hardcoded weightings of giveaways.
+#! 4. Fix Inactivity and other long commands that can have too much chars
 
 def checkUpdates(localVersionFile='version.json'):
     try:
@@ -106,9 +104,7 @@ async def on_ready():
     logger.info(f"Logged in as {bot.user.name}")
     logger.info(f"Discord.py version: {discord.__version__}")
     logger.info(f"Python version: {platform.python_version()}")
-    logger.info(
-        f"Running on: {platform.system()} {platform.release()} ({os.name})"
-    )
+    logger.info(f"Running on: {platform.system()} {platform.release()} ({os.name})")
     logger.info("-------------------")
 
 async def load_cogs():
@@ -119,8 +115,8 @@ async def load_cogs():
                 await bot.load_extension(f'cogs.{filename[:-3]}')
                 logger.info(f'Loaded Cog: {filename[:-3]}')
             except Exception as e:
-                logger.info(f'Failed to load Cog {filename[:-3]}')
-                logger.info(f'Error: {str(e)}')
+                logger.error(f'Failed to load Cog {filename[:-3]}')
+                logger.error(f'Error: {str(e)}')
 
 async def main(): # idk why i couldnt explain it? maybe it was my past code but like this is not unexplainable
     async with bot:

@@ -1,12 +1,11 @@
 import requests
 import discord
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from collections import Counter
 import logging
 import time
 import sqlite3
-from datetime import datetime
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
@@ -21,6 +20,7 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import shelve
 import difflib
+import matplotlib.cm as cm
   
 logger = logging.getLogger('discord')
 
@@ -139,6 +139,9 @@ def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save
     return True
 
 def findAttackingMembers(attacker):
+    if str(attacker) == "None":
+        logger.error("Attacker None in findAttackingMembers.")
+        return [["Unknown", "Unknown", 1738]] # ay
     success, r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
     if not success:
         logger.error("Unsuccessful request in findAttackingMembers - 1.")
@@ -479,75 +482,6 @@ def intvervalGrouping(timestamps):
         else:
             groups[-1].append(ts)
     return groups
-
-def guildActivityPlaytime(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, ActivityPlaytime")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT member_uuid, timestamp, online
-        FROM member_snapshots
-        WHERE guild_uuid = ?
-        AND timestamp >= datetime('now', '-1 day')
-        ORDER BY timestamp
-    """, (guild_uuid,))
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-        return None, None
-    
-    hourly_data = defaultdict(list)
-    
-    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
-
-    for group in grouped_snapshots:
-        avg_online = sum(
-            snapshot[2] for snapshot in snapshots 
-            if datetime.fromisoformat(snapshot[1]) in group
-        ) / len(group)
-        midpoint_time = group[0] + (group[-1] - group[0]) / 2
-        hourly_data[midpoint_time].append(avg_online)
-
-    times = sorted(hourly_data.keys())
-    averages = [sum(hourly_data[time]) / len(hourly_data[time]) * 100 for time in times]
-    overall_average = sum(averages) / len(averages) if averages else 0
-
-    # you cannot get me to try and understand what is happening here.
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, averages, '-', label='Average Activity Playtime', color=blue, lw=3)
-    plt.fill_between(times, 0, averages, alpha=0.3)
-    plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f}%')
-    time_formatter = DateFormatter('%H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    hour_locator = HourLocator()
-    plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Playtime Activity - {name}', fontsize=14)
-    plt.xlabel('Time (UTC)', fontsize=12)
-    plt.ylabel('Players Online (%)', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
-    file = discord.File(buf, filename='playtime_graph.png')
-    embed = discord.Embed(
-        title=f"Playtime Analysis for {name}",
-        description=f"Maximum player activity: {max(averages):.2f}%\nMinimum player activity: {min(averages):.2f}%\nAverage player activity: {overall_average:.2f}%",
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    buf.close()
-    return file, embed
 
 def guildActivityXP(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityXP")
@@ -1002,33 +936,17 @@ def guildLeaderboardOnlineMembers():
         snapshot_count
     FROM avg_online_members
     ORDER BY avg_online_members DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    counter = 0
-    max_guild_length = max(len(guild) for guild, _, _ in snapshots)
-    header = "```\n{:<3} {:<{guild_width}} {:<15}\n".format("#", "Guild", "Average Online", guild_width=max_guild_length)
-    separator = "-" * (max_guild_length + 20) + "\n"
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
 
-    description = header + separator
-    for counter, (guild, avg_online, _) in enumerate(snapshots, 1):
-        description += "{:<3} {:<{guild_width}} {:<15.2f}\n".format(
-            counter,
-            guild,
-            avg_online,
-            guild_width=max_guild_length
-        )
-    description += "```"
-    embed = discord.Embed(
-        title=f"Average Online Members Leaderboard",
-        description=description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return embed
+    return listy
 
 def guildLeaderboardTotalMembers():
     logger.info(f"leaderboardTotalMembers")
@@ -1060,33 +978,17 @@ def guildLeaderboardTotalMembers():
     WHERE rn = 1
     AND total_members > 0
     ORDER BY total_members DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
     
-    counter = 0
-    max_guild_length = max(len(guild) for guild, _, _ in snapshots)
-    header = "```\n{:<3} {:<{guild_width}} {:<15}\n".format("#", "Guild", "Total Members", guild_width=max_guild_length)
-    separator = "-" * (max_guild_length + 20) + "\n"
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
 
-    description = header + separator
-    for counter, (guild, totalMembers, _) in enumerate(snapshots, 1):
-        description += "{:<3} {:<{guild_width}} {:<15.0f}\n".format(
-            counter,
-            guild,
-            totalMembers,
-            guild_width=max_guild_length
-        )
-    description += "```"
-    embed = discord.Embed(
-        title=f"Total Members Leaderboard",
-        description=description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return embed
+    return listy
 
 def guildLeaderboardWars():
     logger.info(f"leaderboardWars")
@@ -1101,31 +1003,18 @@ def guildLeaderboardWars():
         JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
         GROUP BY g.uuid, g.name, g.prefix
         ORDER BY total_wars DESC
-        LIMIT 10;
+        LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
         return None
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "Wars")
-    separator = "-" * 40 + "\n"
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        guild_name = row[0]
-        total_wars = row[1]
-        rank = row[2]
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, guild_name, total_wars)
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Guild Wars Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def guildLeaderboardXP():
     logger.info(f"leaderboardXP")
@@ -1140,7 +1029,7 @@ def guildLeaderboardXP():
                 MIN(timestamp) as min_time,
                 MAX(timestamp) as max_time
             FROM member_snapshots
-            WHERE timestamp >= datetime('now', '-1 day')
+            WHERE timestamp >= datetime('now', '-7 day')
             GROUP BY guild_uuid, member_uuid
         ),
         contribution_changes AS (
@@ -1179,96 +1068,20 @@ def guildLeaderboardXP():
             RANK() OVER (ORDER BY xp_gained DESC) as rank
         FROM guild_totals
         ORDER BY xp_gained DESC
-        LIMIT 10;
+        LIMIT 100;
     """)
     
-    snapshot = cursor.fetchall()
-    if not snapshot:
+    snapshots = cursor.fetchall()
+    if not snapshots:
         conn.close()
         return None
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "XP Gained")
-    separator = "-" * 40 + "\n"
-    leaderboard_description += separator
-    for row in snapshot:
-        guild_name = row[0]
-        xp_gained = row[1]
-        rank = row[2]
-        leaderboard_description += "{:<3} {:<25} {:<10,d}\n".format(rank, guild_name, xp_gained)
-    leaderboard_description += "```"
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Guild XP Gained Leaderboard (Last 24 Hours)",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
-def guildLeaderboardPlaytime():
-    logger.info(f"leaderboardPlaytime")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        WITH time_grouped_data AS (
-            SELECT 
-                g.uuid as guild_uuid,
-                ms.timestamp,
-                ms.online,
-                datetime(strftime('%s', ms.timestamp) - strftime('%s', ms.timestamp) % 300, 'unixepoch') as interval_start
-            FROM guilds g
-            JOIN member_snapshots ms ON g.uuid = ms.guild_uuid
-            WHERE ms.timestamp >= datetime('now', '-1 day')
-        ),
-        interval_averages AS (
-            SELECT 
-                guild_uuid,
-                interval_start,
-                AVG(CAST(online AS FLOAT)) * 100 as interval_avg
-            FROM time_grouped_data
-            GROUP BY guild_uuid, interval_start
-        ),
-        guild_averages AS (
-            SELECT 
-                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                AVG(ia.interval_avg) as activity_percentage
-            FROM interval_averages ia
-            JOIN guilds g ON ia.guild_uuid = g.uuid
-            GROUP BY g.uuid
-            HAVING activity_percentage > 0
-        )
-        SELECT 
-            guild_name,
-            ROUND(activity_percentage, 2) as activity_percentage,
-            RANK() OVER (ORDER BY activity_percentage DESC) as rank
-        FROM guild_averages
-        ORDER BY activity_percentage DESC
-        LIMIT 10;
-    """)
-    results = cursor.fetchall()
-    conn.close()
-    if not results:
-        return None
-        
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Guild", "Activity %")
-    leaderboard_description += "-" * 40 + "\n"
-    for guild_data in results:
-        guild_name, activity, rank = guild_data
-        leaderboard_description += "{:<3} {:<25} {:<10.2f}\n".format(
-            rank, guild_name, activity
-        )
-    leaderboard_description += "```"
-    
-
-    embed = discord.Embed(
-        title="Guild Activity Leaderboard (Last 24 Hours)",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return embed
 
 def playerActivityPlaytime(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
@@ -1843,32 +1656,17 @@ def playerLeaderboardRaids():
         )
     )
     ORDER BY totalRaids DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Raids")
-    separator = "-" * 40 + "\n"
-    rankNum = 0
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        rankNum+=1
-        username = row[0]
-        totalRaids = row[1]
-        rank = rankNum
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalRaids)
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Player Raid Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def playerLeaderboardDungeons():
     logger.info(f"playerLeaderboardDungeons")
@@ -1887,32 +1685,17 @@ def playerLeaderboardDungeons():
         )
     )
     ORDER BY totalDungeons DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Dungeons")
-    separator = "-" * 40 + "\n"
-    rankNum = 0
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        rankNum+=1
-        username = row[0]
-        totalDungeons = row[1]
-        rank = rankNum
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalDungeons)
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Player Dungeon Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def playerLeaderboardPVPKills():
     logger.info(f"playerLeaderboardPVPKills")
@@ -1931,32 +1714,17 @@ def playerLeaderboardPVPKills():
         )
     )
     ORDER BY pvpKills DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "PVP Kills")
-    separator = "-" * 40 + "\n"
-    rankNum = 0
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        rankNum+=1
-        username = row[0]
-        kills = row[1]
-        rank = rankNum
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, kills)
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Player PVP Kills Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def playerLeaderboardTotalLevel():
     logger.info(f"playerLeaderboardTotalLevel")
@@ -1975,32 +1743,17 @@ def playerLeaderboardTotalLevel():
         )
     )
     ORDER BY totalLevel DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Total Level")
-    separator = "-" * 40 + "\n"
-    rankNum = 0
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        rankNum+=1
-        username = row[0]
-        totalLevel = row[1]
-        rank = rankNum
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, totalLevel)
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Player Total Level Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def playerLeaderboardPlaytime():
     logger.info(f"playerLeaderboardPlaytime")
@@ -2019,32 +1772,17 @@ def playerLeaderboardPlaytime():
         )
     )
     ORDER BY playtime DESC
-    LIMIT 10;
+    LIMIT 100;
     """)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
 
-    leaderboard_description = "```\n{:<3} {:<25} {:<10}\n".format("#", "Username", "Playtime (Hours)")
-    separator = "-" * 46 + "\n"
-    rankNum = 0
-    leaderboard_description += separator
+    listy = []
     for row in snapshots:
-        rankNum+=1
-        username = row[0]
-        playtime = row[1]
-        rank = rankNum
-        leaderboard_description += "{:<3} {:<25} {:<10}\n".format(rank, username, round(playtime))
-    leaderboard_description += "```"
+        listy.append([row[0], row[1]]) #name, value
 
-    embed = discord.Embed(
-        title="Player Playtime Leaderboard",
-        description=leaderboard_description,
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    conn.close()
-    return embed
+    return listy
 
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
@@ -2325,28 +2063,43 @@ def mapCreator():
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
 
-def heatmapCreator():
+def heatmapCreator(timeframe):
+    timeframeMap = {
+        "Season 24": ("04/18/25", "06/01/25"),
+        "Season 25": ("06/06/25", "07/20/25"),
+        "Last 7 Days": None, # gotta handle ts outta dict
+        "Everything": None
+    }
+    if timeframe == "Last 7 Days": # We handle it.
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe != "Everything": # we deal with everything later on
+        startDay, endDay = timeframeMap.get(timeframe, (None, None))
+        startDate = datetime.strptime(startDay, "%m/%d/%y")
+        endDate = datetime.strptime(endDay, "%m/%d/%y")
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
-
     def coordToPixel(x, z):
         return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
 
     with shelve.open(territoryFilePath) as territoryStorage:
         historicalTerritories = territoryStorage.get("historicalTerritories", {})
-
     territory_data = requests.get("https://api.wynncraft.com/v3/guild/list/territory").json()
     activityCount = defaultdict(int)
-    for day in historicalTerritories.values():
-        for territory, count in day.items():
-            activityCount[territory] += count
-
+    if timeframe == "Everything": # add it all
+        for day in historicalTerritories.values():
+            for territory, count in day.items():
+                activityCount[territory] += count
+    else:
+        for date, data in historicalTerritories.items():
+            fullDate = datetime.strptime(date + f"/{datetime.now().year}", "%m/%d/%Y")
+            if startDate <= fullDate <= endDate: # Check if its between our area
+                for territory, count in data.items():
+                    activityCount[territory] += count
+    #logger.info(activityCount)
     maxCount = max(activityCount.values(), default=1)
 
     def heatToColor(heat): # I'd like to make this better in the future
-        heat = max(0.0, min(1.0, heat))
-        r = int(255 * heat)
-        g = 0
-        b = int(255 * (1 - heat))
+        r, g, b, _ = [int(255 * c) for c in cm.seismic(heat)]
         return (r, g, b)
 
     overlay = Image.new("RGBA", map_img.size)
@@ -2381,7 +2134,7 @@ def heatmapCreator():
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_heatmap.png")
     embed = discord.Embed(
-        title=f"Current Territory Heatmap",
+        title=f"Heatmap for {timeframe}",
         color=discord.Color.green()
     )
     embed.set_image(url="attachment://wynn_heatmap.png")
@@ -2688,7 +2441,9 @@ def getHelp(arg):
             "territory heatmap": {
                 "desc": "Generates and displays a heatmap showing territory activity.",
                 "usage": "territory heatmap",
-                "options": {}
+                "options": {
+                    "timeframe": "The timeframe you wish to create a heatmap for, by season, days, or lifetime.",
+                }
             },
             "hq": {
                 "desc": "Lists the strongest headquarter territory location for a speciic guild or globally.",
@@ -2728,3 +2483,196 @@ def getHelp(arg):
             else:
                 message = "The command you inputted is not valid. Please try again."
             return message, False
+
+def guildLeaderboardXPButGuildSpecific(guild_uuid):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardXPButGuildSpecific")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH time_bounds AS (
+            SELECT 
+                guild_uuid, 
+                member_uuid, 
+                MIN(timestamp) as min_time, 
+                MAX(timestamp) as max_time
+            FROM member_snapshots 
+            WHERE timestamp >= datetime('now', '-7 day')
+            AND guild_uuid = ?
+            GROUP BY guild_uuid, member_uuid
+        ),
+        contribution_changes AS (
+            SELECT 
+                t.guild_uuid,
+                t.member_uuid,
+                COALESCE(
+                    (SELECT contribution 
+                    FROM member_snapshots 
+                    WHERE guild_uuid = t.guild_uuid 
+                    AND member_uuid = t.member_uuid 
+                    AND timestamp = t.max_time
+                    ) - 
+                    (SELECT contribution 
+                    FROM member_snapshots 
+                    WHERE guild_uuid = t.guild_uuid 
+                    AND member_uuid = t.member_uuid 
+                    AND timestamp = t.min_time
+                    ), 0
+                ) as xp_gained
+            FROM time_bounds t
+        ),
+        player_totals AS (
+            SELECT 
+                c.member_uuid,
+                m.name as player_name,
+                c.xp_gained
+            FROM contribution_changes c
+            JOIN members m ON m.uuid = c.member_uuid
+            WHERE c.xp_gained > 0
+        )
+        SELECT 
+            player_name,
+            xp_gained,
+            RANK() OVER (ORDER BY xp_gained DESC) as rank
+        FROM player_totals
+        ORDER BY xp_gained DESC
+        LIMIT 100;
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None
+
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
+
+    return listy
+
+def guildLeaderboardOnlineButGuildSpecific(guild_uuid):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardOnlineButGuildSpecific")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH recent_users AS (
+            SELECT DISTINCT uuid, username
+            FROM users
+            WHERE timestamp >= datetime('now', '-7 day') AND guildUUID = ?
+        ),
+        recent_wars AS (
+            SELECT uuid, timestamp, wars
+            FROM users_global
+            WHERE timestamp >= datetime('now', '-7 day')
+        ),
+        ranked_wars AS (
+            SELECT
+                rw.uuid,
+                rw.wars,
+                rw.timestamp,
+                ROW_NUMBER() OVER (PARTITION BY rw.uuid ORDER BY rw.timestamp ASC) AS rn_start,
+                ROW_NUMBER() OVER (PARTITION BY rw.uuid ORDER BY rw.timestamp DESC) AS rn_end
+            FROM recent_wars rw
+        ),
+        wars_start AS (
+            SELECT uuid, wars AS wars_start
+            FROM ranked_wars
+            WHERE rn_start = 1
+        ),
+        wars_end AS (
+            SELECT uuid, wars AS wars_end
+            FROM ranked_wars
+            WHERE rn_end = 1
+        ),
+        wars_diff AS (
+            SELECT 
+                ru.username,
+                we.uuid,
+                (we.wars_end - ws.wars_start) AS wars_gained
+            FROM wars_start ws
+            JOIN wars_end we ON ws.uuid = we.uuid
+            JOIN recent_users ru ON ru.uuid = ws.uuid
+        )
+        SELECT 
+            username,
+            wars_gained,
+            RANK() OVER (ORDER BY wars_gained DESC) AS rank
+        FROM wars_diff
+        ORDER BY wars_gained DESC
+        LIMIT 100;
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None
+
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
+
+    return listy
+
+def guildLeaderboardWarsButGuildSpecific(guild_uuid):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardWarsButGuildSpecific")
+    conn = sqlite3.connect('database/player_activity.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        WITH recent_snapshots AS (
+            SELECT *
+            FROM users_global
+            WHERE timestamp >= datetime('now', '-7 days')
+            AND uuid IN (
+                SELECT DISTINCT uuid 
+                FROM users 
+                WHERE guildUUID = ?
+                AND timestamp >= datetime('now', '-7 days')
+            )
+        ),
+        ranked_snapshots AS (
+            SELECT
+                uuid,
+                username,
+                wars,
+                timestamp,
+                ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp ASC) AS rn_asc,
+                ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp DESC) AS rn_desc
+            FROM recent_snapshots
+        ),
+        min_wars AS (
+            SELECT uuid, wars AS wars_start
+            FROM ranked_snapshots
+            WHERE rn_asc = 1
+        ),
+        max_wars AS (
+            SELECT uuid, username, wars AS wars_end
+            FROM ranked_snapshots
+            WHERE rn_desc = 1
+        ),
+        wars_changes AS (
+            SELECT 
+                max.uuid,
+                max.username,
+                max.wars_end - min.wars_start AS wars_gained
+            FROM max_wars max
+            JOIN min_wars min ON max.uuid = min.uuid
+        )
+        SELECT 
+            username,
+            wars_gained,
+            RANK() OVER (ORDER BY wars_gained DESC) AS rank
+        FROM wars_changes
+        ORDER BY wars_gained DESC
+        LIMIT 100;
+    """, (guild_uuid,))
+    snapshots = cursor.fetchall()
+    if not snapshots:
+        conn.close()
+        return None
+
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
+
+    conn.close()
+    return listy

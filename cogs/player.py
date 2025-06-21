@@ -6,8 +6,76 @@ from lib.utils import checkCooldown, playerActivityPlaytime, playerActivityContr
 import sqlite3
 import logging
 import asyncio
+from discord.ui import View, Button
+from datetime import datetime, timezone
 
 logger = logging.getLogger('discord')
+
+class LeaderboardPaginator(View):
+    def __init__(self, data, title, shorthandTitle):
+        super().__init__(timeout=None)
+        self.data = data
+        self.title = title
+        self.per_page = 10
+        self.page = 0
+        self.shorthandTitle = shorthandTitle
+        self.total_pages = (len(data) - 1) // 10 + 1 # page +1 ts
+        self.update_buttons()
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        page_data = self.data[start:end]
+
+        leaderboardDesc = "```\n{:<3} {:<30} {:<10}\n".format("#", "Player", f"{self.shorthandTitle}")
+        separator = "-" * 45 + "\n"
+        leaderboardDesc += separator
+        for i, (name, value) in enumerate(page_data, start=start + 1):
+            if value % 1 == 0: # Checks if int
+                formattedValue = f"{int(value):,}"
+            else:
+                formattedValue = f"{value:,.2f}"
+            leaderboardDesc += "{:<3} {:<30} {:<10}\n".format(i, name, formattedValue)
+        leaderboardDesc += "```"
+
+        embed = discord.Embed(
+            title=self.title,
+            description=leaderboardDesc,
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"Page {self.page + 1}/{self.total_pages} • https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        return embed
+
+    def update_buttons(self): # disables when shits l;ike that
+        self.first.disabled = self.page == 0
+        self.prev.disabled = self.page == 0
+        self.next.disabled = self.page >= self.total_pages - 1
+        self.last.disabled = self.page >= self.total_pages - 1
+
+    @discord.ui.button(label="<<", style=discord.ButtonStyle.secondary) # go to front
+    async def first(self, interaction: discord.Interaction, button: Button):
+        self.page = 0
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="<", style=discord.ButtonStyle.primary) # up one
+    async def prev(self, interaction: discord.Interaction, button: Button):
+        self.page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary) #back one
+    async def next(self, interaction: discord.Interaction, button: Button):
+        self.page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label=">>", style=discord.ButtonStyle.secondary) # goto back
+    async def last(self, interaction: discord.Interaction, button: Button):
+        self.page = self.total_pages - 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
 
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -300,9 +368,10 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(playerLeaderboardRaids)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(playerLeaderboardRaids)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Players by Raids Completed", "Raids")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
@@ -316,9 +385,10 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(playerLeaderboardTotalLevel)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(playerLeaderboardTotalLevel)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Players by Total Level", "Levels")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
@@ -332,9 +402,10 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(playerLeaderboardDungeons)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(playerLeaderboardDungeons)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Players by Dungeons Completed", "Dungeons")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
@@ -348,9 +419,10 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(playerLeaderboardPlaytime)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(playerLeaderboardPlaytime)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Players by Playtime", "Hours")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
@@ -364,9 +436,10 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        embed = await asyncio.to_thread(playerLeaderboardPVPKills)
-        if embed:
-            await interaction.followup.send(embed=embed)
+        data = await asyncio.to_thread(playerLeaderboardPVPKills)
+        if data:
+            view = LeaderboardPaginator(data, "Top 100 Players by PVP Kills", "Kills")
+            await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
     
