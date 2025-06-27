@@ -55,6 +55,33 @@ class InactivityView(View):
         self.update_buttons()
         await self.update_embed(interaction)
 
+async def progressEmbed(current, total, guild_name):
+    percentage = (current / total) * 100
+    filled_blocks = int(percentage // 5) # 5% per block
+    empty_blocks = 20 - filled_blocks
+    
+    progress_bar = "█" * filled_blocks + "░" * empty_blocks
+    
+    embed = discord.Embed(
+        title=f"🔍 Analyzing {guild_name} Inactivity",
+        description=f"**Progress: {current}/{total} members processed**\n"
+                   f"`{progress_bar}` {percentage:.1f}%\n\n"
+                   f"*This may take several minutes due to API limitations. Blame wynncraft, not me.*",
+        color=discord.Color.blue()
+    )
+    
+    if current > 0:
+        estimated_total_time = total * 1.2  # Rough estimate: 1.2 seconds per member
+        elapsed_time = current * 1.2
+        remaining_time = estimated_total_time - elapsed_time
+        if remaining_time > 60:
+            time_str = f"~{int(remaining_time//60)}m {int(remaining_time%60)}s remaining"
+        else:
+            time_str = f"~{int(remaining_time)}s remaining"
+        embed.add_field(name="Estimated Time", value=time_str, inline=False)
+        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    return embed
 class LeaderboardPaginator(View):
     def __init__(self, data, title, shorthandTitle):
         super().__init__(timeout=None)
@@ -169,7 +196,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 14 days")
     
-    @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has for the past 3 days.")
+    @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has for the past 7 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityTerritories(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
@@ -207,7 +234,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 3 days")
 
-    @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 3 days.")
+    @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 7 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     async def activityWars(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
@@ -285,7 +312,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available for the last 24 hours")
     
-    @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has for the past day.")
+    @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has for the past 3 days.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     async def activityOnline_members(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
@@ -325,7 +352,7 @@ class Guild(commands.GroupCog, name="guild"):
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")
-    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.',)
     async def leaderboardOnline_members(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
@@ -386,7 +413,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available.")
     
     @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 100 guild's war amount.")
-    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.',)
     async def leaderboardWars(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
@@ -429,7 +456,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send("No data available.")
 
     @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 100 guild's xp gained over the past 24 hours.")
-    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.',)
     async def leaderboardXP(self, interaction: discord.Interaction, name: Optional[str]):
         logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
@@ -515,18 +542,82 @@ class Guild(commands.GroupCog, name="guild"):
             logger.error("Error while getting request in /guild inactivity")
             await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
             return
-        if r.ok:
-            await interaction.response.defer()
-            inactivityDict = await asyncio.to_thread(lookupGuild, r)
+        if not r.ok:
+            await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
+            return
+        guildData = r.json()
+        guildPrefix = guildData.get("prefix")
+
+        total_members = 0
+        for rank in guildData["members"]:
+            if isinstance(guildData["members"][rank], dict):
+                total_members += len(guildData["members"][rank])
+        
+        # Send initial progress message
+        await interaction.response.defer()
+        progress_embed = await progressEmbed(0, total_members, guildPrefix)
+        message = await interaction.followup.send(embed=progress_embed)
+        
+        # Create a shared progress state
+        progress_state = {"current": 0, "last_update": 0}
+        
+        # Create a separate async task to handle progress updates
+        async def progress_updater():
+            while progress_state["current"] < total_members:
+                await asyncio.sleep(2)  # Check every 2 seconds
+                current = progress_state["current"]
+                if current > progress_state["last_update"]:
+                    try:
+                        embed = await progressEmbed(current, total_members, guildPrefix)
+                        await message.edit(embed=embed)
+                        progress_state["last_update"] = current
+                    except discord.HTTPException as e:
+                        logger.warning(f"Failed to update progress message: {e}")
+        
+        # Start the progress updater task
+        updater_task = asyncio.create_task(progress_updater())
+        
+        # Simple progress callback that just updates the shared state
+        def sync_progress_callback(current, total):
+            progress_state["current"] = current
+        
+        # Run the lookup with progress updates
+        try:
+            inactivityDict = await asyncio.to_thread(lookupGuild, r, sync_progress_callback)
+            
+            # Cancel the updater task
+            updater_task.cancel()
+            try:
+                await updater_task
+            except asyncio.CancelledError:
+                pass
+            
+            # Send final result
             view = InactivityView(inactivityDict)
             embed = discord.Embed(
-                title=f"{view.category_keys[view.current_category_index]}",
+                title=f"{view.category_keys[view.current_category_index]} - {guildPrefix}",
                 description=view.get_user_list(view.category_keys[view.current_category_index]),
                 color=discord.Color.blue()
             )
-            await interaction.followup.send(embed=embed, view=view)
-        else:
-            await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
+            embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+            await message.edit(embed=embed, view=view)
+            
+        except Exception as e:
+            # Cancel the updater task if there's an error
+            updater_task.cancel()
+            try:
+                await updater_task
+            except asyncio.CancelledError:
+                pass
+                
+            logger.error(f"Error during inactivity lookup: {e}")
+            embed = discord.Embed(
+                title="❌ Error",
+                description="An error occurred while processing the guild members. Please try again later.",
+                color=discord.Color.red()
+            )
+            embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+            await message.edit(embed=embed)
         
 async def setup(bot):
     await bot.add_cog(Guild(bot))

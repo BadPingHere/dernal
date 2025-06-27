@@ -9,7 +9,7 @@ import sqlite3
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
-from collections import defaultdict, deque
+from collections import defaultdict
 import io
 import seaborn as sns
 import bisect
@@ -24,8 +24,6 @@ import matplotlib.cm as cm
   
 logger = logging.getLogger('discord')
 
-ratelimitmultiplier = 1
-ratelimitwait = 0.1 
 cooldownHolder = {}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 territoryFilePath = os.path.join(rootDir, 'database', 'territory')
@@ -59,7 +57,7 @@ def makeRequest(url): # the world is built on nested if else statements.
 
     while retries < maxRetries:
         try:
-            r = session.get(url)
+            r = session.get(url, timeout=30)
             # Nori currently doesnt support multiple responses, itll just go code 500
             if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
                 if "/guild/" in url: # In guild endpoint, just select the first option.
@@ -149,22 +147,57 @@ def findAttackingMembers(attacker):
     jsonData = r.json()
     onlineMembers = []
     warringMembers = []
+    onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart = {}
 
     for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
         if isinstance(jsonData["members"][rank], dict):
             for member in jsonData["members"][rank].values(): 
                 if member['online']: # checks if online is set to true or false
                     onlineMembers.append(member['uuid'])
+                    onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart[member['uuid']] = member['server']
+                    
+    # Check if they are in database
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (str(attacker),))
+    result = cursor.fetchone()
+    conn.close()
+    if not result: # Not in databse, manually check warcounts
+        for i in onlineMembers:
+            success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
+            if not success:
+                print("Unsuccessful request in findAttackingMembers - 2.")
+                return [["Unknown", "Unknown", 1738]]
+            json = r.json()
+            #logger.info(f"json: {json}")
+            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+    else: # In database, we can save resources
+        conn = sqlite3.connect('database/player_activity.db')
+        cursor = conn.cursor()
+        placeholders = ','.join(['?' for _ in onlineMembers])
+        query = f"""
+        SELECT 
+            u.username,
+            u.uuid,
+            u.wars
+        FROM users_global u
+        INNER JOIN (
+            SELECT 
+                uuid,
+                MAX(timestamp) as latest_timestamp
+            FROM users_global
+            WHERE uuid IN ({placeholders})
+            GROUP BY uuid
+        ) latest ON u.uuid = latest.uuid AND u.timestamp = latest.latest_timestamp
+        WHERE u.wars > 20;
+        """
 
-    for i in onlineMembers:
-        success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
-        if not success:
-            logger.error("Unsuccessful request in findAttackingMembers - 2.")
-            return [["Unknown", "Unknown", 1738]]
-        json = r.json()
-        #logger.info(f"json: {json}")
-        if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
-            warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
+        cursor.execute(query, onlineMembers)
+        result = cursor.fetchall()
+        for username, uuid, wars in result:
+            server = onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart.get(uuid, 'Unknown')
+            warringMembers.append([username, server, wars])
 
     if not warringMembers: # if for some reason this comes back with no one (offline or sum)
         attackingMembers = [["Unknown", "Unknown", 1738]] # ay
@@ -367,7 +400,7 @@ def getTerritoryNames(untainteddata, guildPrefix):
             ownerOfTerritory = data['guild']['prefix']
             if ownerOfTerritory is None: # sometimes shit be null idk
                 ownerOfTerritory = "qwdiqwidjqwiodjqiodj" # garbage code btw
-            if ownerOfTerritory == guildPrefix: # if the guild owns it, add to the dict
+            if ownerOfTerritory.lower() == guildPrefix.lower(): # if the guild owns it, add to the dict
                 ownedTerritories[territory] = data
     scorelist = {}
     otherData = {}
@@ -398,7 +431,6 @@ def getTerritoryNames(untainteddata, guildPrefix):
         otherData[hqCandidate] = (len(connections), len(externals)) # i for sure couldve merged this with scorelist, but uhhhhh not worth my time!!
         externals = []
     scorelist = dict(reversed(sorted(scorelist.items(), key=lambda item: item[1]))) # sorts on top
-    
     description = "## Best HQ Location:\n"
     for i, (location, score) in enumerate(scorelist.items()):
         if i >= 5:  # max 5 entries
@@ -406,7 +438,6 @@ def getTerritoryNames(untainteddata, guildPrefix):
         connCount, externalCount = otherData[location] #like balatro!!!!!
         description += f"{i + 1}. **{location}**: {score}% - Connections: {connCount}, Externals: {externalCount}\n"
     description += "\n-# Note: HQ calculations are purely based on headquarter\n-# strength, not importance of territories or queue times."
-    
     embed = discord.Embed(
         description=description,
         color=0x3457D5,
@@ -415,7 +446,7 @@ def getTerritoryNames(untainteddata, guildPrefix):
     logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
     return embed
 
-def lookupUser(memberList):
+def lookupUser(memberList, progressCallback=None):
     inactivityDict = {
         "Four Week Inactive Users": [],
         "Three Week Inactive Users": [],
@@ -424,8 +455,14 @@ def lookupUser(memberList):
         "Three Day Inactive Users": [],
         "Active Users": [],
     }
-    for member in memberList:
-        time.sleep(1) # Slow down inactivity because we need to preserve our ratelimits
+    totalMembers = len(memberList)
+
+
+    for i, member in enumerate(memberList):
+        if progressCallback:
+            progressCallback(i + 1, totalMembers)
+
+        time.sleep(2.5) # Slow down inactivity because we need to preserve our ratelimits
         success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
         if not success:
             logger.error("Unsuccessful request in lookupUser.")
@@ -462,7 +499,7 @@ def lookupUser(memberList):
         inactivityDict[key].sort(key=lambda x: x[1])  # Sort by timestamp, so we can go from oldest to newest
     return inactivityDict
 
-def lookupGuild(r):
+def lookupGuild(r, progressCallback=None):
     jsonData = r.json()
     memberList = []
     for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
@@ -470,18 +507,8 @@ def lookupGuild(r):
             for member, value in jsonData["members"][rank].items(): 
                 memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
     #logger.info(f"memberlist-2: {memberList}")
-    return lookupUser(memberList)
+    return lookupUser(memberList, progressCallback)
 
-# because not everything happens in a second.
-def intvervalGrouping(timestamps):
-    interval_seconds=30
-    groups = deque()
-    for ts in timestamps:
-        if not groups or (ts - groups[-1][0]).total_seconds() > interval_seconds:
-            groups.append([ts])
-        else:
-            groups[-1].append(ts)
-    return groups
 
 def guildActivityXP(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityXP")
@@ -571,7 +598,7 @@ def guildActivityTerritories(guild_uuid, name):
     cursor.execute("""
         WITH RECURSIVE 
         timepoints AS (
-            SELECT datetime('now', '-3 days') as timepoint
+            SELECT datetime('now', '-7 days') as timepoint
             UNION ALL
             SELECT datetime(timepoint, '+15 minutes')
             FROM timepoints
@@ -678,7 +705,7 @@ def guildActivityWars(guild_uuid, name):
     cursor.execute("""
         WITH RECURSIVE 
         timepoints AS (
-            SELECT datetime('now', '-3 days') as timepoint
+            SELECT datetime('now', '-7 days') as timepoint
             UNION ALL
             SELECT datetime(timepoint, '+15 minutes')
             FROM timepoints
@@ -780,10 +807,10 @@ def guildActivityOnlineMembers(guild_uuid, name):
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT member_uuid, timestamp, online
-        FROM member_snapshots
+        SELECT timestamp, online_members
+        FROM guild_snapshots
         WHERE guild_uuid = ?
-        AND timestamp >= datetime('now', '-1 day')
+        AND timestamp >= datetime('now', '-3 day')
         ORDER BY timestamp
     """, (guild_uuid,))
     snapshots = cursor.fetchall()
@@ -792,24 +819,18 @@ def guildActivityOnlineMembers(guild_uuid, name):
         conn.close()
         return None, None
     
-    hourly_data = defaultdict(list)
+    times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
+    raw_numbers = [snapshot[1] for snapshot in snapshots]
     
-    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[1]) for snapshot in snapshots])
-
-    for group in grouped_snapshots:
-        total_online = sum(snapshot[2] for snapshot in snapshots if datetime.fromisoformat(snapshot[1]) in group)
-        hourly_data[group[0]].append(total_online)
-    times = sorted(hourly_data.keys())
-    raw_numbers = [sum(hourly_data[time]) for time in times]
     overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
 
     plt.figure(figsize=(12, 6))
     plt.plot(times, raw_numbers, '-', label='Average Online Member Count', color=blue, lw=3)
     plt.fill_between(times, 0, raw_numbers, alpha=0.3)
     plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
-    time_formatter = DateFormatter('%H:%M')
+    time_formatter = DateFormatter('%m/%d %H:%M')
     plt.gca().xaxis.set_major_formatter(time_formatter)
-    hour_locator = HourLocator()
+    hour_locator = HourLocator(byhour=[0, 6, 12, 18])
     plt.gca().xaxis.set_major_locator(hour_locator)
     plt.title(f'Online Members - {name}', fontsize=14)
     plt.xlabel('Time (UTC)', fontsize=12)
@@ -861,14 +882,8 @@ def guildActivityTotalMembers(guild_uuid, name):
         conn.close()
         return None, None
     
-    hourly_data = defaultdict(list)
-    grouped_snapshots = intvervalGrouping([datetime.fromisoformat(snapshot[0]) for snapshot in snapshots])
-    for group in grouped_snapshots:
-        total_members = sum(snapshot[1] for snapshot in snapshots if datetime.fromisoformat(snapshot[0]) in group)
-        hourly_data[group[0]].append(total_members)
-
-    times = sorted(hourly_data.keys())
-    total_numbers = [sum(hourly_data[time]) for time in times] 
+    times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
+    total_numbers = [snapshot[1] for snapshot in snapshots]
     overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
     plt.figure(figsize=(12, 6))
     plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
@@ -1944,14 +1959,15 @@ def mapCreator():
 
     with open("territories.json", "r") as f:
         local_territories = json.load(f)
-
+    success, r = makeRequest("https://athena.wynntils.com/cache/get/guildList")
     color_map = {
         g["prefix"]: g.get("color", "#FFFFFF")
-        for g in requests.get("https://athena.wynntils.com/cache/get/guildList").json()
+        for g in r.json()
         if g.get("prefix")}
 
     # get territory data
-    territory_data = requests.get("https://api.wynncraft.com/v3/guild/list/territory").json()
+    success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
+    territory_data = r.json()
 
     overlay = Image.new("RGBA", map_img.size)
     overlay_draw = ImageDraw.Draw(overlay)
@@ -2083,7 +2099,8 @@ def heatmapCreator(timeframe):
 
     with shelve.open(territoryFilePath) as territoryStorage:
         historicalTerritories = territoryStorage.get("historicalTerritories", {})
-    territory_data = requests.get("https://api.wynncraft.com/v3/guild/list/territory").json()
+    success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
+    territory_data = r.json()
     activityCount = defaultdict(int)
     if timeframe == "Everything": # add it all
         for day in historicalTerritories.values():
@@ -2154,19 +2171,17 @@ def getHelp(arg):
             },
             "guild" : {
                 "activity": {
-                    "playtime": "Shows the graph displaying the average amount of players online over the past day.",
                     "xp": "Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.",
-                    "territories": "Shows a graph displaying the amount of territories a guild has for the past 3 days.",
-                    "wars": "Shows a graph displaying the total amount of wars a guild has done over the past 3 days.",
+                    "territories": "Shows a graph displaying the amount of territories a guild has for the past 7 days.",
+                    "wars": "Shows a graph displaying the total amount of wars a guild has done over the past 7 days.",
                     "total_members": "Shows a graph displaying the total members a guild has for the past 7 days.",
-                    "online_members": "Shows a graph displaying the average amount of online members a guild has for the past day.",
+                    "online_members": "Shows a graph displaying the average amount of online members a guild has for the past 3 days.",
                 },
                 "leaderboard": {
                     "online_members": "Shows a leaderboard of the top 10 guild's average amount of online players.",
                     "total_members": "Shows a leaderboard of the top 10 guild's total members.",
                     "wars": "Shows a leaderboard of the top 10 guild's war amount.",
                     "xp": "Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.",
-                    "playtime": "Shows a leaderboard of the top 10 guild's playtime percentage.",
                 },
                 "overview": "Configure the giveaway system with a guild prefix.",
                 "inactivity": "Roll for winners from the configured guild."
@@ -2271,13 +2286,6 @@ def getHelp(arg):
                     "winners": "The amount of winners for the giveaway.",
                 }
             },
-            "guild activity playtime": {
-                "desc": "Displays a graph showing the average playtime percentage over the past 24 hours for a specified guild.",
-                "usage": "guild activity playtime [name]",
-                "options": {
-                    "name": "The name or prefix of the guild to check.",
-                }
-            },
             "guild activity xp": {
                 "desc": "Shows a bar graph of the guild's total XP contributed each day for the past 2 weeks.",
                 "usage": "guild activity xp [name]",
@@ -2286,14 +2294,14 @@ def getHelp(arg):
                 }
             },
             "guild activity territories": {
-                "desc": "Displays a graph showing the number of territories owned by the guild over the past 3 days.",
+                "desc": "Displays a graph showing the number of territories owned by the guild over the past 7 days.",
                 "usage": "guild activity territories [name]",
                 "options": {
                     "name": "The name or prefix of the guild to check.",
                 }
             },
             "guild activity wars": {
-                "desc": "Shows a graph of the total wars the guild has done, with 3 days of history.", # The wording here sounds dumb but i didnt want it to sound like it wasnt TOTAL
+                "desc": "Shows a graph of the total wars the guild has done, with 7 days of history.", # The wording here sounds dumb but i didnt want it to sound like it wasnt TOTAL
                 "usage": "guild activity wars [name]",
                 "options": {
                     "name": "The name or prefix of the guild to check.",
@@ -2307,7 +2315,7 @@ def getHelp(arg):
                 }
             },
             "guild activity online_members": {
-                "desc": "Shows a graph of the average number of online members over the past 24 hours.",
+                "desc": "Shows a graph of the average number of online members over the past 3 days.",
                 "usage": "guild activity online_members [name]",
                 "options": {
                     "name": "The name or prefix of the guild to check.",
@@ -2316,7 +2324,9 @@ def getHelp(arg):
             "guild leaderboard online_members": {
                 "desc": "Displays a leaderboard of the top 10 guilds by average online member count.",
                 "usage": "guild leaderboard online_members",
-                "options": {}
+                "options": {
+                    "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
+                }
             },
             "guild leaderboard members": {
                 "desc": "Shows a leaderboard of the top 10 guilds by member count.",
@@ -2326,17 +2336,16 @@ def getHelp(arg):
             "guild leaderboard wars": {
                 "desc": "Displays a leaderboard of the top 10 guilds by total war count.",
                 "usage": "guild leaderboard wars",
-                "options": {}
+                "options": {
+                    "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
+                }
             },
             "guild leaderboard xp": {
                 "desc": "Shows a leaderboard of the top 10 guilds by XP gained in the last 24 hours.",
                 "usage": "guild leaderboard xp",
-                "options": {}
-            },
-            "guild leaderboard playtime": {
-                "desc": "Displays a leaderboard of the top 10 guilds by average member playtime percentage.",
-                "usage": "guild leaderboard playtime",
-                "options": {}
+                "options": {
+                    "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
+                }
             },
             "guild overview": {
                 "desc": "Shows a (kind of outdated) overview of a guild.",

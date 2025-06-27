@@ -16,7 +16,7 @@ class HQ(commands.Cog):
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
     @app_commands.command(description="Outputs the top hq locations.")
     @app_commands.describe(
-        guild='Prefix of the guild Ex: TAq, ICo. (Case Sensitive)',
+        guild='Prefix of the guild Ex: TAq, ICo.',
     )
     async def hq(self, interaction: discord.Interaction, guild: Optional[str]):
         logger.info(f"Command /hq was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {guild}.")
@@ -27,7 +27,7 @@ class HQ(commands.Cog):
             await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
             return
         if guild: # Check if they own territory before even running it
-            if guild not in str(r.json()):
+            if guild.lower() not in str(r.json()).lower():
                 await interaction.response.send_message(f"The guild you inputted does not own any territories. If this is incorrect, check if the prefix is exactly right, including capitals, and if it is, report this bug.", ephemeral=True)
             else:
                 untainteddata = r.json()

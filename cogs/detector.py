@@ -37,7 +37,7 @@ class Detector(commands.GroupCog, name="detector"):
 
             
 
-    @tasks.loop(seconds=20)
+    @tasks.loop(seconds=15)
     async def backgroundDetector(self):
         try:
             if not self.guildsBeingTracked:
