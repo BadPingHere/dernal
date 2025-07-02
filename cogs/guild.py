@@ -4,11 +4,13 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific
+from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderGraids, guildLeaderGraidsButGuildSpecific, guildActivityGraids
 import sqlite3
 import logging
 import asyncio
 from datetime import datetime, timezone
+import shelve
+import os
 
 logger = logging.getLogger('discord')
 class InactivityView(View):
@@ -155,6 +157,10 @@ class Guild(commands.GroupCog, name="guild"):
     def __init__(self, bot):
         self.bot = bot
         self.guildLookupCooldown = 0
+        rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
+        with shelve.open(self.graidFilePath) as db:
+                self.EligibleGuilds = db['EligibleGuilds']
     
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.",)
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
@@ -349,6 +355,26 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 24 hours")
+
+    @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed in the past 14 days.")
+    @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
+    async def activityGRaids(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /guild activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
+            return
+        if name not in self.EligibleGuilds :# Guilds above lvl 100
+            await interaction.response.send_message(f"The guild provided is not at or above level 100. If this is a mistake, please report this bug on github.",ephemeral=True)
+            return  
+        await interaction.response.defer()
+        file, embed = await asyncio.to_thread(guildActivityGraids, name)
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 14 days")
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")
@@ -394,6 +420,35 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available.")
     
+    @leaderboardCommands.command(name="guild_raids", description="Shows a leaderboard of the level 100+ guild's guild raids for the past 14 days.")
+    @app_commands.describe(name='Prefix of the guild Ex: TAq, SEQ. Shows data for the past 14 days.',)
+    async def leaderboardGraids(self, interaction: discord.Interaction, name: Optional[str]):
+        logger.info(f"Command /guild leaderboard guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}.")
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
+            return
+        await interaction.response.defer()
+        
+        if name:
+            if name not in self.EligibleGuilds:# Guilds above lvl 100
+                await interaction.followup.send_message(f"The guild provided is not at or above level 100. If this is a mistake, please report this bug on github.",ephemeral=True)
+                return  
+            else:
+                data = await asyncio.to_thread(guildLeaderGraidsButGuildSpecific, name)
+                num = len(data)
+                view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids", "Guild Raids")
+        else:
+            data = await asyncio.to_thread(guildLeaderGraids)
+            num = len(data)
+            view = LeaderboardPaginator(data, f"Top {num} Guilds by Guild Raids", "Guild Raids")
+
+        if data:
+            await interaction.followup.send(embed=view.get_embed(), view=view)
+        else:
+            await interaction.followup.send("No data available.")
+
     
     @leaderboardCommands.command(name="members", description="Shows a leaderboard of the top 100 guild's member count.")
     async def leaderboardTotal_members(self, interaction: discord.Interaction):

@@ -25,8 +25,12 @@ import matplotlib.cm as cm
 logger = logging.getLogger('discord')
 
 cooldownHolder = {}
+last_xp = {}  # {(guild_prefix, username): contributed}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 territoryFilePath = os.path.join(rootDir, 'database', 'territory')
+graidFilePath = os.path.join(rootDir, 'database', 'graid')
+with shelve.open(graidFilePath) as db:
+    confirmedGRaid = db.get('guild_raids', {})
 
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
@@ -2176,12 +2180,14 @@ def getHelp(arg):
                     "wars": "Shows a graph displaying the total amount of wars a guild has done over the past 7 days.",
                     "total_members": "Shows a graph displaying the total members a guild has for the past 7 days.",
                     "online_members": "Shows a graph displaying the average amount of online members a guild has for the past 3 days.",
+                    "guild_raids": "Shows a graph displaying the amount of guild raids completed in the past 14 days.",
                 },
                 "leaderboard": {
-                    "online_members": "Shows a leaderboard of the top 10 guild's average amount of online players.",
-                    "total_members": "Shows a leaderboard of the top 10 guild's total members.",
-                    "wars": "Shows a leaderboard of the top 10 guild's war amount.",
-                    "xp": "Shows a leaderboard of the top 10 guild's xp gained over the past 24 hours.",
+                    "online_members": "Shows a leaderboard of the top 100 guild's average amount of online players.",
+                    "total_members": "Shows a leaderboard of the top 100 guild's total members.",
+                    "wars": "Shows a leaderboard of the top 100 guild's war amount.",
+                    "xp": "Shows a leaderboard of the top 100 guild's xp gained over the past 24 hours.",
+                    "guild_raids": "Shows a leaderboard of the level 100+ guild's guild raids for the past 14 days.",
                 },
                 "overview": "Configure the giveaway system with a guild prefix.",
                 "inactivity": "Roll for winners from the configured guild."
@@ -2196,13 +2202,15 @@ def getHelp(arg):
                     "raids_pie": "Shows a pie chart displaying the different raid's you have done.",
                     "mobs_killed": "Shows a graph displaying the amount of total mobs killed every day for the past week.",
                     "wars": "Shows a graph displaying the amount of total wars every day for the past week.",
+                    "guild_raids": "Shows a graph with the amount of guild raids done over the past 2 weeks for supported players.",
                 },
                 "leaderboard": {
-                    "raids": "Shows the leaderboard of the top 10 players with the highest total raids completed.",
-                    "total_level": "Shows the leaderboard of the top 10 players with the highest total level.",
-                    "dungeons": "Shows the leaderboard of the top 10 players with the highest dungeons completed.",
-                    "playtime": "Shows the leaderboard of the top 10 players with the highest playtime in hours.",
-                    "pvp_kills": "Shows the leaderboard of the top 10 players with the highest PvP Kills.",
+                    "raids": "Shows the leaderboard of the top 100 players with the highest total raids completed.",
+                    "total_level": "Shows the leaderboard of the top 100 players with the highest total level.",
+                    "dungeons": "Shows the leaderboard of the top 100 players with the highest dungeons completed.",
+                    "playtime": "Shows the leaderboard of the top 100 players with the highest playtime in hours.",
+                    "pvp_kills": "Shows the leaderboard of the top 100 players with the highest PvP Kills.",
+                    "guild_raids": "Shows the leaderboard of the top 1000 players with the highest guild raids in the past 2 weeks.",
                 },
             },
             "territory" : {
@@ -2321,30 +2329,44 @@ def getHelp(arg):
                     "name": "The name or prefix of the guild to check.",
                 }
             },
+            "guild activity guild_wars": {
+                "desc": "Shows a graph displaying the amount of guild raids completed in the past 14 days.",
+                "usage": "guild activity guild_wars [name]",
+                "options": {
+                    "name": "Prefix of the guild search Ex: TAq, Calvish.",
+                }
+            },
+            "guild leaderboard guild_wars": {
+                "desc": "Shows a leaderboard of the level 100+ guild's guild raids for the past 14 days.",
+                "usage": "guild leaderboard guild_wars",
+                "options": {
+                    "name": "Prefix of the guild Ex: TAq, SEQ. Shows data for the past 14 days. (optional)",
+                }
+            },
             "guild leaderboard online_members": {
-                "desc": "Displays a leaderboard of the top 10 guilds by average online member count.",
+                "desc": "Displays a leaderboard of the top 100 guilds by average online member count.",
                 "usage": "guild leaderboard online_members",
                 "options": {
                     "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
                 }
             },
             "guild leaderboard members": {
-                "desc": "Shows a leaderboard of the top 10 guilds by member count.",
+                "desc": "Shows a leaderboard of the top 100 guilds by member count.",
                 "usage": "guild leaderboard members",
                 "options": {}
             },
             "guild leaderboard wars": {
-                "desc": "Displays a leaderboard of the top 10 guilds by total war count.",
+                "desc": "Displays a leaderboard of the top 100 guilds by total war count.",
                 "usage": "guild leaderboard wars",
                 "options": {
                     "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
                 }
             },
             "guild leaderboard xp": {
-                "desc": "Shows a leaderboard of the top 10 guilds by XP gained in the last 24 hours.",
+                "desc": "Shows a leaderboard of the top 100 guilds by XP gained in the last 24 hours.",
                 "usage": "guild leaderboard xp",
                 "options": {
-                    "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.",
+                    "name": "Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days. ",
                 }
             },
             "guild overview": {
@@ -2417,28 +2439,39 @@ def getHelp(arg):
                     "name": "The username of the player to check.",
                 }
             },
+            "player activity guild_wars": {
+                "desc": "Shows a graph displaying the amount of guild raids completed in the past 14 days.",
+                "usage": "player activity guild_wars [name]",
+                "options": {
+                    "name": "Username of the player search Ex: BadPingHere, Salted.",
+                }
+            },
+            "player leaderboard guild_wars": {
+                "desc": "Shows the leaderboard of the top 100 players with the highest guild raids in the past 2 weeks.",
+                "usage": "player leaderboard guild_wars",
+            },
             "player leaderboard raids": {
-                "desc": "Shows the top 10 players with the highest total raid completions.",
+                "desc": "Shows the top 100 players with the highest total raid completions.",
                 "usage": "player leaderboard raids",
                 "options": {}
             },
             "player leaderboard total_level": {
-                "desc": "Shows the top 10 players with the highest total level across all classes.",
+                "desc": "Shows the top 100 players with the highest total level across all classes.",
                 "usage": "player leaderboard total_level",
                 "options": {}
             },
             "player leaderboard dungeons": {
-                "desc": "Shows the top 10 players with the highest total dungeon completions.",
+                "desc": "Shows the top 100 players with the highest total dungeon completions.",
                 "usage": "player leaderboard dungeons",
                 "options": {}
             },
             "player leaderboard playtime": {
-                "desc": "Displays the top 10 players with the highest total playtime in hours.",
+                "desc": "Displays the top 100 players with the highest total playtime in hours.",
                 "usage": "player leaderboard playtime",
                 "options": {}
             },
             "player leaderboard pvp_kills": {
-                "desc": "Shows the top 10 players with the highest PvP kill count.",
+                "desc": "Shows the top 100 players with the highest PvP kill count.",
                 "usage": "player leaderboard pvp_kills",
                 "options": {}
             },
@@ -2685,3 +2718,218 @@ def guildLeaderboardWarsButGuildSpecific(guild_uuid):
 
     conn.close()
     return listy
+
+
+def guildLeaderGraids():
+    logger.info(f"guildLeaderGraids")
+    
+    with shelve.open(graidFilePath) as db:
+        confirmedGRaid = db['guild_raids']
+    #logger.info(f"confirmedGRaid: {confirmedGRaid}")
+
+    leaderboard = {prefix: sum(1 for entry in entries if entry["timestamp"] >= time.time() - (14*86400)) for prefix, entries in confirmedGRaid.items()} # past 14 days
+
+    sortedLeaderboard = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
+    
+    return sortedLeaderboard
+
+def guildLeaderGraidsButGuildSpecific(prefix):
+    logger.info(f"guildLeaderGraidsButGuildSpecific. prefix is {prefix}")
+    
+    with shelve.open(graidFilePath) as db:
+        confirmedGRaid = db['guild_raids']
+
+    player_counter = Counter()
+
+    for entry in confirmedGRaid[prefix]:
+        if entry["timestamp"] >= time.time() - (14*86400): # past 14 days
+            for player in entry["party"]:
+                player_counter[player] += 1
+
+        # Sort and display
+        sortedPlayers = player_counter.most_common()
+    
+    return sortedPlayers
+
+def playerLeaderboardGraids():
+    logger.info(f"playerLeaderboardGraids")
+    
+    with shelve.open(graidFilePath) as db:
+        confirmedGRaid = db['guild_raids']
+
+    player_counter = Counter()
+
+    for entries in confirmedGRaid.values():
+        for entry in entries:
+            if entry["timestamp"] >= time.time() - (14*86400): # past 14 days
+                for player in entry["party"]:
+                    player_counter[player] += 1
+
+        # Sort and display
+        sortedPlayers = player_counter.most_common()
+    
+    return sortedPlayers
+
+def guildActivityGraids(prefix):
+    logger.info(f"guildActivityGraids, prefix: {prefix}")
+    
+    with shelve.open(graidFilePath) as db:
+        confirmedGRaid = db['guild_raids']
+
+
+    if prefix not in confirmedGRaid:
+        return None, None
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=14)
+
+    # Get and filter timestamps
+    timestamps = [
+        datetime.utcfromtimestamp(entry["timestamp"])
+        for entry in confirmedGRaid[prefix]
+        if datetime.utcfromtimestamp(entry["timestamp"]) >= cutoff
+    ]
+    timestamps.sort()
+
+    if not timestamps:
+        return None, None
+
+    # Cumulative count
+    times = timestamps
+    cumulative_counts = list(range(1, len(times) + 1))
+
+    # Raids per day
+    day_counts = Counter(t.date() for t in times)
+    max_day = max(day_counts.values())
+    avg_day = sum(day_counts.values()) / len(day_counts)
+    total_raids = len(times)
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
+    plt.fill_between(times, 0, cumulative_counts, alpha=0.3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
+    plt.ylim(0, max(cumulative_counts) + 5)
+    plt.title(f'Guild Raid Activity - {prefix}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Total Guild Raids', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.margins(x=0.01)
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='graid_graph.png')
+    embed = discord.Embed(
+        title=f"Guild Raid Completion for {prefix}",
+        description=f"Total Guild Raids: {total_raids}\nMost Guild Raids in One Day: {max_day}\nAverage Guild Raids per Day: {avg_day:.2f}",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://graid_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    buf.close()
+    return file, embed
+
+def playerActivityGraids(username):
+    logger.info(f"guildActivityGraids, username: {username}")
+    with shelve.open(graidFilePath) as db:
+        confirmedGRaid = db['guild_raids']
+
+    now = datetime.utcnow()
+    cutoff = now - timedelta(days=14)
+
+    # Step 1: Collect all timestamps the user appeared in
+    timestamps = []
+    for entries in confirmedGRaid.values():
+        for entry in entries:
+            if username in entry.get("party", []):
+                ts = datetime.utcfromtimestamp(entry["timestamp"])
+                if ts >= cutoff:
+                    timestamps.append(ts)
+
+    timestamps.sort()
+    if not timestamps:
+        return None, None
+
+    # Step 2: Build cumulative count
+    cumulative_counts = list(range(1, len(timestamps) + 1))
+
+    # Step 3: Daily stats
+    day_counts = Counter(t.date() for t in timestamps)
+    max_day = max(day_counts.values())
+    avg_day = sum(day_counts.values()) / len(day_counts)
+    total_raids = len(timestamps)
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(timestamps, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
+    plt.fill_between(timestamps, 0, cumulative_counts, alpha=0.3)
+    time_formatter = DateFormatter('%m/%d %H:%M')
+    plt.gca().xaxis.set_major_formatter(time_formatter)
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
+    plt.ylim(0, max(cumulative_counts) + 5)
+    plt.title(f'Guild Raid Activity - {username}', fontsize=14)
+    plt.xlabel('Date (UTC)', fontsize=12)
+    plt.ylabel('Total Guild Raids', fontsize=12)
+    plt.grid(True, linestyle='-', alpha=0.5)
+    plt.legend()
+    plt.tight_layout()
+    plt.margins(x=0.01)
+    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
+        transform=plt.gca().transAxes, 
+        fontsize=9, verticalalignment='bottom', 
+        horizontalalignment='right',color='gray')
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=100)
+    buf.seek(0)
+    plt.close()
+    
+    file = discord.File(buf, filename='graid_graph.png')
+    embed = discord.Embed(
+        title=f"Guild Raid Completion for {username}",
+        description=f"Total Guild Raids: {total_raids}\nMost Guild Raids in One Day: {max_day}\nAverage Guild Raids per Day: {avg_day:.2f}",
+        color=discord.Color.blue()
+    )
+    embed.set_image(url="attachment://graid_graph.png")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    buf.close()
+    return file, embed
+
+def detect_graids(eligibleGuilds): # i will credit this to slumbrous on disc, my shit did NOT fucking work first try.
+    for prefix in eligibleGuilds:
+        raidingUsers = []
+        
+        success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
+        if not success:
+            continue
+        d = r.json()
+        lvl = min(d.get("level", 0), 130)
+        thr = round(20000 * (1.15 ** lvl) / 4000)
+        for members in d["members"].values():
+            if not isinstance(members, dict):
+                continue
+            for user, info in members.items():
+                now = info.get("contributed", 0)
+                prev = last_xp.get((prefix, user), now)
+                if now - prev >= thr: # successful graid
+                    raidingUsers.append(user)
+                    #logger.info(f"[GRAID] {user}@{prefix} +{now-prev} XP")
+                last_xp[(prefix, user)] = now
+
+        if prefix not in confirmedGRaid: #init it
+                confirmedGRaid[prefix] = []
+        if raidingUsers: # Raid happened, cut them up and put into confirmed raids
+            splitRaidingUsers = [raidingUsers[i:i+4] for i in range(0, len(raidingUsers), 4)]
+            for party in splitRaidingUsers:
+                confirmedGRaid[prefix].append({"timestamp": time.time(), "party": party})
+                with shelve.open(graidFilePath) as db:
+                    db['guild_raids'] = confirmedGRaid
+            #logger.info(f"confirmedGRaid: {confirmedGRaid}")

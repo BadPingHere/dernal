@@ -6,7 +6,7 @@ import logging
 import os
 import shelve
 from dotenv import load_dotenv
-from lib.utils import checkterritories, makeRequest
+from lib.utils import checkterritories, makeRequest, detect_graids
 import asyncio
 from datetime import datetime
 
@@ -24,16 +24,19 @@ class Detector(commands.GroupCog, name="detector"):
         self.expectedterrcount = {}
         self.untainteddata = {}
         self.untainteddataOLD = {}
+        self.EligibleGuilds = []
         self.serverID = int(os.getenv("SERVER_ID") or 0)
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.detectorFilePath = os.path.join(rootDir, 'database', 'detector')
         self.territoryFilePath = os.path.join(rootDir, 'database', 'territory')
+        self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
         with shelve.open(self.detectorFilePath) as db:
             self.guildsBeingTracked = dict(db)
             #logger.info(f"self.guildsBeingTracked: {self.guildsBeingTracked}")
         with shelve.open(self.territoryFilePath) as territoryStorage:
             self.historicalTerritories = territoryStorage.get("historicalTerritories", {})
         self.backgroundDetector.start()
+        self.collectGraidData.start()
 
             
 
@@ -120,6 +123,24 @@ class Detector(commands.GroupCog, name="detector"):
             self.untainteddata = new_data
         except Exception as e: # For one of the many errors
             logger.error(f"Unhandled exception in Detector: {e}", exc_info=True)
+
+    @tasks.loop(seconds=60)
+    async def collectGraidData(self): # technically this doesnt belong in detector... but its for sure detecting shit.
+        try:
+            if not self.EligibleGuilds: #init lvl 100 guilds
+                success, r = makeRequest("https://api.wynncraft.com/v3/leaderboards/guildLevel")
+                if not success:
+                    logger.error(f"Unsucessful request in collectGraidData: {success}")
+                for num, data in (r.json()).items():
+                    if int(data["level"]) >= 100:
+                        self.EligibleGuilds.append(data["prefix"])
+                    else:
+                        break
+                with shelve.open(self.graidFilePath) as db:
+                    db['EligibleGuilds'] = self.EligibleGuilds
+            await asyncio.to_thread(detect_graids, self.EligibleGuilds)
+        except Exception as e: # For one of the many errors
+            logger.error(f"Unhandled exception in collectGraidData: {e}", exc_info=True)
 
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):
