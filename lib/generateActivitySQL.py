@@ -3,7 +3,7 @@ import requests
 import time
 import csv
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil.relativedelta import relativedelta
 import os
 import asyncio
@@ -11,12 +11,12 @@ import zipfile
 import platform
 import logging
 import logging.handlers
+import re
 def get_utc_now():
     if platform.system() == "Windows":
         return datetime.utcnow()
     return datetime.now(pytz.UTC)
 
-#TODO: Fix when nori ratelimit hits and we use too all retries the script just stopping
 #TODO: Eventuall rewrite this entire script, as to fix shit, make it easier to understand, and whatnot
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,82 +35,107 @@ dt_fmt = '%Y-%m-%d %H:%M:%S'
 formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+noriRouteCooldowns = {}
+player_request_count = 0
 
 
-
-def makeRequest(url): # the world is built on nested if else statements.
+def makeRequest(url):
+    global noriRouteCooldowns
     session = requests.Session()
     session.trust_env = False
-    apiSwapDict = { # ts pmo icl
-        "https://api.wynncraft.com/v3/guild/list/territory{}": "https://api.wynncraft.com/v3/guild/list/territory{}", # they call me the goat of hacks.
-        "https://api.wynncraft.com/v3/guild/uuid/{}": "https://api.wynncraft.com/v3/guild/uuid/{}", # wait, i got one more in me
-        "https://api.wynncraft.com/v3/guild/prefix/{}": "https://nori.fish/api/guild/{}",
-        "https://api.wynncraft.com/v3/guild/{}": "https://nori.fish/api/guild/{}",
-        "https://api.wynncraft.com/v3/player/{}": "https://nori.fish/api/player/{}",# Currently i'd like to save this for player activity sql
-    }
-        
-    usingWynnAPI = True  # Default to official
-    for wynn, nori in apiSwapDict.items():
-        wynnPrefix = wynn.split("{}")[0] # just the beginning of url before {}
-        if url.startswith(wynnPrefix):
-            suffix = url[len(wynnPrefix):]  # Extract suffix from official URL
-            url = nori.format(suffix)
-            usingWynnAPI = False
+
+    # URL's not worth swapping, because they are too differerent of responses and/or they have little-to-no api impact
+    # https://api\.wynncraft\.com/v3/leaderboards/guildLevel
+    apiSwapList = [
+        (r"^https://api\.wynncraft\.com/v3/guild/prefix/([^/]+)$", "https://nori.fish/api/guild/{}"),
+        (r"^https://api\.wynncraft\.com/v3/guild/([^/]+)$", "https://nori.fish/api/guild/{}"),
+        (r"^https://api\.wynncraft\.com/v3/player/([^/]+)$", "https://nori.fish/api/player/{}"),
+        #(r"^https://api\.wynncraft\.com/v3/leaderboards/guildLevel$", "https://nori.fish/api/leaderboard/guild/guildLevel"),
+    ]
+
+    originalURL = url
+    usingWynnAPI = True # Default to official
+    route_prefix = None
+    suffix = None
+
+    for pattern, noriTemplate in apiSwapList: # swap shit out
+        match = re.fullmatch(pattern, url)
+        if match:
+            route_prefix = pattern
+            cooldown = noriRouteCooldowns.get(route_prefix)
+            if not cooldown or datetime.now(timezone.utc) >= cooldown:
+                if match.groups():
+                    suffix = match.group(1)
+                    url = noriTemplate.format(suffix)
+                else:
+                    url = noriTemplate
+                usingWynnAPI = False
             break
 
     retries = 0
-    maxRetries = 10
+    maxRetries = 5
 
     while retries < maxRetries:
         try:
-            r = session.get(url)
-            # Nori currently doesnt support multiple responses, itll just go code 500
+            r = session.get(url, timeout=30)
             if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
                 if "/guild/" in url: # In guild endpoint, just select the first option.
                     jsonData = r.json()
                     prefix = jsonData[next(iter(jsonData))]["prefix"]
-                    success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
-                    return success, r
-                if "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
+                    return makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
+                elif "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
                     jsonData = r.json()
                     username = jsonData[list(jsonData)[-1]]["storedName"]
-                    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}")   
-                    return success, r
+                    return makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")   
+
+            elif r.status_code == 429 or "API rate limit exceeded" in str(r.text): # Nori's way of telling us we're cut off.
+                if route_prefix:
+                    noriRouteCooldowns[route_prefix] = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1) # wait until the minute passes
+                    logger.warning(f"Nori route {route_prefix} is now on cooldown until {noriRouteCooldowns[route_prefix].isoformat()}")
+                usingWynnAPI = True
+                url = originalURL
+                time.sleep(0.5)
+                continue
 
             elif r.status_code >= 400:
-                raise requests.exceptions.HTTPError(request=r) # we send the bad requests to hell
+                r.raise_for_status() # we send the bad requests to hell
+
+            if usingWynnAPI:
+                remaining = int(r.headers.get("ratelimit-remaining", 120))
+                if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
+                    logger.warning("WynnAPI ratelimit <12. PANIC!!")
+                    time.sleep(2)
+                elif remaining < 30:
+                    logger.warning("WynnAPI ratelimit <30. PANIC!!")
+                    time.sleep(1)
+                elif remaining < 60:
+                    time.sleep(0.5)
             else:
-                if usingWynnAPI:
-                    remaining = int(r.headers.get("ratelimit-remaining", 120)) # if we cant get it, act like its 120
-                    if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
-                        logger.warning("We are under 12. PANIC!!")
-                        time.sleep(2)
-                    elif remaining < 30:
-                        logger.warning("We are under 30. PANIC!!")
-                        time.sleep(0.75)
-                    elif remaining < 60:
-                        time.sleep(0.25)
-                else: # Nori api doesnt have ratelimit headers yet, but we know ratelimits are usually 3/s
-                    if "API rate limit exceeded" in str(r.json()): # Nori doesnt like to tell us when we've hit our limit, so we gotta infer
-                        retries += 1
-                        time.sleep(2.5)
-                        continue
-                    time.sleep(0.6) 
-                return True, r
+                time.sleep(0.5) # A base 0.5s sleep seems right for nori
+
+            return True, r
+
         except requests.exceptions.RequestException as err:
             status = getattr(err.response, 'status_code', None)
-            retryable = [408, 425, 429, 500, 502, 503, 504]
-            if status in retryable: # if its retryable, retry. idk why i had to make this comment.
-                logger.warning(f"{url} failed with {status}. Current retry is at {retries}.")
+            retryable = [408, 425, 500, 502, 503, 504]
+
+            if not usingWynnAPI and status in retryable: # nori sometimes 500's, so if it happens just switch back to ol reliable
+                logger.error(f"Nori URL {url} failed with status code {status}. Retry {retries}.")
+                retries += 1
+                usingWynnAPI = True
+                url = originalURL
+                continue
+
+            if status in retryable:
+                logger.error(f"{url} failed with status code {status}. Retry {retries}.")
                 retries += 1
                 time.sleep(2)
                 continue
             else:
                 logger.error(f"Non-retryable error {status} for {url}: {err}")
-                return False, {} 
-
-    logger.error(f"Max retries exceeded for {url}")
-    return False, {} 
+                return False, {}
+    logger.error(f"Hit maximum retries for {originalURL}.")
+    return False, {}
 
 
 def connect_to_db():
@@ -202,7 +227,9 @@ def connect_to_player_db():
     return conn
 
 def fetch_and_store_player_data(player_db_conn, uuid):
-    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{uuid}")
+    global player_request_count
+    player_request_count += 1
+    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{uuid}?fullResult")
     if not success:
         logger.error(f"Unsuccessful request! Success is {success}, r is {r}, r.json() is {r.json()}")
     try:
@@ -654,7 +681,7 @@ def main():
                     if member["online"]:
                         fetch_and_store_player_data(player_db_conn, member["uuid"])
 
-            time.sleep(0.33)  # Rate limit ourselves
+            time.sleep(0.6)  # Rate limit ourselves
 
     except Exception as e:
         logger.info(f"Error in main data collection: {e}")
@@ -726,6 +753,7 @@ def vacuum_database(conn):
         raise
 
 async def scheduled_main():
+    global player_request_count
     vacuum = False
     while True:
         start_time = datetime.now()
@@ -745,6 +773,8 @@ async def scheduled_main():
                 analyze_database_performance(conn)
             cleanup_database(conn)
             logger.info("Scheduled run completed successfully")
+            logger.info(f"Player API requests made this run: {player_request_count}")
+            player_request_count = 0
         except Exception as e:
             logger.error(f"Error during scheduled run: {e}")
         

@@ -354,7 +354,7 @@ class Guild(commands.GroupCog, name="guild"):
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 24 hours")
+            await interaction.followup.send("No data available for the last 3 days")
 
     @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed in the past 14 days.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
@@ -429,17 +429,18 @@ class Guild(commands.GroupCog, name="guild"):
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        await interaction.response.defer()
         
         if name:
             if name not in self.EligibleGuilds:# Guilds above lvl 100
-                await interaction.followup.send_message(f"The guild provided is not at or above level 100. If this is a mistake, please report this bug on github.",ephemeral=True)
+                await interaction.response.send_message(f"The guild provided is not at or above level 100. If this is a mistake, please report this bug on github.",ephemeral=True)
                 return  
             else:
+                await interaction.response.defer()
                 data = await asyncio.to_thread(guildLeaderGraidsButGuildSpecific, name)
                 num = len(data)
                 view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids", "Guild Raids")
         else:
+            await interaction.response.defer()
             data = await asyncio.to_thread(guildLeaderGraids)
             num = len(data)
             view = LeaderboardPaginator(data, f"Top {num} Guilds by Guild Raids", "Guild Raids")

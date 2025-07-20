@@ -20,7 +20,6 @@ class Detector(commands.GroupCog, name="detector"):
         self.bot = bot
         self.guildsBeingTracked = {}
         self.timesinceping = {}
-        self.hasbeenran = {}
         self.expectedterrcount = {}
         self.untainteddata = {}
         self.untainteddataOLD = {}
@@ -58,14 +57,6 @@ class Detector(commands.GroupCog, name="detector"):
                 
             new_data = r.json()
             
-            # Initialize expected territory counts for all tracked guilds
-            for guildID, configList in self.guildsBeingTracked.items():
-                for config in configList:
-                    guildPrefix = config['guildPrefix']
-                    key = (guildID, guildPrefix)
-                    if guildPrefix not in self.expectedterrcount and guildPrefix.lower() != "global":
-                        self.expectedterrcount[guildPrefix] = sum(1 for data in new_data.values() if data["guild"]["prefix"] == guildPrefix) # Fixes guilds like Aeq being doubled, since it'd hit both Aeq and Aequatis, or whatver their dumbass name is.
-                        self.hasbeenran[key] = True
             
             # Only process territory checks if we have both current and old data
             if self.untainteddata:  # Only if we already have some data
@@ -95,6 +86,10 @@ class Detector(commands.GroupCog, name="detector"):
                     configList = self.guildsBeingTracked[guildID]
                     for config in configList:
                         guildPrefix = config['guildPrefix']
+                        key = (guildID, guildPrefix)
+                        if guildPrefix.lower() != "global" and key not in self.expectedterrcount:
+                            self.expectedterrcount[key] = sum(1 for d in new_data.values()if d["guild"]["prefix"] == guildPrefix)
+
                         pingRoleID = config["pingRoleID"]
                         #logger.info(f"guildPrefix: {guildPrefix}")
                         try:
@@ -107,7 +102,7 @@ class Detector(commands.GroupCog, name="detector"):
                         intervalForPing = config["intervalForPing"]
                         
                         # Check territories using current and old data
-                        messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.hasbeenran, self.timesinceping, guildID)
+                        messagesToSend = await asyncio.to_thread(checkterritories, new_data, old_data, guildPrefix, pingRoleID, self.expectedterrcount, intervalForPing, self.timesinceping, guildID)
                         #logger.info(f"messagesToSend: {messagesToSend}")
                         if messagesToSend:
                             for message_info in messagesToSend:
@@ -118,7 +113,6 @@ class Detector(commands.GroupCog, name="detector"):
                                         await channelForMessages.send(f"<@&{message_info['roleID']}>")
                                 except discord.DiscordException as err:
                                     logger.error(f"Error sending message: {err}")
-            
             # Update the current data for next iteration
             self.untainteddata = new_data
         except Exception as e: # For one of the many errors
@@ -128,7 +122,7 @@ class Detector(commands.GroupCog, name="detector"):
     async def collectGraidData(self): # technically this doesnt belong in detector... but its for sure detecting shit.
         try:
             if not self.EligibleGuilds: #init lvl 100 guilds
-                success, r = makeRequest("https://api.wynncraft.com/v3/leaderboards/guildLevel")
+                success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/leaderboards/guildLevel")
                 if not success:
                     logger.error(f"Unsucessful request in collectGraidData: {success}")
                 for num, data in (r.json()).items():

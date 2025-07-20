@@ -21,6 +21,7 @@ from io import BytesIO
 import shelve
 import difflib
 import matplotlib.cm as cm
+import re
   
 logger = logging.getLogger('discord')
 
@@ -31,29 +32,43 @@ territoryFilePath = os.path.join(rootDir, 'database', 'territory')
 graidFilePath = os.path.join(rootDir, 'database', 'graid')
 with shelve.open(graidFilePath) as db:
     confirmedGRaid = db.get('guild_raids', {})
+noriRouteCooldowns = {}
 
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
-def makeRequest(url): # the world is built on nested if else statements.
+def makeRequest(url):
+    global noriRouteCooldowns
     session = requests.Session()
     session.trust_env = False
-    apiSwapDict = { # ts pmo icl; also we'd like to use nori as a choice, but with player db using nori, it simply is too straining since we cant know the rate limit.
-        "https://api.wynncraft.com/v3/guild/list/territory{}": "https://api.wynncraft.com/v3/guild/list/territory{}", # they call me the goat of hacks.
-        "https://api.wynncraft.com/v3/guild/uuid/{}": "https://api.wynncraft.com/v3/guild/uuid/{}", # wait, i got one more in me
-        #"https://api.wynncraft.com/v3/guild/prefix/{}": "https://nori.fish/api/guild/{}",
-        #"https://api.wynncraft.com/v3/guild/{}": "https://nori.fish/api/guild/{}",
-        # "https://api.wynncraft.com/v3/player/{}": "https://nori.fish/api/player/{}", Currently i'd like to save this for player activity sql
-    }
-        
-    usingWynnAPI = True  # Default to official
-    for wynn, nori in apiSwapDict.items():
-        wynnPrefix = wynn.split("{}")[0] # just the beginning of url before {}
-        if url.startswith(wynnPrefix):
-            suffix = url[len(wynnPrefix):]  # Extract suffix from official URL
-            url = nori.format(suffix)
-            usingWynnAPI = False
+
+    # URL's not worth swapping, because they are too differerent of responses and/or they have little-to-no api impact
+    # https://api\.wynncraft\.com/v3/leaderboards/guildLevel
+    apiSwapList = [
+        #(r"^https://api\.wynncraft\.com/v3/guild/prefix/([^/]+)$", "https://nori.fish/api/guild/{}"), Currently nori's api is fucked with guild searches, 500 codes, just forget about it
+        #(r"^https://api\.wynncraft\.com/v3/guild/([^/]+)$", "https://nori.fish/api/guild/{}"),
+        (r"^https://api\.wynncraft\.com/v3/player/([^/]+)$", "https://nori.fish/api/player/{}"),
+        #(r"^https://api\.wynncraft\.com/v3/leaderboards/guildLevel$", "https://nori.fish/api/leaderboard/guild/guildLevel"),
+    ]
+
+    originalURL = url
+    usingWynnAPI = True # Default to official
+    route_prefix = None
+    suffix = None
+
+    for pattern, noriTemplate in apiSwapList: # swap shit out
+        match = re.fullmatch(pattern, url)
+        if match:
+            route_prefix = pattern
+            cooldown = noriRouteCooldowns.get(route_prefix)
+            if not cooldown or datetime.now(timezone.utc) >= cooldown:
+                if match.groups():
+                    suffix = match.group(1)
+                    url = noriTemplate.format(suffix)
+                else:
+                    url = noriTemplate
+                usingWynnAPI = False
             break
 
     retries = 0
@@ -62,53 +77,71 @@ def makeRequest(url): # the world is built on nested if else statements.
     while retries < maxRetries:
         try:
             r = session.get(url, timeout=30)
-            # Nori currently doesnt support multiple responses, itll just go code 500
             if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
                 if "/guild/" in url: # In guild endpoint, just select the first option.
                     jsonData = r.json()
                     prefix = jsonData[next(iter(jsonData))]["prefix"]
-                    success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
-                    return success, r
-                if "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
+                    return makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
+                elif "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
                     jsonData = r.json()
                     username = jsonData[list(jsonData)[-1]]["storedName"]
-                    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}")   
-                    return success, r
+                    return makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")   
+
+            elif r.status_code == 429 or "API rate limit exceeded" in str(r.text): # Nori's way of telling us we're cut off.
+                if route_prefix:
+                    noriRouteCooldowns[route_prefix] = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1) # wait until the minute passes
+                    logger.warning(f"Nori route {route_prefix} is now on cooldown until {noriRouteCooldowns[route_prefix].isoformat()}")
+                usingWynnAPI = True
+                url = originalURL
+                time.sleep(0.5)
+                continue
 
             elif r.status_code >= 400:
-                raise requests.exceptions.HTTPError(request=r) # we send the bad requests to hell
+                r.raise_for_status() # we send the bad requests to hell
+
+            if usingWynnAPI:
+                remaining = int(r.headers.get("ratelimit-remaining", 120))
+                if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
+                    logger.warning("WynnAPI ratelimit <12. PANIC!!")
+                    time.sleep(2)
+                elif remaining < 30:
+                    logger.warning("WynnAPI ratelimit <30. PANIC!!")
+                    time.sleep(1)
+                elif remaining < 60:
+                    time.sleep(0.5)
             else:
-                if usingWynnAPI:
-                    remaining = int(r.headers.get("ratelimit-remaining", 120)) # if we cant get it, act like its 120
-                    if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
-                        logger.warning("We are under 12. PANIC!!")
-                        time.sleep(2)
-                    elif remaining < 30:
-                        logger.warning("We are under 30. PANIC!!")
-                        time.sleep(0.75)
-                    elif remaining < 60:
-                        time.sleep(0.25)
-                else: # Nori api doesnt have ratelimit headers yet, but we know ratelimits are usually 3/s
-                    if "API rate limit exceeded" in str(r.json()): # Nori doesnt like to tell us when we've hit our limit, so we gotta infer
-                        retries += 1
-                        time.sleep(2)
-                        continue
-                    time.sleep(0.6) 
-                return True, r
+                time.sleep(0.5) # A base 0.5s sleep seems right for nori
+
+            return True, r
+
         except requests.exceptions.RequestException as err:
             status = getattr(err.response, 'status_code', None)
-            retryable = [408, 425, 429, 500, 502, 503, 504]
-            if status in retryable: # if its retryable, retry. idk why i had to make this comment.
-                logger.warning(f"{url} failed with {status}. Current retry is at {retries}.")
+            retryable = [408, 425, 500, 502, 503, 504]
+
+            if not usingWynnAPI:
+                if status in retryable: # nori sometimes 500's, so if it happens just switch back to ol reliable
+                    logger.error(f"Nori URL {url} failed with status code {status}. Retry {retries}.")
+                    retries += 1
+                    usingWynnAPI = True
+                    url = originalURL
+                    continue
+                if "NameResolutionError" in str(err): # im getting a few dns errors on nori
+                    logger.warning(f"DNS failure on Nori API, switching to official API for {originalURL}")
+                    usingWynnAPI = True
+                    url = originalURL
+                    retries += 1
+                    continue
+            
+            if status in retryable:
+                logger.error(f"{url} failed with status code {status}. Retry {retries}.")
                 retries += 1
                 time.sleep(2)
                 continue
             else:
                 logger.error(f"Non-retryable error {status} for {url}: {err}")
-                return False, {} 
-
-    logger.error(f"Max retries exceeded for {url}")
-    return False, {} 
+                return False, {}
+    logger.error(f"Hit maximum retries for {originalURL}.")
+    return False, {}
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
@@ -170,7 +203,7 @@ def findAttackingMembers(attacker):
         for i in onlineMembers:
             success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
             if not success:
-                print("Unsuccessful request in findAttackingMembers - 2.")
+                logger.error("Unsuccessful request in findAttackingMembers - 2.")
                 return [["Unknown", "Unknown", 1738]]
             json = r.json()
             #logger.info(f"json: {json}")
@@ -254,12 +287,19 @@ def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore
         "roleID": pingRoleID if shouldPing  else None
     }
 
-def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, hasbeenran, timesinceping, guildID):
+def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, timesinceping, guildID):
     gainedTerritories = {}
     lostTerritories = {}
     terrcount = {}
     messagesToSend = []
     key = (guildID, guildPrefix)
+    
+    if guildPrefix.lower() != 'global' and key not in expectedterrcount:
+        expectedterrcount[key] = sum(
+            1 for d in untainteddata.values() if d['guild']['prefix'] == guildPrefix
+        )
+
+    current = expectedterrcount.get(key, 0)
     
     for territory, data in untainteddata.items():
         old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
@@ -306,39 +346,69 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
                     "roleID": pingRoleID if shouldPing  else None
                 })
         return messagesToSend
-    terrcount[guildPrefix] = expectedterrcount[guildPrefix] # this is what will fix (40 -> 38)
-    if lostTerritories: # checks if its empty, no need to run if it is
-        for i in lostTerritories:
-            reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
-            timestamp = reworkedDate.timestamp()
-            reworkedDateNew = datetime.fromisoformat(lostTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
-            timestampNew = reworkedDateNew.timestamp() 
-            elapsed_time = int(timestampNew) - int(timestamp)
-            
-            opponentTerrCountBefore = sum(1 for data in untainteddataOLD.values()if data["guild"]["prefix"] == lostTerritories[str(i)]['guild']['prefix'])
-            opponentTerrCountAfter = sum(1 for data in untainteddata.values()if data["guild"]["prefix"] == lostTerritories[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            terrcount[guildPrefix] -= 1
-            embedInfo = sendEmbed(lostTerritories[i]['guild']['prefix'], guildPrefix, i, human_time_duration(elapsed_time), str(opponentTerrCountBefore), str(opponentTerrCountAfter), str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID)
-            messagesToSend.append(embedInfo)
-            expectedterrcount[guildPrefix] = terrcount[guildPrefix]
-    if gainedTerritories: # checks if its empty, no need to run if it is
-        for i in gainedTerritories:
-            reworkedDate = datetime.fromisoformat(untainteddataOLD[i]['acquired'].replace("Z", "+00:00")) # gets the time from the old data
-            timestamp = reworkedDate.timestamp()
-            reworkedDateNew = datetime.fromisoformat(gainedTerritories[i]['acquired'].replace("Z", "+00:00")) # gets the time from the new data
-            timestampNew = reworkedDateNew.timestamp() 
-            elapsed_time = int(timestampNew)- int(timestamp)
-            
-            opponentTerrCountBefore = sum(1 for data in untainteddataOLD.values()if data["guild"]["prefix"] == untainteddataOLD[str(i)]['guild']['prefix'])
-            opponentTerrCountAfter = sum(1 for data in untainteddata.values()if data["guild"]["prefix"] == untainteddataOLD[str(i)]['guild']['prefix']) # this will maybe just be wrong if multiple were taken within 11s.
-            terrcount[guildPrefix]+=1
-            embedInfo = sendEmbed(guildPrefix, untainteddataOLD[i]['guild']['prefix'], i, human_time_duration(elapsed_time),str(expectedterrcount[guildPrefix]), str(terrcount[guildPrefix]), str(opponentTerrCountBefore), str(opponentTerrCountAfter), guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID)
-            messagesToSend.append(embedInfo)
-            expectedterrcount[guildPrefix] = terrcount[guildPrefix]
-    if gainedTerritories or lostTerritories: # just for resetting our variables
-        hasbeenran[key] = False
-    else:
-        hasbeenran[key] = True
+    terrcount[key] = expectedterrcount[key] # this is what will fix (40 -> 38)
+    for t, data in lostTerritories.items():
+        old_ts = datetime.fromisoformat(untainteddataOLD[t]['acquired'].replace('Z', '+00:00'))
+        new_ts = datetime.fromisoformat(data['acquired'].replace('Z', '+00:00'))
+        elapsed_time = int(new_ts.timestamp() - old_ts.timestamp())
+
+        current -= 1
+
+        opponent_before = sum(1 for d in untainteddataOLD.values() if d['guild']['prefix'] == data['guild']['prefix'])
+        opponent_after = sum(1 for d in untainteddata.values() if d['guild']['prefix'] == data['guild']['prefix'])
+
+        messagesToSend.append(sendEmbed(
+                data['guild']['prefix'],
+                guildPrefix,
+                t,
+                human_time_duration(elapsed_time),
+                str(opponent_before),
+                str(opponent_after),
+                str(current + 1),
+                str(current),
+                guildPrefix,
+                pingRoleID,
+                intervalForPing,
+                timesinceping,
+                guildID,
+            )
+        )
+
+    # GAINED territories
+    for t, data in gainedTerritories.items():
+        old_ts = datetime.fromisoformat(untainteddataOLD[t]['acquired'].replace('Z', '+00:00'))
+        new_ts = datetime.fromisoformat(data['acquired'].replace('Z', '+00:00'))
+        elapsed_time = int(new_ts.timestamp() - old_ts.timestamp())
+
+        current += 1
+        prev_owner = untainteddataOLD[t]['guild']['prefix']
+
+        opponent_before = sum(1 for d in untainteddataOLD.values() if d['guild']['prefix'] == prev_owner)
+        opponent_after = sum(1 for d in untainteddata.values() if d['guild']['prefix'] == prev_owner)
+
+        messagesToSend.append(
+            sendEmbed(
+                guildPrefix,
+                prev_owner,
+                t,
+                human_time_duration(elapsed_time),
+                str(current - 1),
+                str(current),
+                str(opponent_before),
+                str(opponent_after),
+                guildPrefix,
+                pingRoleID,
+                intervalForPing,
+                timesinceping,
+                guildID,
+            )
+        )
+
+    # update the shared counter for next tick
+    if guildPrefix.lower() != 'global':
+        expectedterrcount[key] = current
+
+
     return messagesToSend
 
 def printTop3(list, word, word2):
@@ -828,7 +898,7 @@ def guildActivityOnlineMembers(guild_uuid, name):
     
     overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
 
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(18, 6))
     plt.plot(times, raw_numbers, '-', label='Average Online Member Count', color=blue, lw=3)
     plt.fill_between(times, 0, raw_numbers, alpha=0.3)
     plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
@@ -2602,45 +2672,45 @@ def guildLeaderboardOnlineButGuildSpecific(guild_uuid):
             FROM users
             WHERE timestamp >= datetime('now', '-7 day') AND guildUUID = ?
         ),
-        recent_wars AS (
-            SELECT uuid, timestamp, wars
-            FROM users_global
+        recent_playtime AS (
+            SELECT uuid, timestamp, playtime
+            FROM users
             WHERE timestamp >= datetime('now', '-7 day')
         ),
-        ranked_wars AS (
+        ranked_playtime AS (
             SELECT
-                rw.uuid,
-                rw.wars,
-                rw.timestamp,
-                ROW_NUMBER() OVER (PARTITION BY rw.uuid ORDER BY rw.timestamp ASC) AS rn_start,
-                ROW_NUMBER() OVER (PARTITION BY rw.uuid ORDER BY rw.timestamp DESC) AS rn_end
-            FROM recent_wars rw
+                rp.uuid,
+                rp.playtime,
+                rp.timestamp,
+                ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp ASC) AS rn_start,
+                ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp DESC) AS rn_end
+            FROM recent_playtime rp
         ),
-        wars_start AS (
-            SELECT uuid, wars AS wars_start
-            FROM ranked_wars
+        playtime_start AS (
+            SELECT uuid, playtime AS playtime_start
+            FROM ranked_playtime
             WHERE rn_start = 1
         ),
-        wars_end AS (
-            SELECT uuid, wars AS wars_end
-            FROM ranked_wars
+        playtime_end AS (
+            SELECT uuid, playtime AS playtime_end
+            FROM ranked_playtime
             WHERE rn_end = 1
         ),
-        wars_diff AS (
+        playtime_diff AS (
             SELECT 
                 ru.username,
-                we.uuid,
-                (we.wars_end - ws.wars_start) AS wars_gained
-            FROM wars_start ws
-            JOIN wars_end we ON ws.uuid = we.uuid
-            JOIN recent_users ru ON ru.uuid = ws.uuid
+                pe.uuid,
+                ROUND((pe.playtime_end - ps.playtime_start) / 7.0, 2) AS avg_daily_hours
+            FROM playtime_start ps
+            JOIN playtime_end pe ON ps.uuid = pe.uuid
+            JOIN recent_users ru ON ru.uuid = ps.uuid
         )
         SELECT 
             username,
-            wars_gained,
-            RANK() OVER (ORDER BY wars_gained DESC) AS rank
-        FROM wars_diff
-        ORDER BY wars_gained DESC
+            avg_daily_hours,
+            RANK() OVER (ORDER BY avg_daily_hours DESC) AS rank
+        FROM playtime_diff
+        ORDER BY avg_daily_hours DESC
         LIMIT 100;
     """, (guild_uuid,))
     snapshots = cursor.fetchall()
