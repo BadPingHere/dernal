@@ -106,8 +106,12 @@ async def on_ready():
 
 async def load_cogs():
     logger.info("Loading bot cogs:")
+    dashboardEnabled = os.getenv("DASHBOARD", "0") == "1"
     for filename in os.listdir('./cogs'): # gets commands (cogs(why is it called cogs))
         if filename.endswith('.py'):
+            if filename == "metrics.py" and not dashboardEnabled:
+                logger.info(f"Skipping Cog: {filename[:-3]} (dashboard disabled)")
+                continue
             try:
                 await bot.load_extension(f'cogs.{filename[:-3]}')
                 logger.info(f'Loaded Cog: {filename[:-3]}')
