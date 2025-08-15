@@ -2,13 +2,12 @@
 
 alive-progress==3.1.5
 discord.py==2.5.2
-Flask==3.1.1
-Flask-Cors==5.0.0
 matplotlib==3.9.2
-pillow==11.0.0
+pillow==11.2.1
+prometheus_client==0.22.1
 psutil==6.1.1
 python-dateutil==2.8.2
 python-dotenv==1.0.1
 pytz==2024.2
-requests==2.32.3
+requests==2.32.4
 seaborn==0.13.2
