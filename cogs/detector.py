@@ -6,7 +6,8 @@ import logging
 import os
 import shelve
 from dotenv import load_dotenv
-from lib.utils import checkterritories, makeRequest, detect_graids
+from lib.utils import checkterritories, detect_graids
+from lib.makeRequest import makeRequest
 import asyncio
 from datetime import datetime
 
@@ -47,8 +48,7 @@ class Detector(commands.GroupCog, name="detector"):
 
             with shelve.open(self.detectorFilePath) as detectorStorage:
                 self.guildsBeingTracked = dict(detectorStorage)
-        
-
+         
             # Get new data
             success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
             if not success:
@@ -56,7 +56,6 @@ class Detector(commands.GroupCog, name="detector"):
                 return
                 
             new_data = r.json()
-            
             
             # Only process territory checks if we have both current and old data
             if self.untainteddata:  # Only if we already have some data
@@ -121,12 +120,12 @@ class Detector(commands.GroupCog, name="detector"):
     @tasks.loop(seconds=60)
     async def collectGraidData(self): # technically this doesnt belong in detector... but its for sure detecting shit.
         try:
-            if not self.EligibleGuilds: #init lvl 100 guilds
+            if not self.EligibleGuilds: #init lvl 80 guilds
                 success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/leaderboards/guildLevel")
                 if not success:
                     logger.error(f"Unsucessful request in collectGraidData: {success}")
                 for num, data in (r.json()).items():
-                    if int(data["level"]) >= 100:
+                    if int(data["level"]) >= 80:
                         self.EligibleGuilds.append(data["prefix"])
                     else:
                         break

@@ -1,17 +1,20 @@
 import pytz
-import requests
 import time
 import csv
 import sqlite3
-from datetime import datetime, timedelta, timezone
-from dateutil.relativedelta import relativedelta
+from datetime import datetime, timedelta
 import os
 import asyncio
 import zipfile
 import platform
 import logging
 import logging.handlers
-import re
+import math
+import sys
+import traceback
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from lib.makeRequest import makeRequest
 def get_utc_now():
     if platform.system() == "Windows":
         return datetime.utcnow()
@@ -35,108 +38,6 @@ dt_fmt = '%Y-%m-%d %H:%M:%S'
 formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
-noriRouteCooldowns = {}
-player_request_count = 0
-
-
-def makeRequest(url):
-    global noriRouteCooldowns
-    session = requests.Session()
-    session.trust_env = False
-
-    # URL's not worth swapping, because they are too differerent of responses and/or they have little-to-no api impact
-    # https://api\.wynncraft\.com/v3/leaderboards/guildLevel
-    apiSwapList = [
-        (r"^https://api\.wynncraft\.com/v3/guild/prefix/([^/]+)$", "https://nori.fish/api/guild/{}"),
-        (r"^https://api\.wynncraft\.com/v3/guild/([^/]+)$", "https://nori.fish/api/guild/{}"),
-        (r"^https://api\.wynncraft\.com/v3/player/([^/]+)$", "https://nori.fish/api/player/{}"),
-        #(r"^https://api\.wynncraft\.com/v3/leaderboards/guildLevel$", "https://nori.fish/api/leaderboard/guild/guildLevel"),
-    ]
-
-    originalURL = url
-    usingWynnAPI = True # Default to official
-    route_prefix = None
-    suffix = None
-
-    for pattern, noriTemplate in apiSwapList: # swap shit out
-        match = re.fullmatch(pattern, url)
-        if match:
-            route_prefix = pattern
-            cooldown = noriRouteCooldowns.get(route_prefix)
-            if not cooldown or datetime.now(timezone.utc) >= cooldown:
-                if match.groups():
-                    suffix = match.group(1)
-                    url = noriTemplate.format(suffix)
-                else:
-                    url = noriTemplate
-                usingWynnAPI = False
-            break
-
-    retries = 0
-    maxRetries = 5
-
-    while retries < maxRetries:
-        try:
-            r = session.get(url, timeout=30)
-            if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
-                if "/guild/" in url: # In guild endpoint, just select the first option.
-                    jsonData = r.json()
-                    prefix = jsonData[next(iter(jsonData))]["prefix"]
-                    return makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
-                elif "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
-                    jsonData = r.json()
-                    username = jsonData[list(jsonData)[-1]]["storedName"]
-                    return makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")   
-
-            elif r.status_code == 429 or "API rate limit exceeded" in str(r.text): # Nori's way of telling us we're cut off.
-                if route_prefix:
-                    noriRouteCooldowns[route_prefix] = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1) # wait until the minute passes
-                    logger.warning(f"Nori route {route_prefix} is now on cooldown until {noriRouteCooldowns[route_prefix].isoformat()}")
-                usingWynnAPI = True
-                url = originalURL
-                time.sleep(0.5)
-                continue
-
-            elif r.status_code >= 400:
-                r.raise_for_status() # we send the bad requests to hell
-
-            if usingWynnAPI:
-                remaining = int(r.headers.get("ratelimit-remaining", 120))
-                if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
-                    logger.warning("WynnAPI ratelimit <12. PANIC!!")
-                    time.sleep(2)
-                elif remaining < 30:
-                    logger.warning("WynnAPI ratelimit <30. PANIC!!")
-                    time.sleep(1)
-                elif remaining < 60:
-                    time.sleep(0.5)
-            else:
-                time.sleep(0.5) # A base 0.5s sleep seems right for nori
-
-            return True, r
-
-        except requests.exceptions.RequestException as err:
-            status = getattr(err.response, 'status_code', None)
-            retryable = [408, 425, 500, 502, 503, 504]
-
-            if not usingWynnAPI and status in retryable: # nori sometimes 500's, so if it happens just switch back to ol reliable
-                logger.error(f"Nori URL {url} failed with status code {status}. Retry {retries}.")
-                retries += 1
-                usingWynnAPI = True
-                url = originalURL
-                continue
-
-            if status in retryable:
-                logger.error(f"{url} failed with status code {status}. Retry {retries}.")
-                retries += 1
-                time.sleep(2)
-                continue
-            else:
-                logger.error(f"Non-retryable error {status} for {url}: {err}")
-                return False, {}
-    logger.error(f"Hit maximum retries for {originalURL}.")
-    return False, {}
-
 
 def connect_to_db():
     logger.info("Connecting to database...")
@@ -226,66 +127,67 @@ def connect_to_player_db():
     conn.execute('CREATE INDEX IF NOT EXISTS idx_userscharacters_uuid_timestamp ON users_characters(uuid, timestamp);')
     return conn
 
-def fetch_and_store_player_data(player_db_conn, uuid):
-    global player_request_count
-    player_request_count += 1
-    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{uuid}?fullResult")
+def fetch_and_store_player_data(player_db_conn, username):
+    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
     if not success:
         logger.error(f"Unsuccessful request! Success is {success}, r is {r}, r.json() is {r.json()}")
     try:
-            jsonData = r.json()
+        jsonData = r.json()
+        restrictionsDict = jsonData["restrictions"]
+        # if restrictionsDict.get("characterBuildAccess") is True: # sp will be "skillPoints":{"error":"This player limits their skill points visibility."} 
 
-            if str(jsonData["online"]) == "True":
-                online = 1
-            else:
-                online = 0
-            if online == 1:
-                server = jsonData["server"]
-            else:
-                server = None
-
-            if jsonData["guild"] is None:
-                guildUUID = None
-            else:
-                guildUUID = jsonData["guild"]["uuid"]
-
-            if str(jsonData["publicProfile"]) == "True":
-                publicProfile = 1
-            else:
-                publicProfile = 0
-
-            player_db_conn.execute(
-                """
-                INSERT INTO users (username, uuid, timestamp, online, server, firstJoin, lastJoin, playtime, guildUUID, publicprofile, forumLink)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (jsonData["username"], uuid, get_utc_now().isoformat(), online, server, jsonData["firstJoin"], jsonData["lastJoin"], jsonData["playtime"], guildUUID, publicProfile, jsonData["forumLink"] )
-            )
-
-
+        if restrictionsDict.get("mainAccess") is True: # globalData gone, firstJoin gone, playtime gone, so we dont do those
+            firstJoin = None
+            playtime = -1 # I could None this too... but i dont want to.
+        else: # we have global data and whatnot, so we can get this shit done
+            firstJoin = jsonData["firstJoin"]
+            playtime = jsonData["playtime"]
             dungeonsDict = str(jsonData["globalData"]["dungeons"]["list"])
             raidsDict = str(jsonData["globalData"]["raids"]["list"])
             player_db_conn.execute(
-                """
-                INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests, pvpKills, pvpDeaths)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests, pvpKills, pvpDeaths)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (jsonData["username"], uuid, get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["killedMobs"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
+                (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["mobsKilled"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
             )
+            
+        if restrictionsDict.get("characterDataAccess") is False: # if true no character data, no reason to input
+            if 1 == 0: # uh just turning this off because we dont need this as it stands, more for future-proofing
+                for character in jsonData["characters"]:
+                    characterUUID =  character
+                    characterDict = str(jsonData["characters"][character])
+                    player_db_conn.execute(
+                        """
+                        INSERT INTO users_characters (username, uuid, timestamp, characterUUID, characterDict)
+                        VALUES (?, ?, ?, ?, ?)
+                    """,
+                        (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), characterUUID, characterDict)
+                            )
+        if str(jsonData["online"]) == "True":
+            online = 1
+        else:
+            online = 0
+        if online == 1:
+            server = jsonData["server"]
+        else:
+            server = None
 
-            for character in jsonData["characters"]:
-                characterUUID =  character
-                characterDict = str(jsonData["characters"][character])
-                player_db_conn.execute(
-                    """
-                    INSERT INTO users_characters (username, uuid, timestamp, characterUUID, characterDict)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
-                    (jsonData["username"], uuid, get_utc_now().isoformat(), characterUUID, characterDict)
-                )
+        if jsonData["guild"] is None:
+            guildUUID = None
+        else:
+            guildUUID = jsonData["guild"]["uuid"]
+
+        player_db_conn.execute(
+            """
+            INSERT INTO users (username, uuid, timestamp, online, server, firstJoin, lastJoin, playtime, guildUUID, restrictions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), online, server, firstJoin, jsonData["lastJoin"], playtime, guildUUID, str(jsonData["restrictions"]))
+        )
     except Exception as e:
-        logger.error(f"Unsuccessful request2! Success is {success}, r is {r}, r.json() is {r.json()}")
-        logger.error(f"Failed to fetch/store player {uuid}: {e}")
+        logger.error(f"Unsuccessful request2! Success is {success}, r is {r}.")
+        logger.error(f"Failed to fetch/store uuid {jsonData['uuid']}: {e}")
 
 def analyze_database_performance(conn):
     try:
@@ -655,36 +557,84 @@ def main():
 
     conn = connect_to_db()
     player_db_conn = connect_to_player_db()
+    if 1 == 0: # if we want to switch it out.. we can
+        player_db_conn.execute("""
+        CREATE TABLE users_new (
+            username TEXT,
+            uuid TEXT,
+            timestamp TEXT,
+            online INTEGER,
+            server TEXT,
+            firstJoin TEXT,
+            lastJoin TEXT,
+            playtime INTEGER,
+            guildUUID TEXT,
+            restrictions TEXT
+        );
+        """)
+        player_db_conn.execute("""
+        INSERT INTO users_new (
+            username, uuid, timestamp, online, server,
+            firstJoin, lastJoin, playtime, guildUUID, restrictions
+        )
+        SELECT
+            username, uuid, timestamp, online, server,
+            firstJoin, lastJoin, playtime, guildUUID, NULL
+        FROM users;
+        """)
 
+        player_db_conn.execute("DROP TABLE users;")
+        player_db_conn.execute("ALTER TABLE users_new RENAME TO users;")
+        conn.commit()
+        logger.info("Switchout successful!")
     try:
-        for i, uuid in enumerate(uuids, 1):
-            logger.info(f"Processing guild {i}/{len(uuids)} (UUID: {uuid})")
-            success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
-            if not success:
-                logger.info(f"Skipping guild {uuid} as it no longer exists")
-                continue
-            guild_data = r.json()
-            insert_or_update_guild(conn, guild_data)
-            insert_guild_snapshot(conn, guild_data)
-            insert_or_update_members(conn, guild_data["uuid"], guild_data["members"])
-            conn.commit()
+        # we do all this ratio bullshit to alleviate pressure on api endpoints, make them do 100/m for 20m rather than 200/m for 10m then 0/m for 10m.
+        success, r = makeRequest(f"https://api.wynncraft.com/v3/player")
+        if not success:
+            logger.info("Player list unavailable, giving up.") # this for sure wont happen but we gotta rock with it
+            players = []
+        else:
+            players_dict = r.json().get("players", {})
+            players = list(players_dict.keys()) 
 
-            # Fetch data for online players
-            #logger.info(f'guild_data["members"]: {guild_data["members"]}')
-            for role, members in guild_data["members"].items():
-                #logger.info(f'role: {role}')
-                #logger.info(f'members: {members}')
-                if role == "total":
-                    continue
-                for member in members.values():
-                    #logger.info(f'member: {member}')
-                    if member["online"]:
-                        fetch_and_store_player_data(player_db_conn, member["uuid"])
+        num_guilds = len(uuids)
+        num_players = len(players)
 
-            time.sleep(0.6)  # Rate limit ourselves
+        if num_guilds == 0:
+            ratio = 0
+        else:
+            ratio = num_players / num_guilds
+        guild_index = 0
+        player_index = 0
+        logger.info(f"Processing {num_guilds} guilds and {num_players} players (ratio ≈ {ratio:.2f})")
+        while guild_index < num_guilds or player_index < num_players:
+            if guild_index < num_guilds:
+                uuid = uuids[guild_index]
+                if guild_index % 25 == 0: # so we dont spam log...
+                    logger.info(f"Processing guild {guild_index+1}/{num_guilds} (UUID: {uuid})")
+                success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
+                if not success:
+                    logger.info(f"Skipping guild {uuid} as it no longer exists")
+                else:
+                    guild_data = r.json()
+                    insert_or_update_guild(conn, guild_data)
+                    insert_guild_snapshot(conn, guild_data)
+                    insert_or_update_members(conn, guild_data["uuid"], guild_data["members"])
+                    conn.commit()
+                    time.sleep(0.3) # Sleep every guild so we can stretch this out to 20m ish
+                guild_index += 1
 
-    except Exception as e:
-        logger.info(f"Error in main data collection: {e}")
+            num_players_to_do = math.ceil(ratio)
+            for _ in range(num_players_to_do):
+                if player_index >= num_players:
+                    break
+                username = players[player_index]
+                #logger.info(f"USERNAME: {username}")
+                fetch_and_store_player_data(player_db_conn, username)
+                player_index += 1
+
+    except Exception:
+        logger.exception("Error in main data collection:")
     finally:
         logger.info("Final WAL checkpoint for guild_activity.db...")
         conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
@@ -753,7 +703,6 @@ def vacuum_database(conn):
         raise
 
 async def scheduled_main():
-    global player_request_count
     vacuum = False
     while True:
         start_time = datetime.now()
@@ -773,8 +722,6 @@ async def scheduled_main():
                 analyze_database_performance(conn)
             cleanup_database(conn)
             logger.info("Scheduled run completed successfully")
-            logger.info(f"Player API requests made this run: {player_request_count}")
-            player_request_count = 0
         except Exception as e:
             logger.error(f"Error during scheduled run: {e}")
         

@@ -84,7 +84,6 @@ class LeaderboardPaginator(View):
 class Player(commands.GroupCog, name="player"):
     def __init__(self, bot):
         self.bot = bot
-        self.guildLookupCooldown = 0
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.")
@@ -93,15 +92,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityPlaytime(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         #logger.info("Tables:", cursor.fetchall())
@@ -112,7 +109,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -127,15 +124,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityContributions(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/guild_activity.db')
         cursor = conn.cursor()
         
@@ -161,15 +156,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityDungeons(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity dungeons was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -180,7 +173,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -195,15 +188,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityDungeonsPie(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity dungeons_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -214,7 +205,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -229,15 +220,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityRaids(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -248,7 +237,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -263,15 +252,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityRaidsPie(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity raids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -282,7 +269,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -297,15 +284,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityMobsKilled(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity mobs_killed was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
+        
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -316,7 +301,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -331,15 +316,12 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityWars(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         await interaction.response.defer()
-        self.guildLookupCooldown = current_time
         conn = sqlite3.connect('database/player_activity.db')
         cursor = conn.cursor()
         
@@ -350,7 +332,7 @@ class Player(commands.GroupCog, name="player"):
             result = cursor.fetchone()
     
         if not result:
-            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently, and in a supported guild.", ephemeral=True)
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
             conn.close()
             return
             
@@ -365,12 +347,10 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     async def activityGraids(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /player activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        current_time = time.time()
-        elapsed = current_time - self.guildLookupCooldown
-
-        if elapsed <= 5:
-            remaining = 5 - elapsed
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {remaining:.1f} more seconds.",ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return 
         with shelve.open(self.graidFilePath) as db:
             confirmedGRaid = db['guild_raids']

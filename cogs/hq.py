@@ -2,7 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
-from lib.utils import makeRequest, getTerritoryNames
+from lib.utils import getTerritoryNames
+from lib.makeRequest import makeRequest
 import logging
 import asyncio
 

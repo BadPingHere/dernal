@@ -3,7 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import time
-from lib.utils import rollGiveaway, makeRequest, checkCooldown
+from lib.utils import rollGiveaway, checkCooldown
+from lib.makeRequest import makeRequest
 import sqlite3
 import logging
 import math

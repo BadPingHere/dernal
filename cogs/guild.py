@@ -4,7 +4,8 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import makeRequest, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderGraids, guildLeaderGraidsButGuildSpecific, guildActivityGraids
+from lib.utils import checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderGraids, guildLeaderGraidsButGuildSpecific, guildActivityGraids
+from lib.makeRequest import makeRequest
 import sqlite3
 import logging
 import asyncio
@@ -156,7 +157,6 @@ class LeaderboardPaginator(View):
 class Guild(commands.GroupCog, name="guild"):
     def __init__(self, bot):
         self.bot = bot
-        self.guildLookupCooldown = 0
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
         with shelve.open(self.graidFilePath) as db:
@@ -559,10 +559,11 @@ class Guild(commands.GroupCog, name="guild"):
     async def overview(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild overview was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 5:
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
+
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -583,11 +584,11 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',) 
     async def inactivity(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        current_time = time.time()
-        if int(current_time - self.guildLookupCooldown) <= 120: # Inactivity is a bitch to run, so i'd like to discourage it with insane cooldowns
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {current_time - self.guildLookupCooldown} seconds.", ephemeral=True)
+        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
+
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        self.guildLookupCooldown = current_time
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -604,10 +605,7 @@ class Guild(commands.GroupCog, name="guild"):
         guildData = r.json()
         guildPrefix = guildData.get("prefix")
 
-        total_members = 0
-        for rank in guildData["members"]:
-            if isinstance(guildData["members"][rank], dict):
-                total_members += len(guildData["members"][rank])
+        total_members = guildData["members"]["total"]
         
         # Send initial progress message
         await interaction.response.defer()

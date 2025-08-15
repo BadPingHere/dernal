@@ -4,10 +4,13 @@ import logging
 import logging.handlers
 import asyncio
 import os
-from dotenv import load_dotenv
 import platform
 import requests
 import json
+from discord.ext.prometheus import PrometheusLoggingHandler
+
+#! 1: Add /guild online, to see who is online for a guild
+#! 2: Update /help. help me god i hate that system already
 
 # Set up logging
 logger = logging.getLogger('discord')
@@ -21,15 +24,12 @@ dt_fmt = '%Y-%m-%d %H:%M:%S'
 formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+prom_handler = PrometheusLoggingHandler()
+logger.addHandler(prom_handler)
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents) # i learned recently that this means people can run commands with @dernal command, and you can send me errors with @dernal message!
 
-# TODO:
-#? 1. Improve performance on database commands.
-#! 2. Add front-facing errors to ALL commands, no command should time out because of either a user or bot error.
-#! 3. Allow guilds to change the hardcoded weightings of giveaways.
-#! 4. Fix Inactivity and other long commands that can have too much chars
 
 def checkUpdates(localVersionFile='version.json'):
     try:
@@ -46,7 +46,6 @@ def checkUpdates(localVersionFile='version.json'):
             latestVersion = commits_data.get('sha', 'unknown')[:7] 
             releaseUrl = f"https://github.com/badpinghere/dernal/commits/main"
         
-        # Check local version
         if not os.path.exists(localVersionFile):
             with open(localVersionFile, 'w') as f:
                 json.dump({"version": latestVersion}, f)
@@ -83,7 +82,6 @@ async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
     logger.info('Syncing bot commands, this may take some time.')
 
-    #bot.tree.clear_commands(guild=None) 
     await bot.tree.sync(guild=None)
     logger.info("Command Tree is synced to global!")
     guild_id = os.getenv("SERVER_ID")
@@ -92,7 +90,6 @@ async def on_ready():
         #bot.tree.clear_commands(guild=guild) # this is legit only for one reason. because discord bots suck.
         await bot.tree.sync(guild=guild)
         logger.info(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
-
     logger.info('------')
     update_info = checkUpdates()
     if update_info.get('update_available', False):
@@ -121,7 +118,6 @@ async def load_cogs():
 async def main(): # idk why i couldnt explain it? maybe it was my past code but like this is not unexplainable
     async with bot:
         await load_cogs()
-        load_dotenv()
         await bot.start(os.getenv("TOKEN"))
 
 if __name__ == "__main__":

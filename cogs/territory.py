@@ -48,13 +48,6 @@ class Territory(commands.GroupCog, name="territory"):
         else:
             await interaction.followup.send("An error occured while getting the territory heatmap.")
 
-    @heatmap.autocomplete('timeframe')
-    async def autocompleteHeatmap(self, interaction: discord.Interaction, current: str):
-        choices = ['Last 7 Days', 'Season 24', 'Season 25', 'Everything']
-        return [
-            app_commands.Choice(name=choice, value=choice)
-            for choice in choices if current.lower() in choice.lower()
-        ]
 
 async def setup(bot):
     await bot.add_cog(Territory(bot))

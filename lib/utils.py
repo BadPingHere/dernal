@@ -1,4 +1,3 @@
-import requests
 import discord
 from datetime import datetime, timezone, timedelta
 import json
@@ -21,6 +20,8 @@ from io import BytesIO
 import shelve
 import difflib
 import matplotlib.cm as cm
+from lib.makeRequest import makeRequest
+from pathlib import Path
 import re
   
 logger = logging.getLogger('discord')
@@ -32,116 +33,13 @@ territoryFilePath = os.path.join(rootDir, 'database', 'territory')
 graidFilePath = os.path.join(rootDir, 'database', 'graid')
 with shelve.open(graidFilePath) as db:
     confirmedGRaid = db.get('guild_raids', {})
-noriRouteCooldowns = {}
 
+path = Path(__file__).resolve().parents[1] / '.env'
+CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
-def makeRequest(url):
-    global noriRouteCooldowns
-    session = requests.Session()
-    session.trust_env = False
-
-    # URL's not worth swapping, because they are too differerent of responses and/or they have little-to-no api impact
-    # https://api\.wynncraft\.com/v3/leaderboards/guildLevel
-    apiSwapList = [
-        #(r"^https://api\.wynncraft\.com/v3/guild/prefix/([^/]+)$", "https://nori.fish/api/guild/{}"), Currently nori's api is fucked with guild searches, 500 codes, just forget about it
-        #(r"^https://api\.wynncraft\.com/v3/guild/([^/]+)$", "https://nori.fish/api/guild/{}"),
-        (r"^https://api\.wynncraft\.com/v3/player/([^/]+)$", "https://nori.fish/api/player/{}"),
-        #(r"^https://api\.wynncraft\.com/v3/leaderboards/guildLevel$", "https://nori.fish/api/leaderboard/guild/guildLevel"),
-    ]
-
-    originalURL = url
-    usingWynnAPI = True # Default to official
-    route_prefix = None
-    suffix = None
-
-    for pattern, noriTemplate in apiSwapList: # swap shit out
-        match = re.fullmatch(pattern, url)
-        if match:
-            route_prefix = pattern
-            cooldown = noriRouteCooldowns.get(route_prefix)
-            if not cooldown or datetime.now(timezone.utc) >= cooldown:
-                if match.groups():
-                    suffix = match.group(1)
-                    url = noriTemplate.format(suffix)
-                else:
-                    url = noriTemplate
-                usingWynnAPI = False
-            break
-
-    retries = 0
-    maxRetries = 5
-
-    while retries < maxRetries:
-        try:
-            r = session.get(url, timeout=30)
-            if r.status_code == 300: # they say we all got multiple choices in life. be a dog or get pissed on.
-                if "/guild/" in url: # In guild endpoint, just select the first option.
-                    jsonData = r.json()
-                    prefix = jsonData[next(iter(jsonData))]["prefix"]
-                    return makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
-                elif "/player/" in url: # In player endpoint, we should select the recently active one, but I dont care! we select the last one.
-                    jsonData = r.json()
-                    username = jsonData[list(jsonData)[-1]]["storedName"]
-                    return makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")   
-
-            elif r.status_code == 429 or "API rate limit exceeded" in str(r.text): # Nori's way of telling us we're cut off.
-                if route_prefix:
-                    noriRouteCooldowns[route_prefix] = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=1) # wait until the minute passes
-                    logger.warning(f"Nori route {route_prefix} is now on cooldown until {noriRouteCooldowns[route_prefix].isoformat()}")
-                usingWynnAPI = True
-                url = originalURL
-                time.sleep(0.5)
-                continue
-
-            elif r.status_code >= 400:
-                r.raise_for_status() # we send the bad requests to hell
-
-            if usingWynnAPI:
-                remaining = int(r.headers.get("ratelimit-remaining", 120))
-                if remaining < 12: # theyre saying that this lowkey look like saddam hussein hiding spot
-                    logger.warning("WynnAPI ratelimit <12. PANIC!!")
-                    time.sleep(2)
-                elif remaining < 30:
-                    logger.warning("WynnAPI ratelimit <30. PANIC!!")
-                    time.sleep(1)
-                elif remaining < 60:
-                    time.sleep(0.5)
-            else:
-                time.sleep(0.5) # A base 0.5s sleep seems right for nori
-
-            return True, r
-
-        except requests.exceptions.RequestException as err:
-            status = getattr(err.response, 'status_code', None)
-            retryable = [408, 425, 500, 502, 503, 504]
-
-            if not usingWynnAPI:
-                if status in retryable: # nori sometimes 500's, so if it happens just switch back to ol reliable
-                    logger.error(f"Nori URL {url} failed with status code {status}. Retry {retries}.")
-                    retries += 1
-                    usingWynnAPI = True
-                    url = originalURL
-                    continue
-                if "NameResolutionError" in str(err): # im getting a few dns errors on nori
-                    logger.warning(f"DNS failure on Nori API, switching to official API for {originalURL}")
-                    usingWynnAPI = True
-                    url = originalURL
-                    retries += 1
-                    continue
-            
-            if status in retryable:
-                logger.error(f"{url} failed with status code {status}. Retry {retries}.")
-                retries += 1
-                time.sleep(2)
-                continue
-            else:
-                logger.error(f"Non-retryable error {status} for {url}: {err}")
-                return False, {}
-    logger.error(f"Hit maximum retries for {originalURL}.")
-    return False, {}
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
     TIME_DURATION_UNITS = (
@@ -536,25 +434,27 @@ def lookupUser(memberList, progressCallback=None):
         if progressCallback:
             progressCallback(i + 1, totalMembers)
 
-        time.sleep(2.5) # Slow down inactivity because we need to preserve our ratelimits
+        time.sleep(1.5) # Slow down inactivity because we need to preserve our ratelimits
         success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
+        #logger.info(f"username: {member}")
         if not success:
             logger.error("Unsuccessful request in lookupUser.")
             continue # i think thisll work
         jsonData = r.json()
         lastJoinDate = jsonData["lastJoin"]
-
-        try: # This should hopefully fix the offchance that someone's last time has no millisecond
-            joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
-        except ValueError:
-            joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%SZ")
-        joinTime = joinTime.replace(tzinfo=timezone.utc)
+        if not jsonData or jsonData.get("lastJoin") is None:
+            joinTime = datetime(1960, 1, 1, tzinfo=timezone.utc) #pricks have their shit turned off
+        else:
+            lastJoinDate = jsonData["lastJoin"]
+            try:
+                joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+            except ValueError:
+                joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%SZ")
+            joinTime = joinTime.replace(tzinfo=timezone.utc)
         currentTime = datetime.now(timezone.utc)
-        timeDifference = currentTime - joinTime
-        timeDifference = int(timeDifference.total_seconds())
+        timeDifference = int((currentTime - joinTime).total_seconds())
 
-        dt = datetime.fromisoformat(lastJoinDate.replace("Z", "+00:00"))  # Convert 'Z' to UTC
-        epochTime = dt.timestamp()
+        epochTime = joinTime.timestamp()
 
         if timeDifference >= 86400 * 28:  # 28 days or more
             inactivityDict["Four Week Inactive Users"].append((jsonData["username"], int(epochTime)))
@@ -2157,6 +2057,7 @@ def heatmapCreator(timeframe):
     timeframeMap = {
         "Season 24": ("04/18/25", "06/01/25"),
         "Season 25": ("06/06/25", "07/20/25"),
+        "Season 26": ("07/25/25", "12/25/25"), # not 11/11 but until next season for sure
         "Last 7 Days": None, # gotta handle ts outta dict
         "Everything": None
     }
@@ -2789,7 +2690,6 @@ def guildLeaderboardWarsButGuildSpecific(guild_uuid):
     conn.close()
     return listy
 
-
 def guildLeaderGraids():
     logger.info(f"guildLeaderGraids")
     
@@ -2836,7 +2736,7 @@ def playerLeaderboardGraids():
                     player_counter[player] += 1
 
         # Sort and display
-        sortedPlayers = player_counter.most_common()
+        sortedPlayers = player_counter.most_common(100) # Limit to 100
     
     return sortedPlayers
 
@@ -3003,3 +2903,175 @@ def detect_graids(eligibleGuilds): # i will credit this to slumbrous on disc, my
                 with shelve.open(graidFilePath) as db:
                     db['guild_raids'] = confirmedGRaid
             #logger.info(f"confirmedGRaid: {confirmedGRaid}")
+
+def validateValue(expectedType, value, guild: discord.Guild):
+    roleRegex = re.compile(r"<@&(\d+)>")
+    channelRegex = re.compile(r"<#(\d+)>")
+    if expectedType == "number":
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError("Value must be a number.")
+    elif expectedType == "bool":
+        lowered = value.lower()
+        if lowered in ("true", "yes", "1"): # idk what else would be used
+            return True
+        elif lowered in ("false", "no", "0"): 
+            return False
+        raise ValueError("Value must be true/false.")
+    elif expectedType == "role":
+        # Check if value is a mention
+        match = roleRegex.fullmatch(value)
+        if match:
+            role_id = int(match.group(1))
+            role = guild.get_role(role_id)
+            if not role:
+                raise ValueError(f"Role with ID {role_id} not found.")
+            return str(role.id)
+        else:
+            # Fallback, try and find user name
+            role = discord.utils.get(guild.roles, name=value)
+            if not role:
+                raise ValueError(f"Role '{value}' not found.")
+            return str(role.id)
+    elif expectedType == "channel":
+        match = channelRegex.fullmatch(value)
+        if match:
+            channel_id = int(match.group(1))
+            channel = guild.get_channel(channel_id)
+            if not channel:
+                raise ValueError(f"Channel with ID {channel_id} not found.")
+            return str(channel.id)
+        else: # fallback, try to find channel name
+            channel = discord.utils.get(guild.channels, name=value)
+            if not channel:
+                raise ValueError(f"Channel '{value}' not found.")
+            return str(channel.id)
+    elif expectedType == "rank":
+        valid_ranks = ["Recruit", "Recruiter", "Captain", "Strategist", "Chief", "Owner"]
+        if value not in valid_ranks:
+            raise ValueError(f"Value must be one of: {', '.join(valid_ranks)}.")
+        return value
+    elif expectedType == "prefix":
+        success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/guild")
+        if not success: # Check if theyre a real user
+            raise ValueError(f"An error occured while validating your prefix.")
+        else: # theyre real
+            jsonData = r.json()
+            prefixList = [v["prefix"] for v in jsonData.values()]
+            if value not in prefixList:
+                raise ValueError(f"{value} is not a valid prefix.")
+        return value
+    else:
+        return value
+
+def updateConfig(serverID, configName, configValue):
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS config (
+                serverID INTEGER,
+                configName TEXT,
+                configValue TEXT,
+                PRIMARY KEY (serverID, configName)
+            )
+        """)
+        cur.execute("""
+            INSERT INTO config (serverID, configName, configValue)
+            VALUES (?, ?, ?)
+            ON CONFLICT(serverID, configName)
+            DO UPDATE SET configValue = excluded.configValue
+        """, (serverID, configName, configValue)) # updates or inserts
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to update config DB {serverID}: {e}")
+
+def checkVerification(serverID):
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT configName, configValue
+            FROM config
+            WHERE serverID = ? AND configName IN (?, ?, ?)
+        """, (serverID, "verify_apps", "verify_rank", "log_channel"))
+        rows = dict(cur.fetchall())
+        conn.close()
+        return rows.get("verify_apps", ""), rows.get("verify_rank"), rows.get("log_channel")
+    except Exception as e:
+        logger.warning(f"Failed to fetch info {serverID}: {e}")
+
+def getDatabaseData(serverID):
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+        cur.execute("SELECT configName, configValue FROM config WHERE serverID = ?", (serverID,))
+        rows = dict(cur.fetchall())
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.warning(f"Failed to fetch info2 {serverID}: {e}")
+
+def listConfig(serverID, configTypes):
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+
+        cur.execute("SELECT configName, configValue FROM config WHERE serverID = ?", (serverID,))
+        rows = dict(cur.fetchall())
+        conn.close()
+        lines = [f"{name}: {rows.get(name, 'Unset')}" for name in configTypes]
+        desc = "```\n" + "\n".join(lines) + "\n```"
+        embed = discord.Embed(
+            title=f"Server {serverID} Configuration.",
+            description=desc,
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        return embed
+    except Exception as e:
+        logger.warning(f"Failed to list config for server {serverID}: {e}")
+        embed = discord.Embed(
+            title="Error",
+            description="Could not fetch config values.",
+            color=discord.Color.red()
+        )
+        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        return embed
+
+def storeVerifiedUser(serverID, discordUser, ingameUser):
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS verified_users (
+                serverID INTEGER,
+                discordUser TEXT,
+                gameUser TEXT,
+                PRIMARY KEY (serverID, discordUser)
+            )
+        """)
+        cur.execute("""
+            INSERT INTO verified_users (serverID, discordUser, gameUser)
+            VALUES (?, ?, ?)
+            ON CONFLICT(serverID, discordUser)
+            DO UPDATE SET gameUser = excluded.gameUser
+        """, (serverID, discordUser, ingameUser)) # updates or inserts
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Failed to update config DB {serverID}: {e}")
+
+def getAllDatabaseData():
+    try:
+        conn = sqlite3.connect(CONFIGDBPATH)
+        cur = conn.cursor()
+        cur.execute("SELECT serverID, discordUser, gameUser FROM verified_users")
+        rows = cur.fetchall()
+        conn.close()
+        return rows
+    except Exception as e:
+        logger.warning(f"Failed to fetch info for getAllDatabaseData: {e}")
+        return []
