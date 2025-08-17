@@ -1,5 +1,10 @@
+
 <h1 align="center">
+  <br>
+  <a href="https://github.com/BadPingHere/Dernal"><img src="https://cdn.discordapp.com/app-icons/1270960638382051368/c5f42507e5d3df745903b080bdba6e3f.png" alt="Dernal" width="200"></a>
+  <br>
   Dernal
+  <br>
 </h1>
 
 <h4 align="center">A lightweight and easy-to-use discord bot for everything in <a href="https://wynncraft.com/" target="_blank">Wynncraft</a>.</h4>
