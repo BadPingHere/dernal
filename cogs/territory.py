@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from lib.utils import checkCooldown, mapCreator, heatmapCreator
+from lib.utils import checkCooldown, mapCreator, heatmapCreator, timeframeMap1
 import logging
 import asyncio
 
@@ -12,7 +12,11 @@ logger = logging.getLogger('discord')
 class Territory(commands.GroupCog, name="territory"):
     def __init__(self, bot):
         self.bot = bot
-
+        
+    async def timeframeAutocomplete(self, interaction: discord.Interaction, current: str):
+        keys = list(timeframeMap1.keys())
+        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
+    
     @app_commands.command(description="Generates the current Wynncraft Territory Map.")
     async def map(self, interaction: discord.Interaction):
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 30)
@@ -48,6 +52,6 @@ class Territory(commands.GroupCog, name="territory"):
         else:
             await interaction.followup.send("An error occured while getting the territory heatmap.")
 
-
+    heatmap.autocomplete("timeframe")(timeframeAutocomplete)
 async def setup(bot):
     await bot.add_cog(Territory(bot))

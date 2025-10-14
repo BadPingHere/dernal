@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from threading import Lock
 from pathlib import Path
 import sqlite3
+import uuid
 
 path = Path(__file__).resolve().parents[1] / '.env'
 DBPATH = Path(__file__).resolve().parents[1] / "database" / "api_usage.db"
@@ -136,24 +137,41 @@ def makeRequest(url):
             trackUsage(route)
             if r.status_code == 300:
                 jsonData = r.json()
-                if route == "/guild/": # TODO: FIX!
+                if route == "/guild/":
                     objects = jsonData.get("objects", {})
 
-                    firstUUID = next(iter(objects))
+                    firstUUID = next(reversed(objects))
                     if not firstUUID:
                         logger.warning(f"No UUID for objects {objects} in 300 response.")
                         return False, None
 
-                    return makeRequest(f"https://api.wynncraft.com/v3/player/{firstUUID}?fullResult")
+                    return makeRequest(f"https://api.wynncraft.com/v3/guild/{firstUUID}?fullResult")
                 elif route == "/player/":
-                    objects = jsonData.get("objects", {})
+                    try:
+                        newstring = url.replace("https://api.wynncraft.com/v3/player/", "")
+                        username = newstring.replace("?fullResult", "") # we want to isolate the username, and this is a good enough solution
+                        
+                        r = session.get(f"https://api.mojang.com/users/profiles/minecraft/{username}", timeout=30, headers=headers)
+                        if r.ok: # successful
+                            jsonData = r.json()
+                            if jsonData.get("id"):
+                                trimmedUUID = jsonData.get("id")
+                                untrimmedUUID = uuid.UUID(trimmedUUID)
+                                return makeRequest(f"https://api.wynncraft.com/v3/player/{untrimmedUUID}?fullResult")
+                            else:
+                                raise Exception(f"Unsucessful request, UUID not in response: {r.json()}")
+                        else:
+                            raise Exception(f"Unsucessful request: {r.text()}")
+                    except Exception as e: # backup route, pick randomly!!
+                        print(f"An error occured while trying to find a user's UUID via mojang API. {e}")
+                        objects = jsonData.get("objects", {})
 
-                    firstUUID = next(iter(objects))
-                    if not firstUUID:
-                        logger.warning(f"No UUID for objects {objects} in 300 response.")
-                        return False, None
+                        firstUUID = next(reversed(objects))
+                        if not firstUUID:
+                            logger.warning(f"No UUID for objects {objects} in 300 response.")
+                            return False, None
 
-                    return makeRequest(f"https://api.wynncraft.com/v3/player/{firstUUID}?fullResult")
+                        return makeRequest(f"https://api.wynncraft.com/v3/player/{firstUUID}?fullResult")
                 
             elif r.status_code >= 400:
                 r.raise_for_status() # bad requests send to hell

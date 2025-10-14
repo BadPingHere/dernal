@@ -26,19 +26,81 @@ import re
   
 logger = logging.getLogger('discord')
 
+def getGraidDatabaseData(key):
+    if key == "guild_raids":
+        keyName = "guild_raids"
+    elif key == "EligibleGuilds":
+        keyName = "EligibleGuilds"
+
+    graidFilePath = os.path.join(rootDir, 'database', 'graid.db')
+    conn = sqlite3.connect(graidFilePath)
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS graid_data (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
+    cur.execute("SELECT value FROM graid_data WHERE key = ?", (keyName,))
+    row = cur.fetchone()
+    conn.close()
+    if row:
+        return json.loads(row[0])
+    if key == "guild_raids":
+        return {}
+    elif key == "EligibleGuilds":
+        return []
+    return None
+
+def writeGraidDatabaseData(key, data):
+    graidFilePath = os.path.join(rootDir, 'database', 'graid.db')
+    conn = sqlite3.connect(graidFilePath)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT OR REPLACE INTO graid_data (key, value) VALUES (?, ?)",
+        (key, json.dumps(data))
+    )
+    conn.commit()
+    conn.close()
+
 cooldownHolder = {}
 last_xp = {}  # {(guild_prefix, username): contributed}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 territoryFilePath = os.path.join(rootDir, 'database', 'territory')
-graidFilePath = os.path.join(rootDir, 'database', 'graid')
-with shelve.open(graidFilePath) as db:
-    confirmedGRaid = db.get('guild_raids', {})
+confirmedGRaid = getGraidDatabaseData("guild_raids")
 
 path = Path(__file__).resolve().parents[1] / '.env'
 CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
+
+timeframeMap1 = { # Used for heatmap data
+    "Season 24": ("04/18/25", "06/01/25"),
+    "Season 25": ("06/06/25", "07/20/25"),
+    "Season 26": ("07/25/25", "09/14/25"),
+    "Season 27": ("09/19/25", "12/25/25"), 
+    "Last 7 Days": None, # gotta handle ts outta dict
+    "Everything": None
+}
+
+timeframeMap2 = { # Used for graid data
+    "Season 25": ("06/06/25", "07/20/25"),
+    "Season 26": ("07/25/25", "09/14/25"),
+    "Season 27": ("09/19/25", "12/25/25"), 
+    "Last 14 Days": None, # gotta handle ts outta dict
+    "Last 7 Days": None, # gotta handle ts outta dict
+    "Last 24 Hours": None, # gotta handle ts outta dict
+    "Everything": None
+}
+
+timeframeMap3 = { # Used for database data
+    "Last 14 Days": None, # gotta handle ts outta dict
+    "Last 7 Days": None, # gotta handle ts outta dict
+    "Last 3 Days": None, # gotta handle ts outta dict
+    "Last 24 Hours": None, # gotta handle ts outta dict
+    "Everything": None # all data
+}
 
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
@@ -61,7 +123,8 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
 def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save cooldowns to disk, but uh, we wont!
     now = time.time()
     #logger.info(cooldownHolder)
-
+    if userOrGuildID == 736028271153512489: # the owner (the lion) does not get a cooldown.
+        return True
     lastUsed = cooldownHolder.get(userOrGuildID, 0)
     elapsed = now - lastUsed
     if elapsed < cooldownSeconds:
@@ -105,7 +168,7 @@ def findAttackingMembers(attacker):
                 return [["Unknown", "Unknown", 1738]]
             json = r.json()
             #logger.info(f"json: {json}")
-            if int(json["globalData"]["wars"]) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer
+            if int(json.get("globalData", {}).get("wars", 0)) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer. also defaults to 21 because if you hide stats youre a sweat aka warrer
                 warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
     else: # In database, we can save resources
         conn = sqlite3.connect('database/player_activity.db')
@@ -403,20 +466,15 @@ def getTerritoryNames(untainteddata, guildPrefix):
         otherData[hqCandidate] = (len(connections), len(externals)) # i for sure couldve merged this with scorelist, but uhhhhh not worth my time!!
         externals = []
     scorelist = dict(reversed(sorted(scorelist.items(), key=lambda item: item[1]))) # sorts on top
-    description = "## Best HQ Location:\n"
+    #logger.info(f"scorelist: {scorelist}")
+    listy = []
     for i, (location, score) in enumerate(scorelist.items()):
-        if i >= 5:  # max 5 entries
+        if i >= 100:  # max 100 entries
             break
-        connCount, externalCount = otherData[location] #like balatro!!!!!
-        description += f"{i + 1}. **{location}**: {score}% - Connections: {connCount}, Externals: {externalCount}\n"
-    description += "\n-# Note: HQ calculations are purely based on headquarter\n-# strength, not importance of territories or queue times."
-    embed = discord.Embed(
-        description=description,
-        color=0x3457D5,
-        )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+        connCount, externalCount = otherData[location] #like balatro!!!!! # how was this like balatro, my comments amaze me
+        listy.append([location, f"{score}% - Conns: {connCount}, Exts: {externalCount}"])
     logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
-    return embed
+    return listy
 
 def lookupUser(memberList, progressCallback=None):
     inactivityDict = {
@@ -434,7 +492,7 @@ def lookupUser(memberList, progressCallback=None):
         if progressCallback:
             progressCallback(i + 1, totalMembers)
 
-        time.sleep(1.5) # Slow down inactivity because we need to preserve our ratelimits
+        time.sleep(0.5) # Slow down inactivity because we need to preserve our ratelimits
         success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
         #logger.info(f"username: {member}")
         if not success:
@@ -482,7 +540,6 @@ def lookupGuild(r, progressCallback=None):
                 memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
     #logger.info(f"memberlist-2: {memberList}")
     return lookupUser(memberList, progressCallback)
-
 
 def guildActivityXP(guild_uuid, name):
     logger.info(f"guild_uuid: {guild_uuid}, activityXP")
@@ -898,12 +955,31 @@ def guildActivityTotalMembers(guild_uuid, name):
     buf.close()
     return file, embed
 
-def guildLeaderboardOnlineMembers():
-    logger.info(f"leaderboardOnlineMembers")
+def guildLeaderboardOnlineMembers(timeframe):
+    logger.info(f"leaderboardOnlineMembers timeframe: {timeframe}")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else: # fallback area
+        startDate = None
+        endDate = None
+
+    query = """
     WITH avg_online_members AS (
         SELECT 
             g.name as guild_name,
@@ -913,6 +989,16 @@ def guildLeaderboardOnlineMembers():
             COUNT(gs.id) as snapshot_count
         FROM guilds g
         JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+    """
+    params = []
+    if startDate and endDate:
+        query += " WHERE gs.timestamp BETWEEN ? AND ? "
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+
+    query += """
         GROUP BY g.uuid, g.name, g.prefix
         HAVING snapshot_count > 0
     )
@@ -926,11 +1012,11 @@ def guildLeaderboardOnlineMembers():
     FROM avg_online_members
     ORDER BY avg_online_members DESC
     LIMIT 100;
-    """)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
+    """
 
+    cursor.execute(query, params)
+    snapshots = cursor.fetchall()
+    conn.close()
     listy = []
     for row in snapshots:
         listy.append([row[0], row[1]]) #name, value
@@ -979,90 +1065,69 @@ def guildLeaderboardTotalMembers():
 
     return listy
 
-def guildLeaderboardWars():
-    logger.info(f"leaderboardWars")
+def guildLeaderboardWars(timeframe):
+    logger.info(f"leaderboardWars timeframe: {timeframe}")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-            MAX(gs.wars) as total_wars,
-            RANK() OVER (ORDER BY MAX(gs.wars) DESC) as war_rank
-        FROM guilds g
-        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-        GROUP BY g.uuid, g.name, g.prefix
-        ORDER BY total_wars DESC
-        LIMIT 100;
-    """)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-        return None
 
-    listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else: # fallback
+        startDate = None
+        endDate = None
 
-    return listy
-
-def guildLeaderboardXP():
-    logger.info(f"leaderboardXP")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        WITH time_bounds AS (
+    query = """
+        WITH war_gains AS (
             SELECT 
-                guild_uuid,
-                member_uuid,
-                MIN(timestamp) as min_time,
-                MAX(timestamp) as max_time
-            FROM member_snapshots
-            WHERE timestamp >= datetime('now', '-7 day')
-            GROUP BY guild_uuid, member_uuid
-        ),
-        contribution_changes AS (
-            SELECT 
-                t.guild_uuid,
-                t.member_uuid,
-                COALESCE(
-                    (SELECT contribution 
-                     FROM member_snapshots 
-                     WHERE guild_uuid = t.guild_uuid 
-                     AND member_uuid = t.member_uuid 
-                     AND timestamp = t.max_time
-                    ) -
-                    (SELECT contribution 
-                     FROM member_snapshots 
-                     WHERE guild_uuid = t.guild_uuid 
-                     AND member_uuid = t.member_uuid 
-                     AND timestamp = t.min_time
-                    ), 0
-                ) as xp_gained
-            FROM time_bounds t
-        ),
-        guild_totals AS (
-            SELECT 
+                g.name as guild_name,
+                g.prefix as guild_prefix,
                 g.uuid as guild_uuid,
-                g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                SUM(c.xp_gained) as xp_gained
-            FROM contribution_changes c
-            JOIN guilds g ON g.uuid = c.guild_uuid
+                MAX(gs.wars) - MIN(gs.wars) as wars_gained,
+                COUNT(gs.id) as snapshot_count
+            FROM guilds g
+            JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+    """
+    params = []
+    if startDate and endDate:
+        query += " WHERE gs.timestamp BETWEEN ? AND ? "
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+
+    query += """
             GROUP BY g.uuid, g.name, g.prefix
-            HAVING SUM(c.xp_gained) > 0
+            HAVING snapshot_count > 0
         )
-        SELECT
-            guild_name,
-            xp_gained,
-            RANK() OVER (ORDER BY xp_gained DESC) as rank
-        FROM guild_totals
-        ORDER BY xp_gained DESC
+        SELECT 
+            CASE 
+                WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
+                ELSE guild_name 
+            END as guild_display_name,
+            wars_gained
+        FROM war_gains
+        ORDER BY wars_gained DESC
         LIMIT 100;
-    """)
-    
+    """
+
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
+    conn.close()
+
     if not snapshots:
-        conn.close()
         return None
 
     listy = []
@@ -1071,6 +1136,135 @@ def guildLeaderboardXP():
 
     return listy
 
+def guildLeaderboardXP(timeframe):
+    logger.info(f"leaderboardXP timeframe: {timeframe}")
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # fallback
+        startDate = None
+        endDate = None
+
+    if startDate and endDate:
+        # For specific timeframes, use the complex difference calculation
+        query = """
+            WITH time_bounds AS (
+                SELECT 
+                    guild_uuid,
+                    member_uuid,
+                    MIN(timestamp) as min_time,
+                    MAX(timestamp) as max_time
+                FROM member_snapshots
+                WHERE timestamp BETWEEN ? AND ?
+                GROUP BY guild_uuid, member_uuid
+            ),
+            contribution_changes AS (
+                SELECT 
+                    t.guild_uuid,
+                    t.member_uuid,
+                    COALESCE(
+                        (SELECT contribution 
+                         FROM member_snapshots 
+                         WHERE guild_uuid = t.guild_uuid 
+                         AND member_uuid = t.member_uuid 
+                         AND timestamp = t.max_time
+                        ) -
+                        (SELECT contribution 
+                         FROM member_snapshots 
+                         WHERE guild_uuid = t.guild_uuid 
+                         AND member_uuid = t.member_uuid 
+                         AND timestamp = t.min_time
+                        ), 0
+                    ) as xp_gained
+                FROM time_bounds t
+            ),
+            guild_totals AS (
+                SELECT 
+                    g.uuid as guild_uuid,
+                    g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+                    SUM(c.xp_gained) as xp_gained
+                FROM contribution_changes c
+                JOIN guilds g ON g.uuid = c.guild_uuid
+                GROUP BY g.uuid, g.name, g.prefix
+                HAVING SUM(c.xp_gained) > 0
+            )
+            SELECT
+                guild_name,
+                xp_gained,
+                RANK() OVER (ORDER BY xp_gained DESC) as rank
+            FROM guild_totals
+            ORDER BY xp_gained DESC
+            LIMIT 100;
+        """
+        params = [
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ]
+    else:
+        # For "Everything", use a more efficient approach with window functions
+        query = """
+            WITH latest_contributions AS (
+                SELECT 
+                    guild_uuid,
+                    member_uuid,
+                    contribution,
+                    ROW_NUMBER() OVER (PARTITION BY guild_uuid, member_uuid ORDER BY timestamp DESC) as rn
+                FROM member_snapshots
+            ),
+            filtered_contributions AS (
+                SELECT 
+                    guild_uuid,
+                    member_uuid,
+                    contribution
+                FROM latest_contributions
+                WHERE rn = 1
+            ),
+            guild_totals AS (
+                SELECT 
+                    g.uuid as guild_uuid,
+                    g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
+                    SUM(fc.contribution) as total_contribution
+                FROM filtered_contributions fc
+                JOIN guilds g ON g.uuid = fc.guild_uuid
+                GROUP BY g.uuid, g.name, g.prefix
+                HAVING SUM(fc.contribution) > 0
+            )
+            SELECT
+                guild_name,
+                total_contribution as xp_gained,
+                RANK() OVER (ORDER BY total_contribution DESC) as rank
+            FROM guild_totals
+            ORDER BY total_contribution DESC
+            LIMIT 100;
+        """
+        params = []
+
+    cursor.execute(query, params)
+    snapshots = cursor.fetchall()
+    conn.close()
+
+    if not snapshots:
+        return None
+
+    listy = []
+    for row in snapshots:
+        listy.append([row[0], row[1]]) #name, value
+
+    return listy
 
 def playerActivityPlaytime(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
@@ -1628,25 +1822,101 @@ def playerActivityWars(player_uuid, name):
     buf.close()
     return file, embed
 
-def playerLeaderboardRaids():
-    logger.info(f"playerLeaderboardRaids")
+def playerLeaderboardRaids(timeframe):
+    logger.info(f"playerLeaderboardRaids timeframe: {timeframe}")
     conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT username, totalRaids
-    FROM (
-        SELECT *
-        FROM users_global
-        WHERE (uuid, timestamp) IN (
-            SELECT uuid, MAX(timestamp)
+    # Handle timeframe logic
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # fallback
+        startDate = None
+        endDate = None
+
+    # Build the query with timeframe filtering
+    if startDate and endDate:
+        # For timeframes, we need to calculate the difference in raids
+        query = """
+        WITH time_bounds AS (
+            SELECT 
+                uuid,
+                MIN(timestamp) as min_time,
+                MAX(timestamp) as max_time
             FROM users_global
+            WHERE timestamp BETWEEN ? AND ?
             GROUP BY uuid
+        ),
+        raid_changes AS (
+            SELECT 
+                t.uuid,
+                COALESCE(
+                    (SELECT totalRaids 
+                     FROM users_global 
+                     WHERE uuid = t.uuid 
+                     AND timestamp = t.max_time
+                    ) -
+                    (SELECT totalRaids 
+                     FROM users_global 
+                     WHERE uuid = t.uuid 
+                     AND timestamp = t.min_time
+                    ), 0
+                ) as raids_gained
+            FROM time_bounds t
+        ),
+        player_totals AS (
+            SELECT 
+                r.uuid,
+                u.username,
+                r.raids_gained
+            FROM raid_changes r
+            JOIN users_global u ON u.uuid = r.uuid
+            WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = r.uuid)
+            AND r.raids_gained > 0
         )
-    )
-    ORDER BY totalRaids DESC
-    LIMIT 100;
-    """)
+        SELECT 
+            username,
+            raids_gained
+        FROM player_totals
+        ORDER BY raids_gained DESC
+        LIMIT 100;
+        """
+        params = [
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ]
+    else:
+        # For "Everything" or fallback, use the original query
+        query = """
+        SELECT username, totalRaids
+        FROM (
+            SELECT *
+            FROM users_global
+            WHERE (uuid, timestamp) IN (
+                SELECT uuid, MAX(timestamp)
+                FROM users_global
+                GROUP BY uuid
+            )
+        )
+        ORDER BY totalRaids DESC
+        LIMIT 100;
+        """
+        params = []
+
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
@@ -1657,25 +1927,101 @@ def playerLeaderboardRaids():
 
     return listy
 
-def playerLeaderboardDungeons():
-    logger.info(f"playerLeaderboardDungeons")
+def playerLeaderboardDungeons(timeframe):
+    logger.info(f"playerLeaderboardDungeons timeframe: {timeframe}")
     conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT username, totalDungeons
-    FROM (
-        SELECT *
-        FROM users_global
-        WHERE (uuid, timestamp) IN (
-            SELECT uuid, MAX(timestamp)
+    # Handle timeframe logic
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # fallback
+        startDate = None
+        endDate = None
+
+    # Build the query with timeframe filtering
+    if startDate and endDate:
+        # For timeframes, we need to calculate the difference in dungeons
+        query = """
+        WITH time_bounds AS (
+            SELECT 
+                uuid,
+                MIN(timestamp) as min_time,
+                MAX(timestamp) as max_time
             FROM users_global
+            WHERE timestamp BETWEEN ? AND ?
             GROUP BY uuid
+        ),
+        dungeon_changes AS (
+            SELECT 
+                t.uuid,
+                COALESCE(
+                    (SELECT totalDungeons 
+                     FROM users_global 
+                     WHERE uuid = t.uuid 
+                     AND timestamp = t.max_time
+                    ) -
+                    (SELECT totalDungeons 
+                     FROM users_global 
+                     WHERE uuid = t.uuid 
+                     AND timestamp = t.min_time
+                    ), 0
+                ) as dungeons_gained
+            FROM time_bounds t
+        ),
+        player_totals AS (
+            SELECT 
+                d.uuid,
+                u.username,
+                d.dungeons_gained
+            FROM dungeon_changes d
+            JOIN users_global u ON u.uuid = d.uuid
+            WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = d.uuid)
+            AND d.dungeons_gained > 0
         )
-    )
-    ORDER BY totalDungeons DESC
-    LIMIT 100;
-    """)
+        SELECT 
+            username,
+            dungeons_gained
+        FROM player_totals
+        ORDER BY dungeons_gained DESC
+        LIMIT 100;
+        """
+        params = [
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ]
+    else:
+        # For "Everything" or fallback, use the original query
+        query = """
+        SELECT username, totalDungeons
+        FROM (
+            SELECT *
+            FROM users_global
+            WHERE (uuid, timestamp) IN (
+                SELECT uuid, MAX(timestamp)
+                FROM users_global
+                GROUP BY uuid
+            )
+        )
+        ORDER BY totalDungeons DESC
+        LIMIT 100;
+        """
+        params = []
+
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
     if not snapshots:
         conn.close()
@@ -1744,32 +2090,91 @@ def playerLeaderboardTotalLevel():
 
     return listy
 
-def playerLeaderboardPlaytime():
-    logger.info(f"playerLeaderboardPlaytime")
+def playerLeaderboardPlaytime(timeframe):
+    logger.info(f"playerLeaderboardPlaytime, timeframe: {timeframe}")
     conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
-    SELECT username, playtime
-    FROM (
-        SELECT *
-        FROM users
-        WHERE (uuid, timestamp) IN (
-            SELECT uuid, MAX(timestamp)
-            FROM users
-            GROUP BY uuid
-        )
-    )
-    ORDER BY playtime DESC
-    LIMIT 100;
-    """)
+    endDate = datetime.now()
+    if timeframe == "Last 14 Days":
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+
+    if startDate is None:
+        cursor.execute("""
+            SELECT username, playtime
+            FROM (
+                SELECT *
+                FROM users
+                WHERE (uuid, timestamp) IN (
+                    SELECT uuid, MAX(timestamp)
+                    FROM users
+                    GROUP BY uuid
+                )
+            )
+            ORDER BY playtime DESC
+            LIMIT 100;
+        """)
+    else:
+        query = """
+            WITH time_bounds AS (
+                SELECT 
+                    uuid,
+                    MIN(timestamp) AS min_time,
+                    MAX(timestamp) AS max_time
+                FROM users
+                WHERE timestamp BETWEEN ? AND ?
+                GROUP BY uuid
+            ),
+            playtime_diff AS (
+                SELECT
+                    tb.uuid,
+                    (max_snap.playtime - min_snap.playtime) AS playtime_gained
+                FROM time_bounds tb
+                JOIN users min_snap ON min_snap.uuid = tb.uuid AND min_snap.timestamp = tb.min_time
+                JOIN users max_snap ON max_snap.uuid = tb.uuid AND max_snap.timestamp = tb.max_time
+                WHERE min_snap.playtime != -1
+            ),
+            latest_username AS (
+                SELECT uuid, username
+                FROM users
+                WHERE (uuid, timestamp) IN (
+                    SELECT uuid, MAX(timestamp)
+                    FROM users
+                    GROUP BY uuid
+                )
+            )
+            SELECT 
+                lu.username,
+                pd.playtime_gained,
+                RANK() OVER (ORDER BY pd.playtime_gained DESC) AS rank
+            FROM playtime_diff pd
+            JOIN latest_username lu ON lu.uuid = pd.uuid
+            WHERE pd.playtime_gained > 0
+            ORDER BY pd.playtime_gained DESC
+            LIMIT 100;
+        """
+        cursor.execute(query, [
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+
     snapshots = cursor.fetchall()
+    conn.close()
+
     if not snapshots:
-        conn.close()
+        return None
 
     listy = []
     for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+        listy.append([row[0], row[1]]) 
 
     return listy
 
@@ -2054,18 +2459,11 @@ def mapCreator():
     return file, embed
 
 def heatmapCreator(timeframe):
-    timeframeMap = {
-        "Season 24": ("04/18/25", "06/01/25"),
-        "Season 25": ("06/06/25", "07/20/25"),
-        "Season 26": ("07/25/25", "12/25/25"), # not 11/11 but until next season for sure
-        "Last 7 Days": None, # gotta handle ts outta dict
-        "Everything": None
-    }
     if timeframe == "Last 7 Days": # We handle it.
         endDate = datetime.now()
         startDate = endDate - timedelta(days=7)
     elif timeframe != "Everything": # we deal with everything later on
-        startDay, endDay = timeframeMap.get(timeframe, (None, None))
+        startDay, endDay = timeframeMap1.get(timeframe, (None, None))
         startDate = datetime.strptime(startDay, "%m/%d/%y")
         endDate = datetime.strptime(endDay, "%m/%d/%y")
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
@@ -2497,12 +2895,31 @@ def getHelp(arg):
                 message = "The command you inputted is not valid. Please try again."
             return message, False
 
-def guildLeaderboardXPButGuildSpecific(guild_uuid):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardXPButGuildSpecific")
+def guildLeaderboardXPButGuildSpecific(guild_uuid, timeframe):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardXPButGuildSpecific, timeframe: {timeframe}")
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # fallback
+        startDate = None
+        endDate = None
+        
+    query = """
         WITH time_bounds AS (
             SELECT 
                 guild_uuid, 
@@ -2510,8 +2927,18 @@ def guildLeaderboardXPButGuildSpecific(guild_uuid):
                 MIN(timestamp) as min_time, 
                 MAX(timestamp) as max_time
             FROM member_snapshots 
-            WHERE timestamp >= datetime('now', '-7 day')
-            AND guild_uuid = ?
+            WHERE guild_uuid = ?
+    """
+    params = [guild_uuid]
+
+    if startDate and endDate:
+        query += " AND timestamp BETWEEN ? AND ? "
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+
+    query += """
             GROUP BY guild_uuid, member_uuid
         ),
         contribution_changes AS (
@@ -2520,16 +2947,16 @@ def guildLeaderboardXPButGuildSpecific(guild_uuid):
                 t.member_uuid,
                 COALESCE(
                     (SELECT contribution 
-                    FROM member_snapshots 
-                    WHERE guild_uuid = t.guild_uuid 
-                    AND member_uuid = t.member_uuid 
-                    AND timestamp = t.max_time
+                     FROM member_snapshots 
+                     WHERE guild_uuid = t.guild_uuid 
+                     AND member_uuid = t.member_uuid 
+                     AND timestamp = t.max_time
                     ) - 
                     (SELECT contribution 
-                    FROM member_snapshots 
-                    WHERE guild_uuid = t.guild_uuid 
-                    AND member_uuid = t.member_uuid 
-                    AND timestamp = t.min_time
+                     FROM member_snapshots 
+                     WHERE guild_uuid = t.guild_uuid 
+                     AND member_uuid = t.member_uuid 
+                     AND timestamp = t.min_time
                     ), 0
                 ) as xp_gained
             FROM time_bounds t
@@ -2550,10 +2977,13 @@ def guildLeaderboardXPButGuildSpecific(guild_uuid):
         FROM player_totals
         ORDER BY xp_gained DESC
         LIMIT 100;
-    """, (guild_uuid,))
+    """
+
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
+    conn.close()
+
     if not snapshots:
-        conn.close()
         return None
 
     listy = []
@@ -2562,21 +2992,64 @@ def guildLeaderboardXPButGuildSpecific(guild_uuid):
 
     return listy
 
-def guildLeaderboardOnlineButGuildSpecific(guild_uuid):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardOnlineButGuildSpecific")
+def guildLeaderboardOnlineButGuildSpecific(guild_uuid, timeframe):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardOnlineButGuildSpecific, timeframe: {timeframe}")
     conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
+    endDate = datetime.now()
+
+    if timeframe == "Last 14 Days":
+        startDate = endDate - timedelta(days=14)
+        days = 14.0
+    elif timeframe == "Last 7 Days":
+        startDate = endDate - timedelta(days=7)
+        days = 7.0
+    elif timeframe == "Last 3 Days":
+        startDate = endDate - timedelta(days=3)
+        days = 3.0
+    elif timeframe == "Last 24 Hours":
+        startDate = endDate - timedelta(hours=24)
+        days = 1.0
+    elif timeframe == "Everything":
+        startDate = endDate - timedelta(days=90) # Moreso so we get evetything
+        days = 30.0
+
+    # Build query dynamically
+    query = f"""
         WITH recent_users AS (
             SELECT DISTINCT uuid, username
             FROM users
-            WHERE timestamp >= datetime('now', '-7 day') AND guildUUID = ?
+            WHERE guildUUID = ?
+    """
+    params = [guild_uuid]
+
+    if startDate and endDate:
+        query += " AND timestamp BETWEEN ? AND ?"
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+    else:
+        query += " AND timestamp >= datetime('now', '-7 day')"
+
+    query += f"""
         ),
         recent_playtime AS (
             SELECT uuid, timestamp, playtime
             FROM users
-            WHERE timestamp >= datetime('now', '-7 day')
+    """
+
+    if startDate and endDate:
+        query += " WHERE timestamp BETWEEN ? AND ?"
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+    else:
+        query += " WHERE timestamp >= datetime('now', '-7 day')"
+
+    query += """
         ),
         ranked_playtime AS (
             SELECT
@@ -2601,10 +3074,11 @@ def guildLeaderboardOnlineButGuildSpecific(guild_uuid):
             SELECT 
                 ru.username,
                 pe.uuid,
-                ROUND((pe.playtime_end - ps.playtime_start) / 7.0, 2) AS avg_daily_hours
+                ROUND((pe.playtime_end - ps.playtime_start) / ?, 2) AS avg_daily_hours
             FROM playtime_start ps
             JOIN playtime_end pe ON ps.uuid = pe.uuid
             JOIN recent_users ru ON ru.uuid = ps.uuid
+            WHERE ps.playtime_start != -1
         )
         SELECT 
             username,
@@ -2613,34 +3087,72 @@ def guildLeaderboardOnlineButGuildSpecific(guild_uuid):
         FROM playtime_diff
         ORDER BY avg_daily_hours DESC
         LIMIT 100;
-    """, (guild_uuid,))
+    """
+
+    params.append(days)
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
+    conn.close()
+
     if not snapshots:
-        conn.close()
         return None
 
     listy = []
     for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+        listy.append([row[0], row[1]])
 
     return listy
 
-def guildLeaderboardWarsButGuildSpecific(guild_uuid):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardWarsButGuildSpecific")
+def guildLeaderboardWarsButGuildSpecific(guild_uuid, timeframe):
+    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardWarsButGuildSpecific, timeframe: {timeframe}")
     conn = sqlite3.connect('database/player_activity.db')
     cursor = conn.cursor()
 
-    cursor.execute("""
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 3 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=3)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # fallback
+        startDate = None
+        endDate = None
+
+    query = """
         WITH recent_snapshots AS (
             SELECT *
             FROM users_global
-            WHERE timestamp >= datetime('now', '-7 days')
-            AND uuid IN (
+            WHERE uuid IN (
                 SELECT DISTINCT uuid 
                 FROM users 
                 WHERE guildUUID = ?
-                AND timestamp >= datetime('now', '-7 days')
-            )
+    """
+    params = [guild_uuid]
+
+    if startDate and endDate:
+        query += " AND timestamp BETWEEN ? AND ? "
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+        query += ") AND timestamp BETWEEN ? AND ? "
+        params.extend([
+            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        ])
+    else:
+        query += ") "
+
+    query += """
         ),
         ranked_snapshots AS (
             SELECT
@@ -2677,75 +3189,147 @@ def guildLeaderboardWarsButGuildSpecific(guild_uuid):
         FROM wars_changes
         ORDER BY wars_gained DESC
         LIMIT 100;
-    """, (guild_uuid,))
+    """
+
+    cursor.execute(query, params)
     snapshots = cursor.fetchall()
+    conn.close()
+
     if not snapshots:
-        conn.close()
         return None
 
     listy = []
     for row in snapshots:
         listy.append([row[0], row[1]]) #name, value
 
-    conn.close()
     return listy
 
-def guildLeaderGraids():
+def guildLeaderGraids(timeframe):
     logger.info(f"guildLeaderGraids")
     
-    with shelve.open(graidFilePath) as db:
-        confirmedGRaid = db['guild_raids']
+    confirmedGRaid = getGraidDatabaseData("guild_raids")
     #logger.info(f"confirmedGRaid: {confirmedGRaid}")
-
-    leaderboard = {prefix: sum(1 for entry in entries if entry["timestamp"] >= time.time() - (14*86400)) for prefix, entries in confirmedGRaid.items()} # past 14 days
-
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # A season
+        startDay, endDay = timeframeMap2.get(timeframe, (None, None))
+        if startDay and endDay:
+            startDate = datetime.strptime(startDay, "%m/%d/%y")
+            endDate = datetime.strptime(endDay, "%m/%d/%y")
+        else:
+            # fallback
+            startDate = None
+            endDate = None
+    leaderboard = {}
+    for prefix, entries in confirmedGRaid.items():
+        count = 0
+        for entry in entries:
+            ts = datetime.fromtimestamp(entry["timestamp"])
+            if startDate and endDate:
+                if startDate <= ts <= endDate:
+                    count += 1
+            elif not startDate and not endDate:  # all data, everything
+                count += 1
+        leaderboard[prefix] = count
+        
     sortedLeaderboard = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
     
     return sortedLeaderboard
 
-def guildLeaderGraidsButGuildSpecific(prefix):
+def guildLeaderGraidsButGuildSpecific(prefix, timeframe):
     logger.info(f"guildLeaderGraidsButGuildSpecific. prefix is {prefix}")
     
-    with shelve.open(graidFilePath) as db:
-        confirmedGRaid = db['guild_raids']
+    confirmedGRaid = getGraidDatabaseData("guild_raids")
+
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+    else:  # A season
+        startDay, endDay = timeframeMap2.get(timeframe, (None, None))
+        if startDay and endDay:
+            startDate = datetime.strptime(startDay, "%m/%d/%y")
+            endDate = datetime.strptime(endDay, "%m/%d/%y")
+        else:
+            startDate = None
+            endDate = None
 
     player_counter = Counter()
 
     for entry in confirmedGRaid[prefix]:
-        if entry["timestamp"] >= time.time() - (14*86400): # past 14 days
+        ts = datetime.fromtimestamp(entry["timestamp"])
+        if startDate and endDate:
+            if startDate <= ts <= endDate:
+                for player in entry["party"]:
+                    player_counter[player] += 1
+        elif not startDate and not endDate:  # "Everything"
             for player in entry["party"]:
                 player_counter[player] += 1
 
-        # Sort and display
-        sortedPlayers = player_counter.most_common()
-    
+    # Sort and display
+    sortedPlayers = player_counter.most_common(100)
     return sortedPlayers
 
-def playerLeaderboardGraids():
-    logger.info(f"playerLeaderboardGraids")
+def playerLeaderboardGraids(timeframe):
+    logger.info(f"playerLeaderboardGraids timeframe: {timeframe}")
     
-    with shelve.open(graidFilePath) as db:
-        confirmedGRaid = db['guild_raids']
+    confirmedGRaid = getGraidDatabaseData("guild_raids")
+
+    # Handle timeframe logic
+    if timeframe == "Last 14 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=14)
+        cutoff_timestamp = time.time() - (14*86400)
+    elif timeframe == "Last 7 Days":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(days=7)
+        cutoff_timestamp = time.time() - (7*86400)
+    elif timeframe == "Last 24 Hours":
+        endDate = datetime.now()
+        startDate = endDate - timedelta(hours=24)
+        cutoff_timestamp = time.time() - (1*86400)
+    elif timeframe == "Everything":
+        startDate = None
+        endDate = None
+        cutoff_timestamp = 0
+    else:  # fallback to 14 days
+        cutoff_timestamp = time.time() - (14*86400)
 
     player_counter = Counter()
 
     for entries in confirmedGRaid.values():
         for entry in entries:
-            if entry["timestamp"] >= time.time() - (14*86400): # past 14 days
+            if entry["timestamp"] >= cutoff_timestamp:
                 for player in entry["party"]:
                     player_counter[player] += 1
 
-        # Sort and display
-        sortedPlayers = player_counter.most_common(100) # Limit to 100
+    # Sort and display
+    sortedPlayers = player_counter.most_common(100) # Limit to 100
     
     return sortedPlayers
 
 def guildActivityGraids(prefix):
     logger.info(f"guildActivityGraids, prefix: {prefix}")
     
-    with shelve.open(graidFilePath) as db:
-        confirmedGRaid = db['guild_raids']
-
+    confirmedGRaid = getGraidDatabaseData("guild_raids")
 
     if prefix not in confirmedGRaid:
         return None, None
@@ -2810,8 +3394,7 @@ def guildActivityGraids(prefix):
 
 def playerActivityGraids(username):
     logger.info(f"guildActivityGraids, username: {username}")
-    with shelve.open(graidFilePath) as db:
-        confirmedGRaid = db['guild_raids']
+    confirmedGRaid = getGraidDatabaseData("guild_raids")
 
     now = datetime.utcnow()
     cutoff = now - timedelta(days=14)
@@ -2873,7 +3456,7 @@ def playerActivityGraids(username):
     buf.close()
     return file, embed
 
-def detect_graids(eligibleGuilds): # i will credit this to slumbrous on disc, my shit did NOT fucking work first try.
+def detect_graids(eligibleGuilds): # i will credit this to slumbrous (+my additions) on disc, my shit did NOT fucking work first try.
     for prefix in eligibleGuilds:
         raidingUsers = []
         
@@ -2882,16 +3465,16 @@ def detect_graids(eligibleGuilds): # i will credit this to slumbrous on disc, my
             continue
         d = r.json()
         lvl = min(d.get("level", 0), 130)
-        thr = round(20000 * (1.15 ** lvl) / 4000)
+        thr = round((20000 * sum(1.15**(n-1) for n in range(1, lvl+1)))/4000) # amount of xp the guld recieves for XP /4000 (since every person gets 1/4th of 1/1000 of total level req)
         for members in d["members"].values():
             if not isinstance(members, dict):
                 continue
             for user, info in members.items():
                 now = info.get("contributed", 0)
                 prev = last_xp.get((prefix, user), now)
-                if now - prev >= thr: # successful graid
+                if thr*0.95 <= now - prev <= (thr*1.01)+2500000: # successful graid (I do (thr*1.01)+2500000 because /guild xp can fuck up the calc of it on lower lvl guilds, itll be less accurate here but fixed at len(party) == 4)
                     raidingUsers.append(user)
-                    #logger.info(f"[GRAID] {user}@{prefix} +{now-prev} XP")
+                    #logger.info(f"[GRAID] {user}@{prefix} +{now-prev} XP, thr is {thr}, so a deviation of {(now - prev)-thr} XP.")
                 last_xp[(prefix, user)] = now
 
         if prefix not in confirmedGRaid: #init it
@@ -2899,10 +3482,10 @@ def detect_graids(eligibleGuilds): # i will credit this to slumbrous on disc, my
         if raidingUsers: # Raid happened, cut them up and put into confirmed raids
             splitRaidingUsers = [raidingUsers[i:i+4] for i in range(0, len(raidingUsers), 4)]
             for party in splitRaidingUsers:
-                confirmedGRaid[prefix].append({"timestamp": time.time(), "party": party})
-                with shelve.open(graidFilePath) as db:
-                    db['guild_raids'] = confirmedGRaid
-            #logger.info(f"confirmedGRaid: {confirmedGRaid}")
+                if len(party) == 4: # should fix false finds
+                    confirmedGRaid[prefix].append({"timestamp": time.time(), "party": party})
+                    writeGraidDatabaseData("guild_raids", confirmedGRaid)
+                    #logger.info(f"confirmedGRaid: timestamp: {time.time()} party: {party}")
 
 def validateValue(expectedType, value, guild: discord.Guild):
     roleRegex = re.compile(r"<@&(\d+)>")
@@ -3075,3 +3658,96 @@ def getAllDatabaseData():
     except Exception as e:
         logger.warning(f"Failed to fetch info for getAllDatabaseData: {e}")
         return []
+    
+def playerGuildHistory(playerUUID, username):
+    conn = sqlite3.connect('database/guild_activity.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            gm.guild_uuid,
+            g.name AS guild_name,
+            g.prefix AS guild_prefix,
+            gm.joined
+        FROM guild_members gm
+        JOIN guilds g ON gm.guild_uuid = g.uuid
+        WHERE gm.member_uuid = ?;
+    """, (playerUUID,))
+    rows = cursor.fetchall()
+    
+    description = f"### **{username}**'s Guild History (Nov. 2024)"
+    description += "\n\n"
+    for i, row in enumerate(rows):
+        guildUUID, guildName, guildPrefix, joinDate = row
+
+        if i + 1 < len(rows):
+            leaveDate = rows[i + 1][3]
+        else: # Should be most recent output, we call api to get if they've left.
+            success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{guildUUID}") # player guild join date isnt in player info sadly
+            if not success:
+                leaveDate = "Unknown"
+            else:
+                hasLeft = True
+                jsonData = r.json()
+                for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+                    if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
+                        for member, value in jsonData["members"][rank].items(): 
+                            if value['uuid'] == playerUUID:
+                                hasLeft = False
+                leaveDate = "Unknown, has left guild" if hasLeft else "Has not left" # mr coder
+                
+        def convert(isoTime):
+            if not isoTime or not isinstance(isoTime, str) or "T" not in isoTime:
+                return None
+            try:
+                dt = datetime.fromisoformat(isoTime.replace("Z", "+00:00"))
+                return int(dt.timestamp())
+            except Exception:
+                return None
+            
+        joinEpoch = convert(joinDate)
+        leaveEpoch = convert(leaveDate if isinstance(leaveDate, str) and "T" in leaveDate else None)
+
+        join = f"<t:{joinEpoch}:D>" if joinEpoch else joinDate
+        if isinstance(leaveDate, str) and "T" not in leaveDate:
+            leave = leaveDate
+        else:
+            leave = f"<t:{leaveEpoch}:D>" if leaveEpoch else "Unknown"
+
+        description += (
+            f"**{guildName} ({guildPrefix}):**\n"
+            f"Join Date: {join}, Leave Date: {leave}\n"
+        )
+    description += "\nNote: Leave dates for prev guilds are unknown, so they are set as their next guild's join date."
+    embed = discord.Embed(
+        description=description,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+
+    return embed
+
+def guildOnline(name, r):
+    jsonData = r.json()
+    online = {}
+    for rank, rank_members in jsonData["members"].items():
+        if rank == "total":
+            continue
+        online[rank] = [username for username, info in rank_members.items() if info.get("online")]
+
+
+    desc = f"## Online Members - {name}\n\n"
+    totalOnline = sum(len(members) for members in online.values())
+    for rank in online:
+        desc += f"**{rank.capitalize()} ({len(online[rank])})**:\n"
+        if online[rank]:
+            desc += ", ".join(online[rank]) + "\n\n"
+        else:
+            desc += "N/A\n\n"
+    desc += f"**Total Online**: {totalOnline}"
+    embed = discord.Embed(
+        description=desc,
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    
+    return embed

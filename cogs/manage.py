@@ -152,7 +152,11 @@ class Manage(commands.GroupCog, name="manage"):
         await asyncio.to_thread(storeVerifiedUser, interaction.guild_id, str(interaction.user.id), username)
 
     async def forceVerifyForLoop(self, guild: discord.Guild, discord_user_id, username):
-        member = await guild.fetch_member(discord_user_id)
+        try:
+            member = await guild.fetch_member(discord_user_id)
+        except discord.NotFound:
+            logger.warning(f"Member ID {discord_user_id} not found in guild {guild.id}") # We should be removing stale entries, however i dont want to implement that rn
+            return
         if not member:
             logger.warning(f"Member ID {discord_user_id} not found in guild {guild.id}")
             return

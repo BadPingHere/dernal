@@ -6,10 +6,11 @@ import logging
 import os
 import shelve
 from dotenv import load_dotenv
-from lib.utils import checkterritories, detect_graids
+from lib.utils import checkterritories, detect_graids, writeGraidDatabaseData
 from lib.makeRequest import makeRequest
 import asyncio
 from datetime import datetime
+import json
 
 logger = logging.getLogger('discord')
 load_dotenv()
@@ -29,7 +30,6 @@ class Detector(commands.GroupCog, name="detector"):
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.detectorFilePath = os.path.join(rootDir, 'database', 'detector')
         self.territoryFilePath = os.path.join(rootDir, 'database', 'territory')
-        self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
         with shelve.open(self.detectorFilePath) as db:
             self.guildsBeingTracked = dict(db)
             #logger.info(f"self.guildsBeingTracked: {self.guildsBeingTracked}")
@@ -40,7 +40,7 @@ class Detector(commands.GroupCog, name="detector"):
 
             
 
-    @tasks.loop(seconds=15)
+    @tasks.loop(seconds=10)
     async def backgroundDetector(self):
         try:
             if not self.guildsBeingTracked:
@@ -129,8 +129,7 @@ class Detector(commands.GroupCog, name="detector"):
                         self.EligibleGuilds.append(data["prefix"])
                     else:
                         break
-                with shelve.open(self.graidFilePath) as db:
-                    db['EligibleGuilds'] = self.EligibleGuilds
+                writeGraidDatabaseData("EligibleGuilds", self.EligibleGuilds)
             await asyncio.to_thread(detect_graids, self.EligibleGuilds)
         except Exception as e: # For one of the many errors
             logger.error(f"Unhandled exception in collectGraidData: {e}", exc_info=True)

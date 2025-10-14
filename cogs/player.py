@@ -2,14 +2,13 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import time
-from lib.utils import checkCooldown, playerActivityPlaytime, playerActivityContributions, playerActivityDungeons, playerActivityTotalDungeons, playerActivityRaids, playerActivityTotalRaids, playerActivityMobsKilled, playerActivityWars, playerLeaderboardRaids, playerLeaderboardTotalLevel, playerLeaderboardDungeons, playerLeaderboardPlaytime, playerLeaderboardPVPKills, playerLeaderboardGraids, playerActivityGraids
+from lib.utils import getGraidDatabaseData, checkCooldown, playerActivityPlaytime, playerActivityContributions, playerActivityDungeons, playerActivityTotalDungeons, playerActivityRaids, playerActivityTotalRaids, playerActivityMobsKilled, playerActivityWars, playerLeaderboardRaids, playerLeaderboardTotalLevel, playerLeaderboardDungeons, playerLeaderboardPlaytime, playerLeaderboardPVPKills, playerLeaderboardGraids, playerActivityGraids, timeframeMap3, timeframeMap2, playerGuildHistory
 import sqlite3
 import logging
 import asyncio
 from discord.ui import View, Button
 from datetime import datetime, timezone
 import os
-import shelve
 
 logger = logging.getLogger('discord')
 
@@ -78,14 +77,21 @@ class LeaderboardPaginator(View):
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 class Player(commands.GroupCog, name="player"):
     def __init__(self, bot):
         self.bot = bot
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.graidFilePath = os.path.join(rootDir, 'database', 'graid')
+    
+    async def timeframeAutocomplete3(self, interaction: discord.Interaction, current: str):
+        keys = list(timeframeMap3.keys())
+        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
+    
+    async def timeframeAutocomplete2(self, interaction: discord.Interaction, current: str):
+        keys = list(timeframeMap2.keys())
+        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
+    
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.")
     
     @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day over the past two weeks.")
@@ -352,8 +358,7 @@ class Player(commands.GroupCog, name="player"):
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return 
-        with shelve.open(self.graidFilePath) as db:
-            confirmedGRaid = db['guild_raids']
+        confirmedGRaid = getGraidDatabaseData("guild_raids")
         if name not in str(confirmedGRaid):
             await interaction.response.send_message(f"No data found for username: {name}. Please make you are in a level 100+ guild, and have done guild raids in the past 14 days.", ephemeral=True)
             return
@@ -367,8 +372,9 @@ class Player(commands.GroupCog, name="player"):
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="raids", description="Shows the leaderboard of the top 100 players with the highest total raids completed.")
-    async def leaderboardRaids(self, interaction: discord.Interaction):
-        logger.info(f"Command /player leaderboard raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
+    @app_commands.describe(timeframe='The timeframe you want to see. ',)
+    async def leaderboardRaids(self, interaction: discord.Interaction, timeframe: str):
+        logger.info(f"Command /player leaderboard raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The timeframe is {timeframe}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
@@ -376,16 +382,17 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardRaids)
+        data = await asyncio.to_thread(playerLeaderboardRaids, timeframe)
         if data:
-            view = LeaderboardPaginator(data, "Top 100 Players by Raids Completed", "Raids")
+            view = LeaderboardPaginator(data, f"Top 100 Players by Raids Completed - {timeframe}", "Raids")
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
     @leaderboardCommands.command(name="guild_raids", description="Shows the leaderboard of the top 100 players with the highest guild raids in the past 2 weeks.")
-    async def leaderboardGRaids(self, interaction: discord.Interaction):
-        logger.info(f"Command /player leaderboard guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
+    @app_commands.describe(timeframe='The timeframe you want to see. ',)
+    async def leaderboardGRaids(self, interaction: discord.Interaction, timeframe: str):
+        logger.info(f"Command /player leaderboard guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The timeframe is {timeframe}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
@@ -393,14 +400,13 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardGraids)
+        data = await asyncio.to_thread(playerLeaderboardGraids, timeframe)
         if data:
             num = len(data)
-            view = LeaderboardPaginator(data, f"Top {num} Players by Guild Raids", "Guild Raids")
+            view = LeaderboardPaginator(data, f"Top {num} Players by Guild Raids - {timeframe}", "Guild Raids")
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
-
 
     @leaderboardCommands.command(name="total_level", description="Shows the leaderboard of the top 100 players with the highest total level.")
     async def leaderboardTotalLevel(self, interaction: discord.Interaction):
@@ -420,8 +426,9 @@ class Player(commands.GroupCog, name="player"):
             await interaction.followup.send("No data available.")
 
     @leaderboardCommands.command(name="dungeons", description="Shows the leaderboard of the top 100 players with the highest dungeons completed.")
-    async def leaderboardDungeons(self, interaction: discord.Interaction):
-        logger.info(f"Command /player leaderboard dungeons was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
+    @app_commands.describe(timeframe='The timeframe you want to see. ',)
+    async def leaderboardDungeons(self, interaction: discord.Interaction, timeframe: str):
+        logger.info(f"Command /player leaderboard dungeons was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The timeframe is {timeframe}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
@@ -429,16 +436,17 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardDungeons)
+        data = await asyncio.to_thread(playerLeaderboardDungeons, timeframe)
         if data:
-            view = LeaderboardPaginator(data, "Top 100 Players by Dungeons Completed", "Dungeons")
+            view = LeaderboardPaginator(data, f"Top 100 Players by Dungeons Completed - {timeframe}", "Dungeons")
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
 
     @leaderboardCommands.command(name="playtime", description="Shows the leaderboard of the top 100 players with the highest playtime in hours.")
-    async def leaderboardPlaytime(self, interaction: discord.Interaction):
-        logger.info(f"Command /player leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}).")
+    @app_commands.describe(timeframe='The timeframe you want to see. ',)
+    async def leaderboardPlaytime(self, interaction: discord.Interaction, timeframe: str):
+        logger.info(f"Command /player leaderboard playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The timeframe is {timeframe}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
         if response != True: # If not true, there is cooldown, we dont run it!!!
@@ -446,9 +454,9 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardPlaytime)
+        data = await asyncio.to_thread(playerLeaderboardPlaytime, timeframe)
         if data:
-            view = LeaderboardPaginator(data, "Top 100 Players by Playtime", "Hours")
+            view = LeaderboardPaginator(data, f"Top 100 Players by Playtime - {timeframe}", "Hours")
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
@@ -469,7 +477,39 @@ class Player(commands.GroupCog, name="player"):
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
+
+    @app_commands.command(description="Shows the guild history of a user until Nov. 2024.")
+    @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
+    async def guild_history(self, interaction: discord.Interaction, name: str):
+        logger.info(f"Command /player guild_history was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
+            return
+        await interaction.response.defer()
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT uuid FROM members WHERE name = ? COLLATE NOCASE LIMIT 1", (name,))
+        result = cursor.fetchone()
     
+        if not result:
+            await interaction.followup.send(f"No data found for username: {name}.", ephemeral=True)
+            conn.close()
+            return
+        
+        embed = await asyncio.to_thread(playerGuildHistory, result[0], name)
+        if embed:
+            await interaction.followup.send(embed=embed)
+        else:
+            await interaction.followup.send("No data available.")
+
+    # Add autocomplete for timeframe parameters
+    leaderboardRaids.autocomplete("timeframe")(timeframeAutocomplete3)
+    leaderboardGRaids.autocomplete("timeframe")(timeframeAutocomplete2)
+    leaderboardDungeons.autocomplete("timeframe")(timeframeAutocomplete3)
+    leaderboardPlaytime.autocomplete("timeframe")(timeframeAutocomplete3)
   
 async def setup(bot):
     await bot.add_cog(Player(bot))

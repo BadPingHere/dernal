@@ -9,8 +9,7 @@ import requests
 import json
 from discord.ext.prometheus import PrometheusLoggingHandler
 
-#! 1: Add /guild online, to see who is online for a guild
-#! 2: Update /help. help me god i hate that system already
+#TODO 1: Update /help. help me god i hate that system already
 
 # Set up logging
 logger = logging.getLogger('discord')
