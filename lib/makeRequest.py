@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 
 path = Path(__file__).resolve().parents[1] / '.env'
-DBPATH = Path(__file__).resolve().parents[1] / "database" / "api_usage.db"
+DBPATH = Path(__file__).resolve().parents[1] / "database" / "metrics.db"
 load_dotenv(path)
 logger = logging.getLogger("discord")
 
@@ -117,7 +117,7 @@ def ratelimitCheck(route): # Do our self-ratelimiting
     elif percent <= 0.33:
         time.sleep(0.1)
 
-def makeRequest(url):
+def makeRequest(url): # For wynnAPI use only
     session = requests.Session()
     session.trust_env = False
     retries = 0
@@ -200,6 +200,35 @@ def makeRequest(url):
                     #logger.warning(f"Key {keyName} rate limited on {route}. Reset in {retry_after}s")
                 else:
                     logger.warning(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
+                retries += 1
+                time.sleep(1)
+                continue
+            else:
+                logger.error(f"Request error {status}: {err}")
+                return False, {}
+
+    logger.error(f"Failed after {maxRetries} retries for {url}")
+    return False, {}
+
+def internalMakeRequest(url): # Used for non-wynncraft api usage
+    session = requests.Session()
+    session.trust_env = False
+    retries = 0
+    maxRetries = 5
+
+    while retries < maxRetries:
+        try:
+            r = session.get(url, timeout=30)
+            #print(r.headers)
+            if r.status_code >= 400:
+                r.raise_for_status() # bad requests send to hell
+
+            return True, r
+        except requests.exceptions.RequestException as err: # hell
+            status = getattr(err.response, 'status_code', None)
+            retryable = [408, 425, 500, 502, 503, 504, 429]
+            if status in retryable:
+                logger.warning(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
                 retries += 1
                 time.sleep(1)
                 continue

@@ -34,7 +34,7 @@ You can [download](https://github.com/BadPingHere/dernal/releases/latest) the la
 
 This software was inspired or uses assets from:
 
-- BoxFot
+- Botfox
 - [Nori](https://nori.fish)
 - [Wynncraft-Territory-Info](https://github.com/jakematt123/Wynncraft-Territory-Info)
 - [Wynntils](https://wynntils.com/)

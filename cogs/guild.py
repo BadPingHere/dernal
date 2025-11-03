@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import timeframeMap2, timeframeMap3, getGraidDatabaseData, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderGraids, guildLeaderGraidsButGuildSpecific, guildActivityGraids, guildOnline
+from lib.utils import timeframeMap2, timeframeMap3, getGraidDatabaseData, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderboardGraids, guildLeaderboardGraidsButGuildSpecific, guildActivityGraids, guildOnline
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -441,12 +441,12 @@ class Guild(commands.GroupCog, name="guild"):
                 return  
             else:
                 await interaction.response.defer()
-                data = await asyncio.to_thread(guildLeaderGraidsButGuildSpecific, name, timeframe)
+                data = await asyncio.to_thread(guildLeaderboardGraidsButGuildSpecific, name, timeframe)
                 num = len(data)
                 view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
         else:
             await interaction.response.defer()
-            data = await asyncio.to_thread(guildLeaderGraids, timeframe)
+            data = await asyncio.to_thread(guildLeaderboardGraids, timeframe)
             num = len(data)
             view = LeaderboardPaginator(data, f"Top {num} Guilds by Guild Raids - {timeframe}", "Guild Raids")
 

@@ -20,9 +20,10 @@ from io import BytesIO
 import shelve
 import difflib
 import matplotlib.cm as cm
-from lib.makeRequest import makeRequest
 from pathlib import Path
+from lib.makeRequest import makeRequest, internalMakeRequest
 import re
+import base64
   
 logger = logging.getLogger('discord')
 
@@ -71,6 +72,7 @@ confirmedGRaid = getGraidDatabaseData("guild_raids")
 
 path = Path(__file__).resolve().parents[1] / '.env'
 CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
+TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
@@ -79,15 +81,15 @@ timeframeMap1 = { # Used for heatmap data
     "Season 24": ("04/18/25", "06/01/25"),
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "12/25/25"), 
+    "Season 27": ("09/19/25", "11/02/25"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
 
-timeframeMap2 = { # Used for graid data
+timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "12/25/25"), 
+    "Season 27": ("09/19/25", "11/02/25"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -424,7 +426,7 @@ def guildLookup(guildPrefixorName, r):
     return(embed)
 
 def getTerritoryNames(untainteddata, guildPrefix):
-    with open('territories.json') as a:
+    with open(TERRITORIESPATH) as a:
         territoryData = json.load(a)
 
     ownedTerritories = {}
@@ -542,1005 +544,216 @@ def lookupGuild(r, progressCallback=None):
     return lookupUser(memberList, progressCallback)
 
 def guildActivityXP(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, activityXP")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        WITH RECURSIVE dates(date) AS (
-            SELECT date(datetime('now', '-13 days'))
-            UNION ALL
-            SELECT date(datetime(date, '+1 day'))
-            FROM dates
-            WHERE date < date('now')
-        )
-        SELECT 
-            dates.date,
-            COALESCE(SUM(daily_xp), 0) as total_xp
-        FROM dates
-        LEFT JOIN (
-            SELECT 
-                date(timestamp) as day,
-                MAX(contribution) - MIN(contribution) as daily_xp
-            FROM member_snapshots
-            WHERE guild_uuid = ?
-            AND timestamp >= datetime('now', '-14 days')
-            GROUP BY date(timestamp), member_uuid
-        ) xp_data ON dates.date = xp_data.day
-        GROUP BY dates.date
-        ORDER BY dates.date
-    """, (guild_uuid,))
-    
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    dates = []
-    xp_values = []
-    for date_str, xp in snapshots:
-        dates.append(datetime.strptime(date_str, '%Y-%m-%d'))
-        xp_values.append(xp)
-
-    total_xp = sum(xp_values)
-    avg_daily_xp = total_xp / len(dates) if dates else 0
-    max_daily_xp = max(xp_values) if xp_values else 0
-    min_daily_xp = min(xp_values) if xp_values else 0
-    
-    plt.figure(figsize=(12, 6))
-    plt.bar(dates, xp_values, width=0.8, color=blue)
-    plt.axhline(y=avg_daily_xp, color='red', linestyle='-', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-    plt.xticks(dates)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
-    plt.title(f'Daily Guild XP Contribution - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('XP Gained', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-            transform=plt.gca().transAxes, 
-            fontsize=9, verticalalignment='bottom', 
-            horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-    
+    logger.info(f"guild_uuid: {guild_uuid}, guildActivityXP")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityXP?uuid={guild_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     file = discord.File(buf, filename='xp_graph.png')
     embed = discord.Embed(
         title=f"XP Analysis for {name}",
-        description=f"Total XP (14 days): {total_xp:,.0f}\nDaily Average: {avg_daily_xp:,.0f}\nHighest Day: {max_daily_xp:,.0f}\nLowest Day: {min_daily_xp:,.0f}",
+        description=f"Total XP (14 days): {jsonData['total_xp']:,.0f}\nDaily Average: {jsonData['daily_average']:,.0f}\nHighest Day: {jsonData['highest_day']:,.0f}\nLowest Day: {jsonData['lowest_day']:,.0f}",
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://xp_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    conn.close()
-    buf.close()
     return file, embed
 
 def guildActivityTerritories(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, activityTerritories")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        WITH RECURSIVE 
-        timepoints AS (
-            SELECT datetime('now', '-7 days') as timepoint
-            UNION ALL
-            SELECT datetime(timepoint, '+15 minutes')
-            FROM timepoints
-            WHERE timepoint < datetime('now')
-        ),
-        snapshots_with_territories AS (
-            SELECT 
-                strftime('%Y-%m-%d %H:%M:00', timestamp) as snap_time,
-                territories
-            FROM guild_snapshots
-            WHERE guild_uuid = ?
-            AND territories IS NOT NULL
-            AND territories > 0
-        )
-        SELECT 
-            timepoints.timepoint,
-            COALESCE(
-                (
-                    SELECT territories
-                    FROM snapshots_with_territories
-                    WHERE snap_time <= timepoints.timepoint
-                    ORDER BY snap_time DESC
-                    LIMIT 1
-                ),
-                0
-            ) as territory_count
-        FROM timepoints
-        ORDER BY timepoint;
-    """, (guild_uuid,))
-    snapshots = cursor.fetchall()
-    if not snapshots or all(count == 0 for _, count in snapshots):
-        conn.close()
-        return None, None
-    
-    times = []
-    territory_counts = []
-    for timestamp_str, count in snapshots:
-        try:
-            times.append(datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S'))
-            territory_counts.append(float(count) if count is not None else 0.0)
-        except (ValueError, TypeError) as e: # shouldnt happen, but after the amount of errors i ran from this, idk
-            continue
-
-    if not times or not territory_counts:
-        conn.close()
-        return None, None
-    non_zero_indices = [i for i, count in enumerate(territory_counts) if count > 0]
-    if non_zero_indices:
-        start_idx = non_zero_indices[0]
-        end_idx = non_zero_indices[-1] + 1
-        times = times[start_idx:end_idx]
-        territory_counts = territory_counts[start_idx:end_idx]
-
-    current_territories = territory_counts[-1] if territory_counts else 0
-    max_territories = max(territory_counts) if territory_counts else 0
-    min_territories = min(filter(lambda x: x > 0, territory_counts)) if territory_counts else 0
-    avg_territories = sum(filter(lambda x: x > 0, territory_counts)) / len(list(filter(lambda x: x > 0, territory_counts))) if territory_counts else 0
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, territory_counts, '-', label='Territory Count', color=blue, lw=3)
-    plt.fill_between(times, 0, territory_counts, alpha=0.3)
-    plt.axhline(y=avg_territories, color='red', linestyle='-', label=f'Average: {avg_territories:.1f}')
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = max_territories - min_territories
-    min_y = max(0, min_territories - (y_range * 0.1))
-    max_y = max_territories + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'Territory Count - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of Territories', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    logger.info(f"guild_uuid: {guild_uuid}, guildActivityTerritories")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityTerritories?uuid={guild_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='territory_graph.png')
     embed = discord.Embed(
         title=f"Territory Analysis for {name}",
-        description=f"Current territories: {current_territories:.0f}\nMaximum territories: {max_territories:.0f}\nMinimum territories: {min_territories:.0f}\nAverage territories: {avg_territories:.0f}",
+        description=f"Current territories: {jsonData['current_territories']:.0f}\nMaximum territories: {jsonData['maximum_territories']:.0f}\nMinimum territories: {jsonData['minimum_territories']:.0f}\nAverage territories: {jsonData['average_territories']:.0f}",
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://territory_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    buf.close()
-    conn.close()
     return file, embed
 
 def guildActivityWars(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, activityWars")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        WITH RECURSIVE 
-        timepoints AS (
-            SELECT datetime('now', '-7 days') as timepoint
-            UNION ALL
-            SELECT datetime(timepoint, '+15 minutes')
-            FROM timepoints
-            WHERE timepoint < datetime('now')
-        ),
-        snapshots_with_wars AS (
-            SELECT 
-                strftime('%Y-%m-%d %H:%M:00', timestamp) as snap_time,
-                wars
-            FROM guild_snapshots
-            WHERE guild_uuid = ?
-            AND wars IS NOT NULL
-            AND wars > 0
-        )
-        SELECT 
-            timepoints.timepoint,
-            COALESCE(
-                (
-                    SELECT wars
-                    FROM snapshots_with_wars
-                    WHERE snap_time <= timepoints.timepoint
-                    ORDER BY snap_time DESC
-                    LIMIT 1
-                ),
-                0
-            ) as wars_count
-        FROM timepoints
-        ORDER BY timepoint;
-    """, (guild_uuid,))
-    snapshots = cursor.fetchall()
-    if not snapshots or all(count == 0 for _, count in snapshots):
-        conn.close()
-        return None, None
-    
-    times = []
-    war_counts = []
-    for timestamp_str, count in snapshots:
-        try:
-            times.append(datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S'))
-            war_counts.append(float(count) if count is not None else 0.0)
-        except (ValueError, TypeError) as e: # shouldnt happen, but after the amount of errors i ran from this, idk
-            continue
-
-    if not times or not war_counts:
-        conn.close()
-        return None, None
-    non_zero_indices = [i for i, count in enumerate(war_counts) if count > 0]
-    if non_zero_indices:
-        start_idx = non_zero_indices[0]
-        end_idx = non_zero_indices[-1] + 1
-        times = times[start_idx:end_idx]
-        war_counts = war_counts[start_idx:end_idx]
-
-    current_war = war_counts[-1] if war_counts else 0
-    max_war = max(war_counts) if war_counts else 0
-    min_war = min(filter(lambda x: x > 0, war_counts)) if war_counts else 0
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, war_counts, '-', label='War Count', color=blue, lw=3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = max_war - min_war
-    min_y = max(0, min_war - (y_range * 0.1))
-    max_y = max_war + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'War History - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of Wars', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    logger.info(f"guild_uuid: {guild_uuid}, guildActivityWars")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityWars?uuid={guild_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='wars_graph.png')
     embed = discord.Embed(
         title=f"Warring Analysis for {name}",
-        description=f"Current war count: {current_war:.0f}",
+        description=f"Current war count: {jsonData['current_war']:.0f}",
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://wars_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    buf.close()
-    conn.close()
     return file, embed
 
 def guildActivityOnlineMembers(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, activityOnlineMembers")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
+    logger.info(f"guild_uuid: {guild_uuid}, guildActivityOnlineMembers")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityOnlineMembers?uuid={guild_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
-    cursor.execute("""
-        SELECT timestamp, online_members
-        FROM guild_snapshots
-        WHERE guild_uuid = ?
-        AND timestamp >= datetime('now', '-3 day')
-        ORDER BY timestamp
-    """, (guild_uuid,))
-    snapshots = cursor.fetchall()
-    
-    if not snapshots:
-        conn.close()
-        return None, None
-    
-    times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
-    raw_numbers = [snapshot[1] for snapshot in snapshots]
-    
-    overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
-
-    plt.figure(figsize=(18, 6))
-    plt.plot(times, raw_numbers, '-', label='Average Online Member Count', color=blue, lw=3)
-    plt.fill_between(times, 0, raw_numbers, alpha=0.3)
-    plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    hour_locator = HourLocator(byhour=[0, 6, 12, 18])
-    plt.gca().xaxis.set_major_locator(hour_locator)
-    plt.title(f'Online Members - {name}', fontsize=14)
-    plt.xlabel('Time (UTC)', fontsize=12)
-    plt.ylabel('Players Online', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
-
     file = discord.File(buf, filename='playtime_graph.png')
     embed = discord.Embed(
         title=f"Online Members for {name}",
         description=(
-            f"Maximum players online: {max(raw_numbers):.0f}\n"
-            f"Minimum players online: {min(raw_numbers):.0f}\n"
-            f"Average players online: {overall_average:.1f}"
+            f"Maximum players online: {jsonData['max_players']:.0f}\n"
+            f"Minimum players online: {jsonData['min_players']:.0f}\n"
+            f"Average players online: {jsonData['average']:.1f}"
         ),
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://playtime_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
-    conn.close()
-    buf.close()
-    
     return file, embed
 
 def guildActivityTotalMembers(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, activityTotalMembers")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT timestamp, total_members
-        FROM guild_snapshots
-        WHERE guild_uuid = ?
-        AND timestamp >= datetime('now', '-7 day')
-        ORDER BY timestamp
-    """, (guild_uuid,))
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-        return None, None
-    
-    times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
-    total_numbers = [snapshot[1] for snapshot in snapshots]
-    overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
-    plt.fill_between(times, 0, total_numbers, alpha=0.3)
-    plt.axhline(y=overall_total, color='r', linestyle='-', label=f'Average: {overall_total:.1f} members')
-    time_formatter = DateFormatter('%D')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().xaxis.set_major_locator(AutoDateLocator())
-    plt.title(f'Member Count - {name}', fontsize=14)
-    plt.xlabel('Time (UTC)', fontsize=12)
-    plt.ylabel('Members', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-    transform=plt.gca().transAxes, 
-    fontsize=9, verticalalignment='bottom', 
-    horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
+    logger.info(f"guild_uuid: {guild_uuid}, guildActivityTotalMembers")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityTotalMembers?uuid={guild_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='total_members_graph.png')
     embed = discord.Embed(
-        title=f" Members Analysis for {name}",
+        title=f"Members Analysis for {name}",
         description=(
-            f"Maximum Member Count: {max(total_numbers):.0f}\n"
-            f"Minimum Member Count: {min(total_numbers):.0f}\n"
-            f"Average Member Count: {overall_total:.0f}"
+            f"Maximum Member Count: {jsonData['max_players']:.0f}\n"
+            f"Minimum Member Count: {jsonData['min_players']:.0f}\n"
+            f"Average Member Count: {jsonData['average']:.0f}"
         ),
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://total_members_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
-    conn.close()
-    buf.close()
     return file, embed
 
 def guildLeaderboardOnlineMembers(timeframe):
-    logger.info(f"leaderboardOnlineMembers timeframe: {timeframe}")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else: # fallback area
-        startDate = None
-        endDate = None
-
-    query = """
-    WITH avg_online_members AS (
-        SELECT 
-            g.name as guild_name,
-            g.prefix as guild_prefix,
-            g.uuid as guild_uuid,
-            ROUND(AVG(gs.online_members), 2) as avg_online_members,
-            COUNT(gs.id) as snapshot_count
-        FROM guilds g
-        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-    """
-    params = []
-    if startDate and endDate:
-        query += " WHERE gs.timestamp BETWEEN ? AND ? "
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-
-    query += """
-        GROUP BY g.uuid, g.name, g.prefix
-        HAVING snapshot_count > 0
-    )
-    SELECT 
-        CASE 
-            WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-            ELSE guild_name 
-        END as guild_display_name,
-        avg_online_members,
-        snapshot_count
-    FROM avg_online_members
-    ORDER BY avg_online_members DESC
-    LIMIT 100;
-    """
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
+    logger.info(f"guildLeaderboardOnlineMembers timeframe: {timeframe}")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardOnlineMembers?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardOnlineMembers, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def guildLeaderboardTotalMembers():
-    logger.info(f"leaderboardTotalMembers")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    WITH recent_guild_stats AS (
-        SELECT 
-            g.name as guild_name,
-            g.prefix as guild_prefix,
-            g.uuid as guild_uuid,
-            gs.total_members,
-            gs.online_members,
-            gs.timestamp,
-            ROW_NUMBER() OVER (PARTITION BY g.uuid ORDER BY gs.timestamp DESC) as rn
-        FROM guilds g
-        JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-        WHERE gs.timestamp >= datetime('now', '-3 hour')
-    )
-    SELECT 
-        CASE 
-            WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-            ELSE guild_name 
-        END as guild_display_name,
-        total_members,
-        datetime(timestamp) as last_updated
-    FROM recent_guild_stats
-    WHERE rn = 1
-    AND total_members > 0
-    ORDER BY total_members DESC
-    LIMIT 100;
-    """)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-    
+    logger.info(f"guildLeaderboardTotalMembers")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardTotalMembers")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardTotalMembers, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def guildLeaderboardWars(timeframe):
-    logger.info(f"leaderboardWars timeframe: {timeframe}")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else: # fallback
-        startDate = None
-        endDate = None
-
-    query = """
-        WITH war_gains AS (
-            SELECT 
-                g.name as guild_name,
-                g.prefix as guild_prefix,
-                g.uuid as guild_uuid,
-                MAX(gs.wars) - MIN(gs.wars) as wars_gained,
-                COUNT(gs.id) as snapshot_count
-            FROM guilds g
-            JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-    """
-    params = []
-    if startDate and endDate:
-        query += " WHERE gs.timestamp BETWEEN ? AND ? "
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-
-    query += """
-            GROUP BY g.uuid, g.name, g.prefix
-            HAVING snapshot_count > 0
-        )
-        SELECT 
-            CASE 
-                WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-                ELSE guild_name 
-            END as guild_display_name,
-            wars_gained
-        FROM war_gains
-        ORDER BY wars_gained DESC
-        LIMIT 100;
-    """
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    logger.info(f"guildLeaderboardWars timeframe: {timeframe}")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardWars?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardWars, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def guildLeaderboardXP(timeframe):
-    logger.info(f"leaderboardXP timeframe: {timeframe}")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # fallback
-        startDate = None
-        endDate = None
-
-    if startDate and endDate:
-        # For specific timeframes, use the complex difference calculation
-        query = """
-            WITH time_bounds AS (
-                SELECT 
-                    guild_uuid,
-                    member_uuid,
-                    MIN(timestamp) as min_time,
-                    MAX(timestamp) as max_time
-                FROM member_snapshots
-                WHERE timestamp BETWEEN ? AND ?
-                GROUP BY guild_uuid, member_uuid
-            ),
-            contribution_changes AS (
-                SELECT 
-                    t.guild_uuid,
-                    t.member_uuid,
-                    COALESCE(
-                        (SELECT contribution 
-                         FROM member_snapshots 
-                         WHERE guild_uuid = t.guild_uuid 
-                         AND member_uuid = t.member_uuid 
-                         AND timestamp = t.max_time
-                        ) -
-                        (SELECT contribution 
-                         FROM member_snapshots 
-                         WHERE guild_uuid = t.guild_uuid 
-                         AND member_uuid = t.member_uuid 
-                         AND timestamp = t.min_time
-                        ), 0
-                    ) as xp_gained
-                FROM time_bounds t
-            ),
-            guild_totals AS (
-                SELECT 
-                    g.uuid as guild_uuid,
-                    g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                    SUM(c.xp_gained) as xp_gained
-                FROM contribution_changes c
-                JOIN guilds g ON g.uuid = c.guild_uuid
-                GROUP BY g.uuid, g.name, g.prefix
-                HAVING SUM(c.xp_gained) > 0
-            )
-            SELECT
-                guild_name,
-                xp_gained,
-                RANK() OVER (ORDER BY xp_gained DESC) as rank
-            FROM guild_totals
-            ORDER BY xp_gained DESC
-            LIMIT 100;
-        """
-        params = [
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ]
-    else:
-        # For "Everything", use a more efficient approach with window functions
-        query = """
-            WITH latest_contributions AS (
-                SELECT 
-                    guild_uuid,
-                    member_uuid,
-                    contribution,
-                    ROW_NUMBER() OVER (PARTITION BY guild_uuid, member_uuid ORDER BY timestamp DESC) as rn
-                FROM member_snapshots
-            ),
-            filtered_contributions AS (
-                SELECT 
-                    guild_uuid,
-                    member_uuid,
-                    contribution
-                FROM latest_contributions
-                WHERE rn = 1
-            ),
-            guild_totals AS (
-                SELECT 
-                    g.uuid as guild_uuid,
-                    g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                    SUM(fc.contribution) as total_contribution
-                FROM filtered_contributions fc
-                JOIN guilds g ON g.uuid = fc.guild_uuid
-                GROUP BY g.uuid, g.name, g.prefix
-                HAVING SUM(fc.contribution) > 0
-            )
-            SELECT
-                guild_name,
-                total_contribution as xp_gained,
-                RANK() OVER (ORDER BY total_contribution DESC) as rank
-            FROM guild_totals
-            ORDER BY total_contribution DESC
-            LIMIT 100;
-        """
-        params = []
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    logger.info(f"guildLeaderboardXP timeframe: {timeframe}")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardXP?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardXP, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def playerActivityPlaytime(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    WITH RECURSIVE dates(day) AS (
-        SELECT DATE('now', '-13 days')
-        UNION ALL
-        SELECT DATE(day, '+1 day')
-        FROM dates
-        WHERE day < DATE('now')
-    ),
-    playtime_per_day AS (
-        SELECT DATE(timestamp) AS day, 
-            ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
-        FROM users
-        WHERE uuid = ?
-        AND DATE(timestamp) >= DATE('now', '-14 days')
-        GROUP BY DATE(timestamp)
-    )
-    SELECT d.day,
-        COALESCE(p.playtime_minutes, 0) AS playtime_minutes
-    FROM dates d
-    LEFT JOIN playtime_per_day p ON d.day = p.day
-    ORDER BY d.day;
-    """, (player_uuid,))
-    daily_data = cursor.fetchall()
-
-    if not daily_data:
-        conn.close()
-        return None, None
-
-    dailyPlaytimes = {
-        datetime.strptime(day, '%Y-%m-%d').date(): minutes
-        for day, minutes in daily_data
-    }
-    dates = sorted(dailyPlaytimes.keys())
-    playtimeValues = [dailyPlaytimes[date] for date in dates]
-    totalPlaytimeinMinutes = sum(playtimeValues)
-    averageDailyPlaytime = totalPlaytimeinMinutes / len(dates) if dates else 0
-
-    plt.figure(figsize=(12, 6))
-    plt.bar(dates, playtimeValues, width=0.8, color=blue)
-    plt.axhline(y=averageDailyPlaytime, color='red', linestyle='-', 
-                label=f'Daily Average: {averageDailyPlaytime:.2f} minutes')
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-    plt.xticks(dates)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
-    plt.title(f'Daily Playtime - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Minutes Played', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-            transform=plt.gca().transAxes, 
-            fontsize=9, verticalalignment='bottom', 
-            horizontalalignment='right', color='gray')
-    
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityPlaytime?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='player_playtime_graph.png')
     embed = discord.Embed(
         title=f"Playtime Analysis for {name}",
         description=(
-            f"Daily Average: {averageDailyPlaytime:.0f} min\n"
-            f"Highest Day: {max(playtimeValues) if playtimeValues else 0} min\n"
-            f"Lowest Day: {min(playtimeValues) if playtimeValues else 0} min\n"
+            f"Daily Average: {jsonData['daily_average']:.0f} min\n"
+            f"Highest Day: {jsonData['max_day']} min\n"
+            f"Lowest Day: {jsonData['min_day']} min\n"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_playtime_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
-    conn.close()
-    buf.close()
-    
     return file, embed
 
 def playerActivityContributions(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityContributions")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    # Fetch snapshots from the last 14 days
-    cursor.execute("""
-    SELECT timestamp, contribution
-    FROM member_snapshots
-    WHERE member_uuid = ?
-    AND timestamp >= datetime('now', '-14 days')
-    ORDER BY timestamp
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), xp) for ts, xp in snapshots]
-
-    latest_snapshots_by_day = {}
-    for ts, xp in parsed_snapshots:
-        day = ts.date()
-        if day not in latest_snapshots_by_day or ts > latest_snapshots_by_day[day][0]:
-            latest_snapshots_by_day[day] = (ts, xp)
-
-    filtered_snapshots = sorted([(ts, xp) for ts, xp in latest_snapshots_by_day.values()], key=lambda x: x[0])
-
-    timestamps = [ts for ts, xp in filtered_snapshots]
-    xpValues = [xp for ts, xp in filtered_snapshots]
-    daily_gains = [xpValues[i] - xpValues[i - 1] for i in range(1, len(xpValues))]
-
-
-    totalGained = xpValues[-1] - xpValues[0] if len(xpValues) > 1 else 0
-    average = totalGained / len(daily_gains) if daily_gains else 0
-
-
-    plt.figure(figsize=(12, 6))
-    plt.bar(timestamps[1:], daily_gains, width=0.8, color=blue)
-    plt.axhline(y=average, color='red', linestyle='-', label=f'Daily Average: {average:.2f} XP')
-    plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-    plt.xticks(timestamps[1:])
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
-    plt.title(f'Daily XP Gain - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('XP Gained', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-             transform=plt.gca().transAxes, fontsize=9, verticalalignment='bottom', 
-             horizontalalignment='right', color='gray')
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityContributions?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='player_xp_graph.png')
     embed = discord.Embed(
         title=f"XP Gain for {name}",
         description=(
-            f"Total XP (14 Days): {totalGained:,.0f} xp\n"
-            f"Highest Day: {max(daily_gains) if daily_gains else 0} xp\n"
-            f"Lowest Day: {min(daily_gains) if daily_gains else 0} xp"
+            f"Total XP (14 Days): {jsonData['total_xp']:,.0f} xp\n"
+            f"Highest Day: {jsonData['max_xp']:} xp\n"
+            f"Lowest Day: {jsonData['min_xp']:} xp"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_xp_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
-    conn.close()
-    buf.close()
     return file, embed
 
 def playerActivityDungeons(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityDungeons")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT u.timestamp, u.totalDungeons
-    FROM users_global u
-    WHERE u.uuid = ?
-        AND u.timestamp >= DATETIME('now', '-7 days')
-    ORDER BY u.timestamp;
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
-    total_dungeons = [row[1] for row in snapshots]
-
-    # Highest total and daily gain
-    highestTotal = total_dungeons[-1] if total_dungeons else 0
-    dungeons_by_day = defaultdict(list)
-    for dt, count in zip(dates, total_dungeons):
-        dungeons_by_day[dt.date()].append(count)
-    dailyGain = [max(counts) - min(counts) for counts in dungeons_by_day.values() if len(counts) > 1]
-    highestGain = max(dailyGain) if dailyGain else 0
-    maxDungeons = max(total_dungeons) if total_dungeons else 0
-    minDungeons = min(filter(lambda x: x > 0, total_dungeons)) if total_dungeons else 0
-
-    # Plot
-    plt.figure(figsize=(12, 6))
-    plt.plot(dates, total_dungeons, '-', label='Dungeon Count', color=blue, lw=3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = maxDungeons - minDungeons
-    min_y = max(0, minDungeons - (y_range * 0.1))
-    max_y = maxDungeons + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'Dungeon History - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of Dungeon\'s completed', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityDungeons?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_dungeon_graph.png')
     embed = discord.Embed(
         title=f"Dungeon Runs for {name}",
         description=(
-            f"Total Dungeons: {highestTotal} dungeons\n"
-            f"Highest Gain in One Day: {highestGain} dungeons\n"
+            f"Total Dungeons: {jsonData['total_dungeons']} dungeons\n"
+            f"Highest Gain in One Day: {jsonData['highest_gain']} dungeons\n"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_dungeon_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    conn.close()
-    buf.close()
     return file, embed
 
 def playerActivityTotalDungeons(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityTotalDungeons")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT dungeonsDict
-        FROM users_global
-        WHERE uuid = ?
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-    
-    dungeons = ast.literal_eval(snapshots[0][0])
-
-    sorted_dungeons = dict(sorted(dungeons.items(), key=lambda item: item[1], reverse=True))
-
-    labels = list(sorted_dungeons.keys())
-    sizes = list(sorted_dungeons.values())
-
-
-    plt.figure(figsize=(10, 8))
-    sorted_dungeons = dict(sorted(dungeons.items(), key=lambda item: item[1], reverse=True))
-    labels = list(sorted_dungeons.keys())
-    sizes = list(sorted_dungeons.values())
-    total = sum(sizes)
-    percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
-    wedges, _ = plt.pie(sizes)
-    plt.legend(wedges, percent_labels, title="Dungeons", loc="center left", bbox_to_anchor=(1, 0.5))
-    plt.title(f"Dungeon Pie Chart - {name}")
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    buf.seek(0)
-    plt.close
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityTotalDungeons?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_dungeon_pie.png')
     embed = discord.Embed(
@@ -1554,120 +767,29 @@ def playerActivityTotalDungeons(player_uuid, name):
 
 def playerActivityRaids(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityRaids")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT u.timestamp, u.totalRaids
-    FROM users_global u
-    WHERE u.uuid = ?
-        AND u.timestamp >= DATETIME('now', '-7 days')
-    ORDER BY u.timestamp;
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
-    totalRaids = [row[1] for row in snapshots]
-
-    # Highest total and daily gain
-    highestTotal = totalRaids[-1] if totalRaids else 0
-    raids_by_day = defaultdict(list)
-    for dt, count in zip(dates, totalRaids):
-        raids_by_day[dt.date()].append(count)
-    dailyGain = [max(counts) - min(counts) for counts in raids_by_day.values() if len(counts) > 1]
-    highestGain = max(dailyGain) if dailyGain else 0
-    maxRaids = max(totalRaids) if totalRaids else 0
-    minRaids = min(filter(lambda x: x > 0, totalRaids)) if totalRaids else 0
-
-    # Plot
-    plt.figure(figsize=(12, 6))
-    plt.plot(dates, totalRaids, '-', label='Raid Count', color=blue, lw=3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = maxRaids - minRaids
-    min_y = max(0, minRaids - (y_range * 0.1))
-    max_y = maxRaids + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'Raid History - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of Raid\'s completed', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityRaids?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_raid_graph.png')
     embed = discord.Embed(
         title=f"Raid Runs for {name}",
         description=(
-            f"Total Raids: {highestTotal} raids\n"
-            f"Highest Gain in One Day: {highestGain} raids\n"
+            f"Total Raids: {jsonData['total']} raids\n"
+            f"Highest Gain in One Day: {jsonData['highest_gain']} raids\n"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_raid_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
 
-    conn.close()
-    buf.close()
     return file, embed
 
 def playerActivityTotalRaids(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityTotalRaids")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT raidsDict
-        FROM users_global
-        WHERE uuid = ?
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-    
-    raids = ast.literal_eval(snapshots[0][0])
-
-    sortedRaids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
-
-    labels = list(sortedRaids.keys())
-    sizes = list(sortedRaids.values())
-
-
-    plt.figure(figsize=(10, 8))
-    sortedRaids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
-    labels = list(sortedRaids.keys())
-    sizes = list(sortedRaids.values())
-    total = sum(sizes)
-    percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
-    wedges, _ = plt.pie(sizes)
-    plt.legend(wedges, percent_labels, title="Raids", loc="center left", bbox_to_anchor=(1, 0.5))
-    plt.title(f"Raid Pie Chart - {name}")
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-    buf.seek(0)
-    plt.close
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityTotalRaids?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_raid_pie.png')
     embed = discord.Embed(
@@ -1681,500 +803,109 @@ def playerActivityTotalRaids(player_uuid, name):
 
 def playerActivityMobsKilled(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityMobsKilled")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT u.timestamp, u.killedMobs
-    FROM users_global u
-    WHERE u.uuid = ?
-        AND u.timestamp >= DATETIME('now', '-7 days')
-    ORDER BY u.timestamp;
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
-    totalKills = [row[1] for row in snapshots]
-    highestTotal = totalKills[-1] if totalKills else 0
-    kills_by_day = defaultdict(list)
-    for dt, count in zip(dates, totalKills):
-        kills_by_day[dt.date()].append(count)
-
-    daily_gains = [max(counts) - min(counts) for counts in kills_by_day.values() if len(counts) > 1]
-    highestGain = max(daily_gains) if daily_gains else 0
-    maxKills = max(totalKills) if totalKills else 0
-    minKills = min(filter(lambda x: x > 0, totalKills)) if totalKills else 0
-
-    # Plot
-    plt.figure(figsize=(12, 6))
-    plt.plot(dates, totalKills, '-', label='Mob Kill Count', color=blue, lw=3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = maxKills - minKills
-    min_y = max(0, minKills - (y_range * 0.1))
-    max_y = maxKills + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'Mob Kill History - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of Kill\'s', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityMobsKilled?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_mob_kill_graph.png')
     embed = discord.Embed(
         title=f"Mob's killed for {name}",
         description=(
-            f"Total Kills: {highestTotal} kills\n"
-            f"Highest Gain in One Day: {highestGain} kills\n"
+            f"Total Kills: {jsonData['total_kills']} kills\n"
+            f"Highest Gain in One Day: {jsonData['highest_gain']} kills\n"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_mob_kill_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    conn.close()
-    buf.close()
     return file, embed
 
 def playerActivityWars(player_uuid, name):
     logger.info(f"player_uuid: {player_uuid}, playerActivityWars")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT u.timestamp, u.wars
-    FROM users_global u
-    WHERE u.uuid = ?
-        AND u.timestamp >= DATETIME('now', '-7 days')
-    ORDER BY u.timestamp;
-    """, (player_uuid,))
-    snapshots = cursor.fetchall()
-
-    if not snapshots:
-        conn.close()
-        return None, None
-
-    dates = [datetime.fromisoformat(row[0]) for row in snapshots]
-    totalWars = [row[1] for row in snapshots]
-    highestTotal = totalWars[-1] if totalWars else 0
-    wars_by_day = defaultdict(list)
-    for dt, count in zip(dates, totalWars):
-        wars_by_day[dt.date()].append(count)
-    daily_gains = [max(counts) - min(counts) for counts in wars_by_day.values() if len(counts) > 1]
-    highestGain = max(daily_gains) if daily_gains else 0
-    maxWars = max(totalWars) if totalWars else 0
-    minWars = min(filter(lambda x: x > 0, totalWars)) if totalWars else 0
-
-    # Plot
-    plt.figure(figsize=(12, 6))
-    plt.plot(dates, totalWars, '-', label='War Count', color=blue, lw=3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-    y_range = maxWars - minWars
-    min_y = max(0, minWars - (y_range * 0.1))
-    max_y = maxWars + (y_range * 0.1)
-    plt.ylim(min_y, max_y)
-    plt.title(f'War Count History - {name}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Number of War\'s', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.margins(x=0.01)
-    plt.tight_layout()
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityWars?uuid={player_uuid}&name={name}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
 
     file = discord.File(buf, filename='player_wars_graph.png')
     embed = discord.Embed(
         title=f"War Count for {name}",
         description=(
-            f"Total Wars: {highestTotal} wars\n"
-            f"Highest Gain in One Day: {highestGain} wars\n"
+            f"Total Wars: {jsonData['total_wars']} wars\n"
+            f"Highest Gain in One Day: {jsonData['highest_gain']} wars\n"
         ),
         color=discord.Color.red()
     )
     embed.set_image(url="attachment://player_wars_graph.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    conn.close()
-    buf.close()
     return file, embed
 
 def playerLeaderboardRaids(timeframe):
     logger.info(f"playerLeaderboardRaids timeframe: {timeframe}")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    # Handle timeframe logic
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # fallback
-        startDate = None
-        endDate = None
-
-    # Build the query with timeframe filtering
-    if startDate and endDate:
-        # For timeframes, we need to calculate the difference in raids
-        query = """
-        WITH time_bounds AS (
-            SELECT 
-                uuid,
-                MIN(timestamp) as min_time,
-                MAX(timestamp) as max_time
-            FROM users_global
-            WHERE timestamp BETWEEN ? AND ?
-            GROUP BY uuid
-        ),
-        raid_changes AS (
-            SELECT 
-                t.uuid,
-                COALESCE(
-                    (SELECT totalRaids 
-                     FROM users_global 
-                     WHERE uuid = t.uuid 
-                     AND timestamp = t.max_time
-                    ) -
-                    (SELECT totalRaids 
-                     FROM users_global 
-                     WHERE uuid = t.uuid 
-                     AND timestamp = t.min_time
-                    ), 0
-                ) as raids_gained
-            FROM time_bounds t
-        ),
-        player_totals AS (
-            SELECT 
-                r.uuid,
-                u.username,
-                r.raids_gained
-            FROM raid_changes r
-            JOIN users_global u ON u.uuid = r.uuid
-            WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = r.uuid)
-            AND r.raids_gained > 0
-        )
-        SELECT 
-            username,
-            raids_gained
-        FROM player_totals
-        ORDER BY raids_gained DESC
-        LIMIT 100;
-        """
-        params = [
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ]
-    else:
-        # For "Everything" or fallback, use the original query
-        query = """
-        SELECT username, totalRaids
-        FROM (
-            SELECT *
-            FROM users_global
-            WHERE (uuid, timestamp) IN (
-                SELECT uuid, MAX(timestamp)
-                FROM users_global
-                GROUP BY uuid
-            )
-        )
-        ORDER BY totalRaids DESC
-        LIMIT 100;
-        """
-        params = []
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardRaids?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardRaids, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def playerLeaderboardDungeons(timeframe):
     logger.info(f"playerLeaderboardDungeons timeframe: {timeframe}")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    # Handle timeframe logic
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # fallback
-        startDate = None
-        endDate = None
-
-    # Build the query with timeframe filtering
-    if startDate and endDate:
-        # For timeframes, we need to calculate the difference in dungeons
-        query = """
-        WITH time_bounds AS (
-            SELECT 
-                uuid,
-                MIN(timestamp) as min_time,
-                MAX(timestamp) as max_time
-            FROM users_global
-            WHERE timestamp BETWEEN ? AND ?
-            GROUP BY uuid
-        ),
-        dungeon_changes AS (
-            SELECT 
-                t.uuid,
-                COALESCE(
-                    (SELECT totalDungeons 
-                     FROM users_global 
-                     WHERE uuid = t.uuid 
-                     AND timestamp = t.max_time
-                    ) -
-                    (SELECT totalDungeons 
-                     FROM users_global 
-                     WHERE uuid = t.uuid 
-                     AND timestamp = t.min_time
-                    ), 0
-                ) as dungeons_gained
-            FROM time_bounds t
-        ),
-        player_totals AS (
-            SELECT 
-                d.uuid,
-                u.username,
-                d.dungeons_gained
-            FROM dungeon_changes d
-            JOIN users_global u ON u.uuid = d.uuid
-            WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = d.uuid)
-            AND d.dungeons_gained > 0
-        )
-        SELECT 
-            username,
-            dungeons_gained
-        FROM player_totals
-        ORDER BY dungeons_gained DESC
-        LIMIT 100;
-        """
-        params = [
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ]
-    else:
-        # For "Everything" or fallback, use the original query
-        query = """
-        SELECT username, totalDungeons
-        FROM (
-            SELECT *
-            FROM users_global
-            WHERE (uuid, timestamp) IN (
-                SELECT uuid, MAX(timestamp)
-                FROM users_global
-                GROUP BY uuid
-            )
-        )
-        ORDER BY totalDungeons DESC
-        LIMIT 100;
-        """
-        params = []
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardDungeons?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardDungeons, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def playerLeaderboardPVPKills():
     logger.info(f"playerLeaderboardPVPKills")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT username, pvpKills
-    FROM (
-        SELECT *
-        FROM users_global
-        WHERE (uuid, timestamp) IN (
-            SELECT uuid, MAX(timestamp)
-            FROM users_global
-            GROUP BY uuid
-        )
-    )
-    ORDER BY pvpKills DESC
-    LIMIT 100;
-    """)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardPVPKills")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardPVPKills, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def playerLeaderboardTotalLevel():
     logger.info(f"playerLeaderboardTotalLevel")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    SELECT username, totalLevel
-    FROM (
-        SELECT *
-        FROM users_global
-        WHERE (uuid, timestamp) IN (
-            SELECT uuid, MAX(timestamp)
-            FROM users_global
-            GROUP BY uuid
-        )
-    )
-    ORDER BY totalLevel DESC
-    LIMIT 100;
-    """)
-    snapshots = cursor.fetchall()
-    if not snapshots:
-        conn.close()
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardTotalLevel")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardTotalLevel, success is {success}, jsonData is {jsonData}")
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def playerLeaderboardPlaytime(timeframe):
     logger.info(f"playerLeaderboardPlaytime, timeframe: {timeframe}")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    endDate = datetime.now()
-    if timeframe == "Last 14 Days":
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-
-    if startDate is None:
-        cursor.execute("""
-            SELECT username, playtime
-            FROM (
-                SELECT *
-                FROM users
-                WHERE (uuid, timestamp) IN (
-                    SELECT uuid, MAX(timestamp)
-                    FROM users
-                    GROUP BY uuid
-                )
-            )
-            ORDER BY playtime DESC
-            LIMIT 100;
-        """)
-    else:
-        query = """
-            WITH time_bounds AS (
-                SELECT 
-                    uuid,
-                    MIN(timestamp) AS min_time,
-                    MAX(timestamp) AS max_time
-                FROM users
-                WHERE timestamp BETWEEN ? AND ?
-                GROUP BY uuid
-            ),
-            playtime_diff AS (
-                SELECT
-                    tb.uuid,
-                    (max_snap.playtime - min_snap.playtime) AS playtime_gained
-                FROM time_bounds tb
-                JOIN users min_snap ON min_snap.uuid = tb.uuid AND min_snap.timestamp = tb.min_time
-                JOIN users max_snap ON max_snap.uuid = tb.uuid AND max_snap.timestamp = tb.max_time
-                WHERE min_snap.playtime != -1
-            ),
-            latest_username AS (
-                SELECT uuid, username
-                FROM users
-                WHERE (uuid, timestamp) IN (
-                    SELECT uuid, MAX(timestamp)
-                    FROM users
-                    GROUP BY uuid
-                )
-            )
-            SELECT 
-                lu.username,
-                pd.playtime_gained,
-                RANK() OVER (ORDER BY pd.playtime_gained DESC) AS rank
-            FROM playtime_diff pd
-            JOIN latest_username lu ON lu.uuid = pd.uuid
-            WHERE pd.playtime_gained > 0
-            ORDER BY pd.playtime_gained DESC
-            LIMIT 100;
-        """
-        cursor.execute(query, [
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardPlaytime?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardPlaytime, success is {success}, jsonData is {jsonData}")   
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) 
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
@@ -2328,126 +1059,8 @@ def rollGiveaway(weeklyNames, rollcount):
     return chances, winners
 
 def mapCreator():
-    map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
-    font = ImageFont.truetype("lib/documents/arial.ttf", 40)
-    territoryCounts = defaultdict(int)
-    namePrefixMap = {}
-
-    def coordToPixel(x, z):
-        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
-
-    with open("territories.json", "r") as f:
-        local_territories = json.load(f)
-    success, r = makeRequest("https://athena.wynntils.com/cache/get/guildList")
-    color_map = {
-        g["prefix"]: g.get("color", "#FFFFFF")
-        for g in r.json()
-        if g.get("prefix")}
-
-    # get territory data
-    success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
-    territory_data = r.json()
-
-    overlay = Image.new("RGBA", map_img.size)
-    overlay_draw = ImageDraw.Draw(overlay)
-    draw = ImageDraw.Draw(map_img)
-
-    # Loops through all territories, 
-    for name, data in local_territories.items():
-        if "Trading Routes" not in data: #shouldnt happen but 
-            continue
-        try:
-            x1 = (data["Location"]["start"][0] + data["Location"]["end"][0]) // 2
-            z1 = (data["Location"]["start"][1] + data["Location"]["end"][1]) // 2
-            px1, py1 = coordToPixel(x1, z1)
-        except KeyError:
-            continue
-
-        for destinationName in data["Trading Routes"]:
-            destData = local_territories.get(destinationName)
-            if not destData: # Shouldnt happen but
-                continue
-            try:
-                x2 = (destData["Location"]["start"][0] + destData["Location"]["end"][0]) // 2
-                z2 = (destData["Location"]["start"][1] + destData["Location"]["end"][1]) // 2
-                px2, py2 = coordToPixel(x2, z2)
-            except KeyError:
-                continue
-
-            draw.line([(px1, py1), (px2, py2)], fill=(10, 10, 10), width=5) # lines are not fully black
-    for name, info in territory_data.items():
-        try:
-            startX, startZ = info["location"]["start"]
-            endX, endZ = info["location"]["end"]
-            prefix = info["guild"]["prefix"]
-        except (KeyError, TypeError):
-            continue
-
-        color_hex = color_map.get(prefix, "#FFFFFF")
-        try:
-            color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
-        except:
-            color_rgb = (255, 255, 255)
-
-        x1, y1 = coordToPixel(startX, startZ)
-        x2, y2 = coordToPixel(endX, endZ)
-        xMin, xMax = sorted([x1, x2])
-        yMin, yMax = sorted([y1, y2])
-
-        overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color_rgb, 64)) # Draws the inside with the opacity
-        draw.rectangle([xMin, yMin, xMax, yMax], outline=color_rgb, width=8) # Draws border of territory
-
-        bbox = font.getbbox(prefix)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-        text_x = (xMin + xMax) // 2 - text_w // 2
-        text_y = (yMin + yMax) // 2 - text_h // 2
-
-        # Adds the black outline to the text
-        for dx in (-2, 0, 2):
-            for dy in (-2, 0, 2):
-                if dx or dy:
-                    draw.text((text_x + dx, text_y + dy), prefix, font=font, fill="black")
-
-        draw.text((text_x, text_y), prefix, font=font, fill=color_rgb)
-
-    for info in territory_data.values():
-        try: 
-            prefix = info["guild"]["prefix"]
-            name = info["guild"]["name"]
-            territoryCounts[prefix] += 1
-            namePrefixMap[prefix] = name
-        except (KeyError, TypeError):
-            continue
-    leaderboardGuilds = sorted(territoryCounts.items(), key=lambda x: x[1], reverse=True)
-    legendLines = [
-        f"{i+1}. {namePrefixMap[prefix]} ({prefix}) - {count} Territories"
-        for i, (prefix, count) in enumerate(leaderboardGuilds)
-    ]
-
-    legendPadding = 20
-    lineHeight = font.getbbox("Hg")[3] - font.getbbox("Hg")[1] + 10
-    # Bottom left
-    boxX = 50
-    boxY = map_img.height - (lineHeight * len(legendLines) + legendPadding * 2) - 50
-
-    for i, (prefix, count) in enumerate(leaderboardGuilds):
-        color_hex = color_map.get(prefix, "#FFFFFF")
-        try:
-            text_color = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
-        except:
-            text_color = (255, 255, 255)
-        
-        text = f"{i+1}. {namePrefixMap[prefix]} ({prefix}) - {count} Territories"
-        draw.text((boxX + legendPadding, boxY + legendPadding + i * lineHeight), text, font=font, fill=text_color)
-    
-    # Blend the full overlay just once
-    mapImg = Image.alpha_composite(map_img, overlay)
-    scale_factor = 0.4
-    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
-    mapImg = mapImg.resize(new_size, Image.LANCZOS)
-    mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/current")
+    mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_map.png")
     embed = discord.Embed(
@@ -2459,68 +1072,8 @@ def mapCreator():
     return file, embed
 
 def heatmapCreator(timeframe):
-    if timeframe == "Last 7 Days": # We handle it.
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe != "Everything": # we deal with everything later on
-        startDay, endDay = timeframeMap1.get(timeframe, (None, None))
-        startDate = datetime.strptime(startDay, "%m/%d/%y")
-        endDate = datetime.strptime(endDay, "%m/%d/%y")
-    map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
-    def coordToPixel(x, z):
-        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
-
-    with shelve.open(territoryFilePath) as territoryStorage:
-        historicalTerritories = territoryStorage.get("historicalTerritories", {})
-    success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
-    territory_data = r.json()
-    activityCount = defaultdict(int)
-    if timeframe == "Everything": # add it all
-        for day in historicalTerritories.values():
-            for territory, count in day.items():
-                activityCount[territory] += count
-    else:
-        for date, data in historicalTerritories.items():
-            fullDate = datetime.strptime(date + f"/{datetime.now().year}", "%m/%d/%Y")
-            if startDate <= fullDate <= endDate: # Check if its between our area
-                for territory, count in data.items():
-                    activityCount[territory] += count
-    #logger.info(activityCount)
-    maxCount = max(activityCount.values(), default=1)
-
-    def heatToColor(heat): # I'd like to make this better in the future
-        r, g, b, _ = [int(255 * c) for c in cm.seismic(heat)]
-        return (r, g, b)
-
-    overlay = Image.new("RGBA", map_img.size)
-    overlay_draw = ImageDraw.Draw(overlay)
-    for name, info in territory_data.items():
-        try:
-            startX, startZ = info["location"]["start"]
-            endX, endZ = info["location"]["end"]
-        except (KeyError, TypeError):
-            continue
-
-        switchCount = activityCount.get(name, 0)
-        heat = switchCount / maxCount if maxCount else 0
-        color = heatToColor(heat)
-        alpha = int(64 + 191 * heat) if switchCount > 0 else 128 # my genius is frightening
-
-        x1, y1 = coordToPixel(startX, startZ)
-        x2, y2 = coordToPixel(endX, endZ)
-        xMin, xMax = sorted([x1, x2])
-        yMin, yMax = sorted([y1, y2])
-        overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color, alpha))
-    mapImg = Image.alpha_composite(map_img, overlay)
-    mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
-    mapBytes.seek(0)
-
-    scale_factor = 0.4
-    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
-    mapImg = mapImg.resize(new_size, Image.LANCZOS)
-    mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/heatmap?timeframe={timeframe}")
+    mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_heatmap.png")
     embed = discord.Embed(
@@ -2897,493 +1450,112 @@ def getHelp(arg):
 
 def guildLeaderboardXPButGuildSpecific(guild_uuid, timeframe):
     logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardXPButGuildSpecific, timeframe: {timeframe}")
-    conn = sqlite3.connect('database/guild_activity.db')
-    cursor = conn.cursor()
-
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # fallback
-        startDate = None
-        endDate = None
-        
-    query = """
-        WITH time_bounds AS (
-            SELECT 
-                guild_uuid, 
-                member_uuid, 
-                MIN(timestamp) as min_time, 
-                MAX(timestamp) as max_time
-            FROM member_snapshots 
-            WHERE guild_uuid = ?
-    """
-    params = [guild_uuid]
-
-    if startDate and endDate:
-        query += " AND timestamp BETWEEN ? AND ? "
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-
-    query += """
-            GROUP BY guild_uuid, member_uuid
-        ),
-        contribution_changes AS (
-            SELECT 
-                t.guild_uuid,
-                t.member_uuid,
-                COALESCE(
-                    (SELECT contribution 
-                     FROM member_snapshots 
-                     WHERE guild_uuid = t.guild_uuid 
-                     AND member_uuid = t.member_uuid 
-                     AND timestamp = t.max_time
-                    ) - 
-                    (SELECT contribution 
-                     FROM member_snapshots 
-                     WHERE guild_uuid = t.guild_uuid 
-                     AND member_uuid = t.member_uuid 
-                     AND timestamp = t.min_time
-                    ), 0
-                ) as xp_gained
-            FROM time_bounds t
-        ),
-        player_totals AS (
-            SELECT 
-                c.member_uuid,
-                m.name as player_name,
-                c.xp_gained
-            FROM contribution_changes c
-            JOIN members m ON m.uuid = c.member_uuid
-            WHERE c.xp_gained > 0
-        )
-        SELECT 
-            player_name,
-            xp_gained,
-            RANK() OVER (ORDER BY xp_gained DESC) as rank
-        FROM player_totals
-        ORDER BY xp_gained DESC
-        LIMIT 100;
-    """
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardXPButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardXPButGuildSpecific, success is {success}, jsonData is {jsonData}")   
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def guildLeaderboardOnlineButGuildSpecific(guild_uuid, timeframe):
     logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardOnlineButGuildSpecific, timeframe: {timeframe}")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    endDate = datetime.now()
-
-    if timeframe == "Last 14 Days":
-        startDate = endDate - timedelta(days=14)
-        days = 14.0
-    elif timeframe == "Last 7 Days":
-        startDate = endDate - timedelta(days=7)
-        days = 7.0
-    elif timeframe == "Last 3 Days":
-        startDate = endDate - timedelta(days=3)
-        days = 3.0
-    elif timeframe == "Last 24 Hours":
-        startDate = endDate - timedelta(hours=24)
-        days = 1.0
-    elif timeframe == "Everything":
-        startDate = endDate - timedelta(days=90) # Moreso so we get evetything
-        days = 30.0
-
-    # Build query dynamically
-    query = f"""
-        WITH recent_users AS (
-            SELECT DISTINCT uuid, username
-            FROM users
-            WHERE guildUUID = ?
-    """
-    params = [guild_uuid]
-
-    if startDate and endDate:
-        query += " AND timestamp BETWEEN ? AND ?"
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-    else:
-        query += " AND timestamp >= datetime('now', '-7 day')"
-
-    query += f"""
-        ),
-        recent_playtime AS (
-            SELECT uuid, timestamp, playtime
-            FROM users
-    """
-
-    if startDate and endDate:
-        query += " WHERE timestamp BETWEEN ? AND ?"
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-    else:
-        query += " WHERE timestamp >= datetime('now', '-7 day')"
-
-    query += """
-        ),
-        ranked_playtime AS (
-            SELECT
-                rp.uuid,
-                rp.playtime,
-                rp.timestamp,
-                ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp ASC) AS rn_start,
-                ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp DESC) AS rn_end
-            FROM recent_playtime rp
-        ),
-        playtime_start AS (
-            SELECT uuid, playtime AS playtime_start
-            FROM ranked_playtime
-            WHERE rn_start = 1
-        ),
-        playtime_end AS (
-            SELECT uuid, playtime AS playtime_end
-            FROM ranked_playtime
-            WHERE rn_end = 1
-        ),
-        playtime_diff AS (
-            SELECT 
-                ru.username,
-                pe.uuid,
-                ROUND((pe.playtime_end - ps.playtime_start) / ?, 2) AS avg_daily_hours
-            FROM playtime_start ps
-            JOIN playtime_end pe ON ps.uuid = pe.uuid
-            JOIN recent_users ru ON ru.uuid = ps.uuid
-            WHERE ps.playtime_start != -1
-        )
-        SELECT 
-            username,
-            avg_daily_hours,
-            RANK() OVER (ORDER BY avg_daily_hours DESC) AS rank
-        FROM playtime_diff
-        ORDER BY avg_daily_hours DESC
-        LIMIT 100;
-    """
-
-    params.append(days)
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardOnlineButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardOnlineButGuildSpecific, success is {success}, jsonData is {jsonData}")   
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]])
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
 def guildLeaderboardWarsButGuildSpecific(guild_uuid, timeframe):
     logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardWarsButGuildSpecific, timeframe: {timeframe}")
-    conn = sqlite3.connect('database/player_activity.db')
-    cursor = conn.cursor()
-
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 3 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=3)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # fallback
-        startDate = None
-        endDate = None
-
-    query = """
-        WITH recent_snapshots AS (
-            SELECT *
-            FROM users_global
-            WHERE uuid IN (
-                SELECT DISTINCT uuid 
-                FROM users 
-                WHERE guildUUID = ?
-    """
-    params = [guild_uuid]
-
-    if startDate and endDate:
-        query += " AND timestamp BETWEEN ? AND ? "
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-        query += ") AND timestamp BETWEEN ? AND ? "
-        params.extend([
-            startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-            endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        ])
-    else:
-        query += ") "
-
-    query += """
-        ),
-        ranked_snapshots AS (
-            SELECT
-                uuid,
-                username,
-                wars,
-                timestamp,
-                ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp ASC) AS rn_asc,
-                ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp DESC) AS rn_desc
-            FROM recent_snapshots
-        ),
-        min_wars AS (
-            SELECT uuid, wars AS wars_start
-            FROM ranked_snapshots
-            WHERE rn_asc = 1
-        ),
-        max_wars AS (
-            SELECT uuid, username, wars AS wars_end
-            FROM ranked_snapshots
-            WHERE rn_desc = 1
-        ),
-        wars_changes AS (
-            SELECT 
-                max.uuid,
-                max.username,
-                max.wars_end - min.wars_start AS wars_gained
-            FROM max_wars max
-            JOIN min_wars min ON max.uuid = min.uuid
-        )
-        SELECT 
-            username,
-            wars_gained,
-            RANK() OVER (ORDER BY wars_gained DESC) AS rank
-        FROM wars_changes
-        ORDER BY wars_gained DESC
-        LIMIT 100;
-    """
-
-    cursor.execute(query, params)
-    snapshots = cursor.fetchall()
-    conn.close()
-
-    if not snapshots:
-        return None
-
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardWarsButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardWarsButGuildSpecific, success is {success}, jsonData is {jsonData}")   
+        return []
     listy = []
-    for row in snapshots:
-        listy.append([row[0], row[1]]) #name, value
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
     return listy
 
-def guildLeaderGraids(timeframe):
-    logger.info(f"guildLeaderGraids")
-    
-    confirmedGRaid = getGraidDatabaseData("guild_raids")
-    #logger.info(f"confirmedGRaid: {confirmedGRaid}")
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # A season
-        startDay, endDay = timeframeMap2.get(timeframe, (None, None))
-        if startDay and endDay:
-            startDate = datetime.strptime(startDay, "%m/%d/%y")
-            endDate = datetime.strptime(endDay, "%m/%d/%y")
-        else:
-            # fallback
-            startDate = None
-            endDate = None
-    leaderboard = {}
-    for prefix, entries in confirmedGRaid.items():
-        count = 0
-        for entry in entries:
-            ts = datetime.fromtimestamp(entry["timestamp"])
-            if startDate and endDate:
-                if startDate <= ts <= endDate:
-                    count += 1
-            elif not startDate and not endDate:  # all data, everything
-                count += 1
-        leaderboard[prefix] = count
-        
-    sortedLeaderboard = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
-    
-    return sortedLeaderboard
+def guildLeaderboardGraids(timeframe):
+    logger.info(f"guildLeaderboardGraids")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardGraids?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardGraids, success is {success}, jsonData is {jsonData}")   
+        return []
+    listy = []
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
-def guildLeaderGraidsButGuildSpecific(prefix, timeframe):
-    logger.info(f"guildLeaderGraidsButGuildSpecific. prefix is {prefix}")
-    
-    confirmedGRaid = getGraidDatabaseData("guild_raids")
+    return listy
 
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-    else:  # A season
-        startDay, endDay = timeframeMap2.get(timeframe, (None, None))
-        if startDay and endDay:
-            startDate = datetime.strptime(startDay, "%m/%d/%y")
-            endDate = datetime.strptime(endDay, "%m/%d/%y")
-        else:
-            startDate = None
-            endDate = None
+def guildLeaderboardGraidsButGuildSpecific(prefix, timeframe):
+    logger.info(f"guildLeaderboardGraidsButGuildSpecific. prefix is {prefix}")
+    # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
+    if not success:
+        logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {jsonData}")  
+        return []
+    searchJson = r.json()
+    uuid = searchJson["uuid"]
 
-    player_counter = Counter()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardGraidsButGuildSpecific?timeframe={timeframe}&uuid={uuid}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific, success is {success}, jsonData is {jsonData}")   
+        return []
+    listy = []
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
-    for entry in confirmedGRaid[prefix]:
-        ts = datetime.fromtimestamp(entry["timestamp"])
-        if startDate and endDate:
-            if startDate <= ts <= endDate:
-                for player in entry["party"]:
-                    player_counter[player] += 1
-        elif not startDate and not endDate:  # "Everything"
-            for player in entry["party"]:
-                player_counter[player] += 1
-
-    # Sort and display
-    sortedPlayers = player_counter.most_common(100)
-    return sortedPlayers
+    return listy
 
 def playerLeaderboardGraids(timeframe):
     logger.info(f"playerLeaderboardGraids timeframe: {timeframe}")
     
-    confirmedGRaid = getGraidDatabaseData("guild_raids")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardGraids?timeframe={timeframe}")
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error in playerLeaderboardGraids, success is {success}, jsonData is {jsonData}")   
+        return []
+    listy = []
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
 
-    # Handle timeframe logic
-    if timeframe == "Last 14 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=14)
-        cutoff_timestamp = time.time() - (14*86400)
-    elif timeframe == "Last 7 Days":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(days=7)
-        cutoff_timestamp = time.time() - (7*86400)
-    elif timeframe == "Last 24 Hours":
-        endDate = datetime.now()
-        startDate = endDate - timedelta(hours=24)
-        cutoff_timestamp = time.time() - (1*86400)
-    elif timeframe == "Everything":
-        startDate = None
-        endDate = None
-        cutoff_timestamp = 0
-    else:  # fallback to 14 days
-        cutoff_timestamp = time.time() - (14*86400)
-
-    player_counter = Counter()
-
-    for entries in confirmedGRaid.values():
-        for entry in entries:
-            if entry["timestamp"] >= cutoff_timestamp:
-                for player in entry["party"]:
-                    player_counter[player] += 1
-
-    # Sort and display
-    sortedPlayers = player_counter.most_common(100) # Limit to 100
-    
-    return sortedPlayers
+    return listy
 
 def guildActivityGraids(prefix):
+    # because of a bad setup we need to convert to uuid
     logger.info(f"guildActivityGraids, prefix: {prefix}")
-    
-    confirmedGRaid = getGraidDatabaseData("guild_raids")
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
+    jsonData = r.json()
+    uuid = jsonData["uuid"]
 
-    if prefix not in confirmedGRaid:
-        return None, None
-    now = datetime.utcnow()
-    cutoff = now - timedelta(days=14)
-
-    # Get and filter timestamps
-    timestamps = [
-        datetime.utcfromtimestamp(entry["timestamp"])
-        for entry in confirmedGRaid[prefix]
-        if datetime.utcfromtimestamp(entry["timestamp"]) >= cutoff
-    ]
-    timestamps.sort()
-
-    if not timestamps:
-        return None, None
-
-    # Cumulative count
-    times = timestamps
-    cumulative_counts = list(range(1, len(times) + 1))
-
-    # Raids per day
-    day_counts = Counter(t.date() for t in times)
-    max_day = max(day_counts.values())
-    avg_day = sum(day_counts.values()) / len(day_counts)
-    total_raids = len(times)
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
-    plt.fill_between(times, 0, cumulative_counts, alpha=0.3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
-    plt.ylim(0, max(cumulative_counts) + 5)
-    plt.title(f'Guild Raid Activity - {prefix}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Total Guild Raids', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.margins(x=0.01)
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityGraids?uuid={uuid}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='graid_graph.png')
     embed = discord.Embed(
         title=f"Guild Raid Completion for {prefix}",
-        description=f"Total Guild Raids: {total_raids}\nMost Guild Raids in One Day: {max_day}\nAverage Guild Raids per Day: {avg_day:.2f}",
+        description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_day']}\nAverage Guild Raids per Day: {jsonData['avg_day']:.2f}",
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://graid_graph.png")
@@ -3394,60 +1566,14 @@ def guildActivityGraids(prefix):
 
 def playerActivityGraids(username):
     logger.info(f"guildActivityGraids, username: {username}")
-    confirmedGRaid = getGraidDatabaseData("guild_raids")
-
-    now = datetime.utcnow()
-    cutoff = now - timedelta(days=14)
-
-    # Step 1: Collect all timestamps the user appeared in
-    timestamps = []
-    for entries in confirmedGRaid.values():
-        for entry in entries:
-            if username in entry.get("party", []):
-                ts = datetime.utcfromtimestamp(entry["timestamp"])
-                if ts >= cutoff:
-                    timestamps.append(ts)
-
-    timestamps.sort()
-    if not timestamps:
-        return None, None
-
-    # Step 2: Build cumulative count
-    cumulative_counts = list(range(1, len(timestamps) + 1))
-
-    # Step 3: Daily stats
-    day_counts = Counter(t.date() for t in timestamps)
-    max_day = max(day_counts.values())
-    avg_day = sum(day_counts.values()) / len(day_counts)
-    total_raids = len(timestamps)
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(timestamps, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
-    plt.fill_between(timestamps, 0, cumulative_counts, alpha=0.3)
-    time_formatter = DateFormatter('%m/%d %H:%M')
-    plt.gca().xaxis.set_major_formatter(time_formatter)
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
-    plt.ylim(0, max(cumulative_counts) + 5)
-    plt.title(f'Guild Raid Activity - {username}', fontsize=14)
-    plt.xlabel('Date (UTC)', fontsize=12)
-    plt.ylabel('Total Guild Raids', fontsize=12)
-    plt.grid(True, linestyle='-', alpha=0.5)
-    plt.legend()
-    plt.tight_layout()
-    plt.margins(x=0.01)
-    plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-        transform=plt.gca().transAxes, 
-        fontsize=9, verticalalignment='bottom', 
-        horizontalalignment='right',color='gray')
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    buf.seek(0)
-    plt.close()
+    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityGraids?name={username}")
+    jsonData = r.json()
+    buf = BytesIO(base64.b64decode(jsonData["image"]))
     
     file = discord.File(buf, filename='graid_graph.png')
     embed = discord.Embed(
         title=f"Guild Raid Completion for {username}",
-        description=f"Total Guild Raids: {total_raids}\nMost Guild Raids in One Day: {max_day}\nAverage Guild Raids per Day: {avg_day:.2f}",
+        description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}",
         color=discord.Color.blue()
     )
     embed.set_image(url="attachment://graid_graph.png")
@@ -3486,178 +1612,6 @@ def detect_graids(eligibleGuilds): # i will credit this to slumbrous (+my additi
                     confirmedGRaid[prefix].append({"timestamp": time.time(), "party": party})
                     writeGraidDatabaseData("guild_raids", confirmedGRaid)
                     #logger.info(f"confirmedGRaid: timestamp: {time.time()} party: {party}")
-
-def validateValue(expectedType, value, guild: discord.Guild):
-    roleRegex = re.compile(r"<@&(\d+)>")
-    channelRegex = re.compile(r"<#(\d+)>")
-    if expectedType == "number":
-        try:
-            return int(value)
-        except ValueError:
-            raise ValueError("Value must be a number.")
-    elif expectedType == "bool":
-        lowered = value.lower()
-        if lowered in ("true", "yes", "1"): # idk what else would be used
-            return True
-        elif lowered in ("false", "no", "0"): 
-            return False
-        raise ValueError("Value must be true/false.")
-    elif expectedType == "role":
-        # Check if value is a mention
-        match = roleRegex.fullmatch(value)
-        if match:
-            role_id = int(match.group(1))
-            role = guild.get_role(role_id)
-            if not role:
-                raise ValueError(f"Role with ID {role_id} not found.")
-            return str(role.id)
-        else:
-            # Fallback, try and find user name
-            role = discord.utils.get(guild.roles, name=value)
-            if not role:
-                raise ValueError(f"Role '{value}' not found.")
-            return str(role.id)
-    elif expectedType == "channel":
-        match = channelRegex.fullmatch(value)
-        if match:
-            channel_id = int(match.group(1))
-            channel = guild.get_channel(channel_id)
-            if not channel:
-                raise ValueError(f"Channel with ID {channel_id} not found.")
-            return str(channel.id)
-        else: # fallback, try to find channel name
-            channel = discord.utils.get(guild.channels, name=value)
-            if not channel:
-                raise ValueError(f"Channel '{value}' not found.")
-            return str(channel.id)
-    elif expectedType == "rank":
-        valid_ranks = ["Recruit", "Recruiter", "Captain", "Strategist", "Chief", "Owner"]
-        if value not in valid_ranks:
-            raise ValueError(f"Value must be one of: {', '.join(valid_ranks)}.")
-        return value
-    elif expectedType == "prefix":
-        success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/guild")
-        if not success: # Check if theyre a real user
-            raise ValueError(f"An error occured while validating your prefix.")
-        else: # theyre real
-            jsonData = r.json()
-            prefixList = [v["prefix"] for v in jsonData.values()]
-            if value not in prefixList:
-                raise ValueError(f"{value} is not a valid prefix.")
-        return value
-    else:
-        return value
-
-def updateConfig(serverID, configName, configValue):
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS config (
-                serverID INTEGER,
-                configName TEXT,
-                configValue TEXT,
-                PRIMARY KEY (serverID, configName)
-            )
-        """)
-        cur.execute("""
-            INSERT INTO config (serverID, configName, configValue)
-            VALUES (?, ?, ?)
-            ON CONFLICT(serverID, configName)
-            DO UPDATE SET configValue = excluded.configValue
-        """, (serverID, configName, configValue)) # updates or inserts
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"Failed to update config DB {serverID}: {e}")
-
-def checkVerification(serverID):
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT configName, configValue
-            FROM config
-            WHERE serverID = ? AND configName IN (?, ?, ?)
-        """, (serverID, "verify_apps", "verify_rank", "log_channel"))
-        rows = dict(cur.fetchall())
-        conn.close()
-        return rows.get("verify_apps", ""), rows.get("verify_rank"), rows.get("log_channel")
-    except Exception as e:
-        logger.warning(f"Failed to fetch info {serverID}: {e}")
-
-def getDatabaseData(serverID):
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-        cur.execute("SELECT configName, configValue FROM config WHERE serverID = ?", (serverID,))
-        rows = dict(cur.fetchall())
-        conn.close()
-        return rows
-    except Exception as e:
-        logger.warning(f"Failed to fetch info2 {serverID}: {e}")
-
-def listConfig(serverID, configTypes):
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-
-        cur.execute("SELECT configName, configValue FROM config WHERE serverID = ?", (serverID,))
-        rows = dict(cur.fetchall())
-        conn.close()
-        lines = [f"{name}: {rows.get(name, 'Unset')}" for name in configTypes]
-        desc = "```\n" + "\n".join(lines) + "\n```"
-        embed = discord.Embed(
-            title=f"Server {serverID} Configuration.",
-            description=desc,
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-        return embed
-    except Exception as e:
-        logger.warning(f"Failed to list config for server {serverID}: {e}")
-        embed = discord.Embed(
-            title="Error",
-            description="Could not fetch config values.",
-            color=discord.Color.red()
-        )
-        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-        return embed
-
-def storeVerifiedUser(serverID, discordUser, ingameUser):
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS verified_users (
-                serverID INTEGER,
-                discordUser TEXT,
-                gameUser TEXT,
-                PRIMARY KEY (serverID, discordUser)
-            )
-        """)
-        cur.execute("""
-            INSERT INTO verified_users (serverID, discordUser, gameUser)
-            VALUES (?, ?, ?)
-            ON CONFLICT(serverID, discordUser)
-            DO UPDATE SET gameUser = excluded.gameUser
-        """, (serverID, discordUser, ingameUser)) # updates or inserts
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"Failed to update config DB {serverID}: {e}")
-
-def getAllDatabaseData():
-    try:
-        conn = sqlite3.connect(CONFIGDBPATH)
-        cur = conn.cursor()
-        cur.execute("SELECT serverID, discordUser, gameUser FROM verified_users")
-        rows = cur.fetchall()
-        conn.close()
-        return rows
-    except Exception as e:
-        logger.warning(f"Failed to fetch info for getAllDatabaseData: {e}")
-        return []
     
 def playerGuildHistory(playerUUID, username):
     conn = sqlite3.connect('database/guild_activity.db')
@@ -3751,3 +1705,16 @@ def guildOnline(name, r):
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     
     return embed
+
+def extractValues(row): # we use this for our internal api so we dont have to know the key names and instead copy paste code because thats easier!
+    if isinstance(row, dict):
+        name = next((v for k, v in row.items() if isinstance(v, str)), None)
+        value = next((v for k, v in row.items() if isinstance(v, (int, float))), None)
+        if name is not None and value is not None:
+            return [name, value]
+        items = list(row.items())
+        if len(items) >= 2:
+            return [items[0][1], items[1][1]]
+    elif isinstance(row, (list, tuple)) and len(row) >= 2:
+        return [row[0], row[1]]
+    return None

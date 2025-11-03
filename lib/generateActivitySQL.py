@@ -11,7 +11,7 @@ import logging
 import logging.handlers
 import math
 import sys
-import traceback
+from dateutil.relativedelta import relativedelta
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.makeRequest import makeRequest
@@ -39,40 +39,43 @@ formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-def connect_to_db():
-    logger.info("Connecting to database...")
+def connectGuildDB():
+    logger.info("Connecting to guild database...")
     os.makedirs(DATABASE_DIR, exist_ok=True)
     db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
     conn = sqlite3.connect(db_path, isolation_level=None)
 
     # Optimized database configuration
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA auto_vacuum=FULL")
-    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+    conn.execute("PRAGMA wal_autocheckpoint=2000")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-20000")  # 20MB cache
+    conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
+    conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
 
-    if not check_tables_exist(conn):
-        create_tables(conn)
+    if not checkTablesExist(conn):
+        createTables(conn)
     
-    logger.info("Database connection established")
     return conn
 
-def connect_to_player_db():
+def connectPlayerDB():
+    logger.info("Connecting to player database...")
     os.makedirs(DATABASE_DIR, exist_ok=True)
     db_path = os.path.join(DATABASE_DIR, "player_activity.db")
     conn = sqlite3.connect(db_path, isolation_level=None)
 
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA auto_vacuum=FULL")
-    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+    conn.execute("PRAGMA wal_autocheckpoint=2000")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-20000")  # 20MB cache
+    conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
+    conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
-
+    
+    # We are too lazy to create a schema.
     conn.execute('''
     CREATE TABLE IF NOT EXISTS users (
         username TEXT NOT NULL,
@@ -121,13 +124,26 @@ def connect_to_player_db():
     );
     ''')
 
-    # Corrected table names in index creation
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS users_guilds (
+        username TEXT NOT NULL,
+        uuid TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        guildUUID TEXT,
+        guildName TEXT,
+        guildPrefix TEXT,
+        PRIMARY KEY (uuid, timestamp)
+    );
+    ''')
+
     conn.execute('CREATE INDEX IF NOT EXISTS idx_users_uuid_timestamp ON users(uuid, timestamp);')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_usersglobal_uuid_timestamp ON users_global(uuid, timestamp);')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_userscharacters_uuid_timestamp ON users_characters(uuid, timestamp);')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_usersguilds_uuid_timestamp ON users_guilds(uuid, timestamp DESC);')
+
     return conn
 
-def fetch_and_store_player_data(player_db_conn, username):
+def storePlayerData(player_db_conn, username):
     success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
     if not success:
         logger.error(f"Unsuccessful request! Success is {success}, r is {r}, r.json() is {r.json()}")
@@ -174,9 +190,11 @@ def fetch_and_store_player_data(player_db_conn, username):
             server = None
 
         if jsonData["guild"] is None:
-            guildUUID = None
+            guildUUID = guildName = guildPrefix = "None"
         else:
             guildUUID = jsonData["guild"]["uuid"]
+            guildName = jsonData["guild"]["name"]
+            guildPrefix = jsonData["guild"]["prefix"]
 
         player_db_conn.execute(
             """
@@ -185,233 +203,103 @@ def fetch_and_store_player_data(player_db_conn, username):
         """,
             (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), online, server, firstJoin, jsonData["lastJoin"], playtime, guildUUID, str(jsonData["restrictions"]))
         )
+
+        player_db_conn.execute( # Only inserts if the most recent timestamp entry is different uuid
+            """
+            INSERT INTO users_guilds (username, uuid, timestamp, guildUUID, guildName, guildPrefix)
+            SELECT ?, ?, ?, ?, ?, ?
+            WHERE ? != COALESCE(
+                (SELECT guildUUID FROM users_guilds WHERE uuid = ? ORDER BY timestamp DESC LIMIT 1),
+                ''
+            )
+            """,
+            (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), guildUUID, guildName, guildPrefix,guildUUID, jsonData["uuid"])
+        )
+
     except Exception as e:
-        logger.error(f"Unsuccessful request2! Success is {success}, r is {r}.")
+        logger.error(f"Unsuccessful request2! Success is {success}, r.json() is {r.json()}.")
         logger.error(f"Failed to fetch/store uuid {jsonData['uuid']}: {e}")
 
-def analyze_database_performance(conn):
+def cleanguildDatabase(conn):
     try:
-        cursor = conn.cursor()
-        
-        # Check database statistics
-        integrity_check = cursor.execute("PRAGMA integrity_check").fetchone()
-        logger.info(f"Database Integrity Check: {integrity_check}")
-        
-        # Analyze table sizes
-        cursor.execute("""
-            SELECT 
-                'guild_snapshots' as table_name, 
-                COUNT(*) as row_count, 
-                (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM guild_snapshots)) as percentage
-            FROM guild_snapshots
-            UNION ALL
-            SELECT 
-                'member_snapshots' as table_name, 
-                COUNT(*) as row_count, 
-                (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM member_snapshots)) as percentage
-            FROM member_snapshots
-        """)
-        
-        for row in cursor.fetchall():
-            logger.info(f"Table {row[0]}: {row[1]} rows ({row[2]:.2f}%)")
-    
-    except Exception as e:
-        logger.error(f"Database performance analysis failed: {e}")
-
-def cleanup_database(conn):
-    logger.info("Starting database cleanup...")
-    try:
-        logger.info("Performing WAL checkpoint...")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-        logger.info("Closing database connection...")
         conn.close()
+        logger.info("Database cleaned up and trunucated.")
+    except Exception:
+        logger.exception("Error during database cleanup:")
 
-        # Clean up WAL and SHM files if they exist
-        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
-        wal_path = f"{db_path}-wal"
-        shm_path = f"{db_path}-shm"
-
-        if os.path.exists(wal_path):
-            try:
-                os.remove(wal_path)
-                logger.info("WAL file removed")
-            except OSError as e:
-                logger.info(f"Warning: Could not remove WAL file: {e}")
-
-        if os.path.exists(shm_path):
-            try:
-                os.remove(shm_path)
-                logger.info("SHM file removed")
-            except OSError as e:
-                logger.info(f"Warning: Could not remove SHM file: {e}")
-
-        logger.info("Database cleanup completed")
-
-    except Exception as e:
-        logger.info(f"Error during database cleanup: {e}")
-
-
-def cleanup_old_data(conn, batch_size=500):
-    cutoff_date = get_utc_now() - timedelta(days=30)
-    logger.info(f"Starting data cleanup for records older than {cutoff_date}")
-    cur = conn.cursor()
-
-    # Create indexes if they don't exist
-    logger.info("Ensuring indexes exist...")
-    cur.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_guild_snapshots_timestamp 
-        ON guild_snapshots(timestamp)
-    """
-    )
-    cur.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp 
-        ON member_snapshots(timestamp)
-    """
-    )
-
-    # Cleanup guild_snapshots in batches
-    total_guild_deleted = 0
-    logger.info("Starting guild_snapshots cleanup...")
-    while True:
-        cur.execute(
-            """
-            DELETE FROM guild_snapshots 
-            WHERE timestamp < ? 
-            AND rowid IN (
-                SELECT rowid FROM guild_snapshots 
-                WHERE timestamp < ? 
-                LIMIT ?
-            )
-        """,
-            (cutoff_date, cutoff_date, batch_size),
-        )
-
-        deleted = cur.rowcount
-        total_guild_deleted += deleted
-        if deleted > 0:
-            logger.info(
-                f"Deleted {deleted} guild snapshot records (Total: {total_guild_deleted})"
-            )
-            conn.commit()
-
-        if deleted < batch_size:
-            break
-
-    # Cleanup member_snapshots in batches
-    total_member_deleted = 0
-    logger.info("Starting member_snapshots cleanup...")
-    while True:
-        cur.execute(
-            """
-            DELETE FROM member_snapshots 
-            WHERE timestamp < ? 
-            AND rowid IN (
-                SELECT rowid FROM member_snapshots 
-                WHERE timestamp < ? 
-                LIMIT ?
-            )
-        """,
-            (cutoff_date, cutoff_date, batch_size),
-        )
-
-        deleted = cur.rowcount
-        total_member_deleted += deleted
-        if deleted > 0:
-            logger.info(
-                f"Deleted {deleted} member snapshot records (Total: {total_member_deleted})"
-            )
-            conn.commit()
-
-        if deleted < batch_size:
-            break
-        logger.info("Starting player database cleanup...")
-    player_conn = connect_to_player_db()
-    player_cur = player_conn.cursor()
+def cleanupOldData(conn, batchSize=1000):
+    cutoffDate = get_utc_now() - timedelta(days=30) # Cleanup all data older than 30d
+    logger.info(f"Starting data cleanup for records older than {cutoffDate}")
+    guildCur = conn.cursor()
+    playerConn = connectPlayerDB()
+    playerCur = playerConn.cursor()
     
+    def index(cursor, indexStatements, database):
+        logger.info(f"Ensuring indexes exist for {database}...")
+        for stmt in indexStatements:
+            cursor.execute(stmt)
+
+    index(
+        guildCur, 
+        ["CREATE INDEX IF NOT EXISTS idx_guild_snapshots_timestamp ON guild_snapshots(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp ON member_snapshots(timestamp)"], 
+        "guild_activity.db"
+    )
+    index(
+        playerCur, 
+        ["CREATE INDEX IF NOT EXISTS idx_users_timestamp ON users(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_usersglobal_timestamp ON users_global(timestamp)",
+        "CREATE INDEX IF NOT EXISTS idx_userscharacters_timestamp ON users_characters(timestamp)"], 
+        "player_activity.db"
+    )
+
+    def batchDelete(cursor, tableName, cutoff, batchSize, conn):
+        total_deleted = 0
+        logger.info(f"Starting cleanup for {tableName}...")
+        while True:
+            cursor.execute(f"""
+                DELETE FROM {tableName}
+                WHERE timestamp < ?
+                AND rowid IN (
+                    SELECT rowid FROM {tableName}
+                    WHERE timestamp < ?
+                    LIMIT ?
+                )
+            """, (cutoff, cutoff, batchSize))
+            deleted = cursor.rowcount
+            total_deleted += deleted
+            if deleted > 0:
+                logger.info(f"Deleted {deleted} records from {tableName} (Total: {total_deleted})")
+                conn.commit()
+            if deleted < batchSize:
+                break
+        return total_deleted
     try:
-        # Create indexes for player tables
-        logger.info("Ensuring player indexes exist...")
-        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_users_timestamp ON users(timestamp)")
-        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_usersglobal_timestamp ON users_global(timestamp)")
-        player_cur.execute("CREATE INDEX IF NOT EXISTS idx_userscharacters_timestamp ON users_characters(timestamp)")
+        guildSnapshotCount = batchDelete(guildCur, "guild_snapshots", cutoffDate, batchSize, conn)
+        memberSnapshotCount = batchDelete(guildCur, "member_snapshots", cutoffDate, batchSize, conn)
 
-        # Cleanup users table
-        total_users_deleted = 0
-        logger.info("Cleaning users table...")
-        while True:
-            player_cur.execute("""
-                DELETE FROM users 
-                WHERE timestamp < ? 
-                AND rowid IN (
-                    SELECT rowid FROM users 
-                    WHERE timestamp < ? 
-                    LIMIT ?
-                )
-            """, (cutoff_date, cutoff_date, batch_size))
-            deleted = player_cur.rowcount
-            total_users_deleted += deleted
-            if deleted > 0:
-                logger.info(f"Deleted {deleted} user records (Total: {total_users_deleted})")
-                player_conn.commit()
-            if deleted < batch_size:
-                break
-
-        # Cleanup users_global table
-        total_global_deleted = 0
-        logger.info("Cleaning users_global table...")
-        while True:
-            player_cur.execute("""
-                DELETE FROM users_global 
-                WHERE timestamp < ? 
-                AND rowid IN (
-                    SELECT rowid FROM users_global 
-                    WHERE timestamp < ? 
-                    LIMIT ?
-                )
-            """, (cutoff_date, cutoff_date, batch_size))
-            deleted = player_cur.rowcount
-            total_global_deleted += deleted
-            if deleted > 0:
-                logger.info(f"Deleted {deleted} global records (Total: {total_global_deleted})")
-                player_conn.commit()
-            if deleted < batch_size:
-                break
-
-        # Cleanup users_characters table
-        total_characters_deleted = 0
-        logger.info("Cleaning users_characters table...")
-        while True:
-            player_cur.execute("""
-                DELETE FROM users_characters 
-                WHERE timestamp < ? 
-                AND rowid IN (
-                    SELECT rowid FROM users_characters 
-                    WHERE timestamp < ? 
-                    LIMIT ?
-                )
-            """, (cutoff_date, cutoff_date, batch_size))
-            deleted = player_cur.rowcount
-            total_characters_deleted += deleted
-            if deleted > 0:
-                logger.info(f"Deleted {deleted} character records (Total: {total_characters_deleted})")
-                player_conn.commit()
-            if deleted < batch_size:
-                break
-
-        logger.info(f"Player cleanup completed. Deleted - Users: {total_users_deleted}, Global: {total_global_deleted}, Characters: {total_characters_deleted}")
-
+        userCount = batchDelete(playerCur, "users", cutoffDate, batchSize, playerConn)
+        userGlobalCount = batchDelete(playerCur, "users_global", cutoffDate, batchSize, playerConn)
+        characterCount = batchDelete(playerCur, "users_characters", cutoffDate, batchSize, playerConn)
+    except Exception as e:
+        logger.exception(f"There was an error while cleaning up old data:")
     finally:
-        logger.info("Closing player database connection...")
-        player_conn.close()
+        playerConn.close()
+        logger.info(
+            f"Cleanup Stats:\n"
+            f"  Guild Snapshots: {guildSnapshotCount}\n"
+            f"  Member Snapshots: {memberSnapshotCount}\n"
+            f"  Users: {userCount}\n"
+            f"  Users Global: {userGlobalCount}\n"
+            f"  Users Characters: {characterCount}"
+        )       
 
-
-def create_monthly_backup():
+def createBackup():
     backup_flag_file = os.path.join(BACKUP_DIR, "last_backup.txt")
     current_month = datetime.now().strftime("%Y_%m")
-
+    lastMonth = (datetime.now() - relativedelta(months=1)).strftime("%Y_%m") # We need last month because we are creating a bakcup for the last month so we want it named right
+    
     # Check if we already did backup this month
     if os.path.exists(backup_flag_file):
         with open(backup_flag_file, "r") as f:
@@ -427,12 +315,12 @@ def create_monthly_backup():
     logger.info("Starting monthly backup creation...")
     os.makedirs(BACKUP_DIR, exist_ok=True)
     guildPath = os.path.join(DATABASE_DIR, "guild_activity.db")
-    guildZipPath = os.path.join(BACKUP_DIR, f"guild_activity_backup_{current_month}.zip")
+    guildZipPath = os.path.join(BACKUP_DIR, f"guild_activity_backup_{lastMonth}.zip")
     playerPath = os.path.join(DATABASE_DIR, "player_activity.db")
-    playerZipPath = os.path.join(BACKUP_DIR, f"player_activity_backup_{current_month}.zip")
+    playerZipPath = os.path.join(BACKUP_DIR, f"player_activity_backup_{lastMonth}.zip")
 
-    try:
-        logger.info("Creating zip backup...")
+    try: # create backups
+        logger.info("Creating guild backup...")
         with zipfile.ZipFile(guildZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(guildPath, os.path.basename(guildPath))
 
@@ -440,12 +328,9 @@ def create_monthly_backup():
             f.write(current_month)
 
         backup_size = os.path.getsize(guildZipPath) / (1024 * 1024)
-        logger.info(f"Monthly backup created: {guildZipPath} (Size: {backup_size:.2f} MB)")
-    except Exception as e:
-        logger.info(f"Error creating monthly backup: {e}")
+        logger.info(f"Guild backup created: {guildZipPath} (Size: {backup_size:.2f} MB)")
 
-    try:
-        logger.info("Creating zip backup...")
+        logger.info("Creating player backup...")
         with zipfile.ZipFile(playerZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
             zipf.write(playerPath, os.path.basename(playerPath))
 
@@ -453,20 +338,16 @@ def create_monthly_backup():
             f.write(current_month)
 
         backup_size = os.path.getsize(playerZipPath) / (1024 * 1024)
-        logger.info(f"Monthly backup created: {playerZipPath} (Size: {backup_size:.2f} MB)")
+        logger.info(f"Player backup created: {playerZipPath} (Size: {backup_size:.2f} MB)")
     except Exception as e:
         logger.info(f"Error creating monthly backup: {e}")
 
-
-def check_tables_exist(conn):
+def checkTablesExist(conn): 
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='guilds'"
-    )
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='guilds'")
     return cursor.fetchone() is not None
 
-
-def create_tables(conn):
+def createTables(conn):
     logger.info("Creating database tables...")
     schema_path = os.path.join(DATABASE_DIR, "schema.sql")
     with open(schema_path, "r") as schema_file:
@@ -474,8 +355,7 @@ def create_tables(conn):
         conn.executescript(schema_script)
     logger.info("Tables created successfully")
 
-
-def insert_or_update_guild(conn, guild_data):
+def updateGuildList(conn, guild_data):
     cur = conn.cursor()
     cur.execute(
         """
@@ -490,8 +370,7 @@ def insert_or_update_guild(conn, guild_data):
         ),
     )
 
-
-def insert_guild_snapshot(conn, guild_data):
+def insertGuildSnapshot(conn, guild_data):
     cur = conn.cursor()
     cur.execute(
         """
@@ -509,8 +388,7 @@ def insert_guild_snapshot(conn, guild_data):
         ),
     )
 
-
-def insert_or_update_members(conn, guild_uuid, members_data):
+def insertMemberSnapshot(conn, guild_uuid, members_data):
     cur = conn.cursor()
     for role, members in members_data.items():
         if role != "total":
@@ -544,7 +422,6 @@ def insert_or_update_members(conn, guild_uuid, members_data):
                     ),
                 )
 
-
 def main():
     logger.info("Starting main data collection...")
     guildlist_path = os.path.join(DATABASE_DIR, "guildlist.csv")
@@ -555,38 +432,8 @@ def main():
 
     logger.info(f"Found {len(uuids)} guilds to process")
 
-    conn = connect_to_db()
-    player_db_conn = connect_to_player_db()
-    if 1 == 0: # if we want to switch it out.. we can
-        player_db_conn.execute("""
-        CREATE TABLE users_new (
-            username TEXT,
-            uuid TEXT,
-            timestamp TEXT,
-            online INTEGER,
-            server TEXT,
-            firstJoin TEXT,
-            lastJoin TEXT,
-            playtime INTEGER,
-            guildUUID TEXT,
-            restrictions TEXT
-        );
-        """)
-        player_db_conn.execute("""
-        INSERT INTO users_new (
-            username, uuid, timestamp, online, server,
-            firstJoin, lastJoin, playtime, guildUUID, restrictions
-        )
-        SELECT
-            username, uuid, timestamp, online, server,
-            firstJoin, lastJoin, playtime, guildUUID, NULL
-        FROM users;
-        """)
-
-        player_db_conn.execute("DROP TABLE users;")
-        player_db_conn.execute("ALTER TABLE users_new RENAME TO users;")
-        conn.commit()
-        logger.info("Switchout successful!")
+    conn = connectGuildDB()
+    player_db_conn = connectPlayerDB()
     try:
         # we do all this ratio bullshit to alleviate pressure on api endpoints, make them do 100/m for 20m rather than 200/m for 10m then 0/m for 10m.
         success, r = makeRequest(f"https://api.wynncraft.com/v3/player")
@@ -617,9 +464,9 @@ def main():
                     logger.info(f"Skipping guild {uuid} as it no longer exists")
                 else:
                     guild_data = r.json()
-                    insert_or_update_guild(conn, guild_data)
-                    insert_guild_snapshot(conn, guild_data)
-                    insert_or_update_members(conn, guild_data["uuid"], guild_data["members"])
+                    updateGuildList(conn, guild_data)
+                    insertGuildSnapshot(conn, guild_data)
+                    insertMemberSnapshot(conn, guild_data["uuid"], guild_data["members"])
                     conn.commit()
                     time.sleep(0.3) # Sleep every guild so we can stretch this out to 20m ish
                 guild_index += 1
@@ -630,7 +477,7 @@ def main():
                     break
                 username = players[player_index]
                 #logger.info(f"USERNAME: {username}")
-                fetch_and_store_player_data(player_db_conn, username)
+                storePlayerData(player_db_conn, username)
                 player_index += 1
 
     except Exception:
@@ -641,86 +488,35 @@ def main():
 
         logger.info("Final WAL checkpoint for player_activity.db...")
         player_db_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        cleanup_database(conn)
-        cleanup_database(player_db_conn)
+        cleanguildDatabase(conn)
+        cleanguildDatabase(player_db_conn)
 
-def vacuum_database(conn):
-    # This function is a bitch on linux but finally works.
+def vacuumDatabase(conn):
     try:
-        logger.info("Starting database VACUUM preparation...")
-        
-        # First check available disk space
-        db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
-        db_size = os.path.getsize(db_path)
-        
-        # Get free space
-        stat = os.statvfs(DATABASE_DIR)
-        free_space = stat.f_frsize * stat.f_bavail
-        
-        logger.info(f"Current database size: {db_size / (1024*1024):.2f} MB")
-        logger.info(f"Available disk space: {free_space / (1024*1024):.2f} MB")
-        required_space = db_size * 1.1
-        if free_space < required_space:
-            logger.error(f"Insufficient disk space for VACUUM. Need at least {required_space/(1024*1024):.2f} MB free")
-            return
-        logger.info("Preparing system for VACUUM")
-        conn.close()
-        
-        vacuum_conn = sqlite3.connect(db_path, isolation_level=None)
-        vacuum_conn.execute("PRAGMA journal_mode=OFF")
-        vacuum_conn.execute("PRAGMA synchronous=OFF")
-        vacuum_conn.execute("PRAGMA cache_size=-2000") 
-        vacuum_conn.execute("PRAGMA busy_timeout=3600000") # linux is slow but shouldnt ever take more than 1hr
-        logger.info("Executing VACUUM")
-        start_time = time.time()
-        vacuum_conn.execute("VACUUM")
-        duration = time.time() - start_time
-        size_after = os.path.getsize(db_path)
-        saved = db_size - size_after
-        
-        logger.info(f"Database VACUUM completed successfully:")
-        logger.info(f"Duration: {duration/60:.1f} minutes")
-        logger.info(f"Size before: {db_size / (1024*1024):.2f} MB")
-        logger.info(f"Size after: {size_after / (1024*1024):.2f} MB")
-        logger.info(f"Saved: {saved / (1024*1024):.2f} MB")
-        
-        # Close vacuum connection
-        vacuum_conn.close()
-        return connect_to_db()
-        
-    except sqlite3.OperationalError as e:
-        logger.error(f"SQLite operational error during VACUUM: {str(e)}")
-    except OSError as e:
-        logger.error(f"OS error during VACUUM (possibly disk space related): {str(e)}")
+        logger.info("Starting database VACUUM...")
+        conn.execute("PRAGMA incremental_vacuum(10000);")
+        logger.info("Incremental VACUUM complete.")
     except Exception as e:
-        logger.error(f"Unexpected error during VACUUM: {str(e)}")
-        logger.error(f"Error type: {type(e)}")
-        
-    try:
-        return connect_to_db()
-    except:
-        logger.error("Could not re-establish database connection after VACUUM error")
-        raise
+        logger.exception(f"Error during VACUUM: {e}")
 
-async def scheduled_main():
+async def scheduledMainScript():
     vacuum = False
     while True:
         start_time = datetime.now()
         logger.info("Starting scheduled run...")
 
         try:
-            main()
-            conn = connect_to_db()
-            cleanup_old_data(conn)
-            create_monthly_backup()
+            main() # This is for putting all data in db
+            guildConn = connectGuildDB()
+            cleanupOldData(guildConn)
+            createBackup()
+ 
             if datetime.now().day != 1:
                 vacuum = False
             if datetime.now().day == 1 and not vacuum:
-                vacuum_database(conn)
+                vacuumDatabase(guildConn) #TODO: this is only for guild database atm
                 vacuum = True
-            if datetime.now().day % 7 == 0:
-                analyze_database_performance(conn)
-            cleanup_database(conn)
+            cleanguildDatabase(guildConn) #TODO: this is only for guild database atm
             logger.info("Scheduled run completed successfully")
         except Exception as e:
             logger.error(f"Error during scheduled run: {e}")
@@ -731,10 +527,9 @@ async def scheduled_main():
         logger.info(f"Waiting {wait_time:.2f} seconds until next run")
         await asyncio.sleep(wait_time)
 
-
 if __name__ == "__main__":
     logger.info("Starting production collector...")
     try:
-        asyncio.run(scheduled_main())
+        asyncio.run(scheduledMainScript())
     except KeyboardInterrupt:
         logger.info("Scheduled data collection stopped by user")
