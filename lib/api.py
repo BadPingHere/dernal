@@ -25,17 +25,38 @@ import io
 from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
 from datetime import timezone
 import base64
-
+import logging
+import logging.handlers
+import sys
 
 #TODO: Some bugs I ran into during testing:
 # 1. /guild activity graid with no recent data (like on dev) will result in a hanging command, same with /player activty graids (likely the same for all the other database related onces, but i wont worry about that.)
+# All around error handling with lack of data seems to be fucked rn
+# 2. /guild activity graid will not have a straight line. Ex if 10/29-11/8 has data, and you request it on 11/12, the end of the graph will be 11/8.
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_FILE = os.path.join(BASE_DIR, "api.log")
 
+logger = logging.getLogger('api')
+logger.setLevel(logging.DEBUG)
+handler = logging.handlers.RotatingFileHandler(
+    filename=LOG_FILE,
+    encoding='utf-8',
+    maxBytes=256 * 1024 * 1024,  # 256 Mib
+)
+dt_fmt = '%Y-%m-%d %H:%M:%S'
+formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+    
 timeframeMap1 = { # Used for heatmap data
     "Season 24": ("04/18/25", "06/01/25"),
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
+    "Season 28": ("11/07/25", "11/02/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -44,6 +65,7 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
+    "Season 28": ("11/07/25", "11/02/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -67,9 +89,6 @@ TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 territoryFilePath = os.path.join(rootDir, 'database', 'territory')
 
-sns.set_style("whitegrid")
-mpl.use('Agg') # Backend without any gui popping up
-blue, = sns.color_palette("muted", 1)
 
 def mapCreator():
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
@@ -185,7 +204,6 @@ def mapCreator():
         text = f"{i+1}. {namePrefixMap[prefix]} ({prefix}) - {count} Territories"
         draw.text((boxX + legendPadding, boxY + legendPadding + i * lineHeight), text, font=font, fill=text_color)
     
-    # Blend the full overlay just once
     mapImg = Image.alpha_composite(map_img, overlay)
     scale_factor = 0.4
     new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
@@ -204,6 +222,7 @@ def heatmapCreator(timeframe):
         startDate = datetime.strptime(startDay, "%m/%d/%y")
         endDate = datetime.strptime(endDay, "%m/%d/%y")
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
+    
     def coordToPixel(x, z):
         return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
 
@@ -249,12 +268,7 @@ def heatmapCreator(timeframe):
         yMin, yMax = sorted([y1, y2])
         overlay_draw.rectangle([xMin, yMin, xMax, yMax], fill=(*color, alpha))
     mapImg = Image.alpha_composite(map_img, overlay)
-    mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
-    mapBytes.seek(0)
-
-    scale_factor = 0.4
-    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
+    new_size = (int(mapImg.width * 0.4), int(mapImg.height * 0.4))
     mapImg = mapImg.resize(new_size, Image.LANCZOS)
     mapBytes = BytesIO()
     mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
@@ -375,6 +389,20 @@ def getTimeframe(timeframe, type="normal"):
         else:  # fallback to 14 days
             cutoff = time.time() - (14*86400)
         return cutoff
+    elif type == "activity": # All activity commands will fit into this
+        if timeframe == "Last 14 Days":
+            days = 14
+        elif timeframe == "Last 7 Days":
+            days = 7
+        elif timeframe == "Last 3 Days":
+            days = 7
+        elif timeframe == "Last 24 Hours":
+            days = 1
+        elif timeframe == "Last 30 Days":
+            days = 30
+        else:  # fallback to 7 days
+            days = 7
+        return days
 
 def cache_route(ttl=None):
     def decorator(func):
@@ -412,10 +440,15 @@ def cache_route(ttl=None):
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start_time = time.perf_counter()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        logger.exception(f"Unhandled error during {request.method} {request.url.path}: {exc}")
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        
     process_time = time.perf_counter() - start_time
     response.headers["X-Process-Time"] = f"{process_time:.4f}s"
-    print(f"{request.url.path} took {process_time:.4f}s")
+    logger.info(f"{request.method} {request.url} with status {response.status_code} in {process_time:.4f}s")
     return response
 
 @searchRouter.get("/prefix/{prefix}") 
@@ -1267,45 +1300,204 @@ async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: 
     playerCursor.close()
     return data
 
+
+def createPlot(
+    x, 
+    y,
+    graphType,
+    color,
+    title,
+    xlabel,
+    ylabel,
+    timeColor,
+    ahxlineY=None,
+    ahxlineLabel=None,
+    fillBetween=None,
+    legendName=None,
+    timeframeDays=None,
+):
+    #* Parameter info (because this will be long for sure)
+    # x: The x axis data (usually dates)
+    # y: the y axis data (whatever we are measuring)
+    # graphType: the type of graph (bar, line, pie)
+    # color: color for the bars and line
+    # title: title of the graph
+    # xlabel: label for the x axis
+    # ylabel: label for the y axis
+    # timeColor: color for the timestamp
+    # ahxlineY: for the plt.axhline that intersects, mostly for average line, the y value it should use.
+    # ahxlineLabel: the label for the above line
+    # fillBetween: some line graphs (like territories) want fill between under the line so it looks better, so this is either True or None.
+    # legendName: on the legend for line and pie chart graphs the legend needs a name
+    # timeframeDays: number of days the timeframe is set to
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if graphType == "bar":
+        ax.bar(x, y, width=0.8, color=color)
+        if ahxlineY and ahxlineLabel:
+            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
+        ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:,.0f}'))
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.grid(True, linestyle='-', alpha=0.5)
+        ax.legend()
+
+    elif graphType == "line":
+        ax.plot(x, y, '-', label=legendName, color=color, lw=1)
+        if fillBetween:
+            ax.fill_between(x, 0, y, alpha=0.3, color=color)
+        if ahxlineY and ahxlineLabel:
+            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
+        if timeframeDays >= 7: # 7 or more days we remove the hour:min since its not needed
+            ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
+        else:
+            ax.xaxis.set_major_formatter(DateFormatter('%m/%d %H:%M'))
+            
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{int(v)}'))
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.grid(True, linestyle='-', alpha=0.5)
+        ax.legend()
+        ax.margins(x=0.01)
+
+    elif graphType == "pie":
+        colorMap = plt.cm.get_cmap('tab20c')
+
+        colors = [colorMap((int(hashlib.md5(label.encode()).hexdigest(), 16) % colorMap.N) / colorMap.N)for label in x]
+
+        wedges, texts, autotexts = ax.pie(
+            y,
+            labels=x,
+            autopct='%1.1f%%',
+            startangle=90,
+            colors=colors
+        )
+        ax.axis('equal')
+        if legendName:
+            ax.legend(wedges, x, title=legendName, loc="center left", bbox_to_anchor=(1, 0.5))
+        plt.subplots_adjust(right=0.75)
+
+    else:
+        raise ValueError(f"Unknown graph type: {graphType}")
+
+    plt.title(title, fontsize=14)
+    plt.tight_layout()
+    plt.text(
+        1.0, -0.1,
+        f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.",
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment='bottom',
+        horizontalalignment='right',
+        color=timeColor
+    )
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+    plt.close(fig)
+    buf.seek(0)
+    img = base64.b64encode(buf.getvalue()).decode()
+    
+    return img
+
 @activityRouter.get("/{activityType}")
 @cache_route(ttl=600) #10m cache
-async def activity(activityType: str, uuid: str | None = None, name: str | None = None): # Name can be either prefix or gname or player username
+async def activity(activityType: str, uuid: str | None = None, name: str | None = None, theme: str | None = None, timeframe: str | None = None): # Name can be either prefix or gname or player username
     if not activityType:
         return JSONResponse(status_code=400, content={"error": "Please provide a valid leaderboard type."})
+    
+    mpl.rcParams.update(mpl.rcParamsDefault)
+    match theme:
+        case "light":
+            sns.set_style("whitegrid")
+            mpl.use('Agg') # Backend without any gui popping up
+            blue, = sns.color_palette("muted", 1)
+            color = "black" # color to use for the lil generated at text
+            
+        case "dark":
+            sns.set_theme(
+                style="whitegrid",
+                rc={
+                    "axes.facecolor": "#121212",
+                    "axes.edgecolor": "#444444",
+                    "figure.facecolor": "#121212",
+                    "grid.color": "#666666",
+                    "text.color": "white",
+                    "axes.labelcolor": "white",
+                    "xtick.color": "white",
+                    "ytick.color": "white",
+                    "legend.facecolor": "#1e1e1e",
+                    "legend.edgecolor": "#333333",
+                }
+            )
+            mpl.use('Agg') # Backend without any gui popping up
+            blue, = sns.color_palette("muted", 1)
+            color = "white" # color to use for the lil generated at text
+        case "discord":
+            sns.set_theme(
+                style="whitegrid",
+                rc={
+                    "axes.facecolor": "#323339",
+                    "axes.edgecolor": "#7289da",
+                    "figure.facecolor": "#323339",
+                    "grid.color": "#c4c5c9",
+                    "text.color": "white",
+                    "axes.labelcolor": "white",
+                    "xtick.color": "white",
+                    "ytick.color": "white",
+                    "legend.facecolor": "#323339",
+                    "legend.edgecolor": "#c4c5c9",
+                }
+            )
+            mpl.use('Agg') # Backend without any gui popping up
+            blue, = sns.color_palette("muted", 1)
+            color = "white" # color to use for the lil generated at text
+        case _: # default, as of rn its just defaulting to light mode
+            sns.set_style("whitegrid")
+            mpl.use('Agg') # Backend without any gui popping up
+            blue, = sns.color_palette("muted", 1)
+            color = "black" # color to use for the lil generated at text
+    
     guildConn = connectDB("guild")
     playerConn = connectDB("player")
     guildCursor = guildConn.cursor()
     playerCursor = playerConn.cursor()
+    
+    numDays = getTimeframe(timeframe, type="activity")
+    
     match activityType:
         case "guildActivityXP":
             guildCursor.execute("""
-                WITH RECURSIVE dates(date) AS (
-                    SELECT date(datetime('now', '-13 days'))
-                    UNION ALL
-                    SELECT date(datetime(date, '+1 day'))
-                    FROM dates
-                    WHERE date < date('now')
-                )
-                SELECT 
-                    dates.date,
-                    COALESCE(SUM(daily_xp), 0) as total_xp
+            WITH RECURSIVE dates(date) AS (
+                SELECT date('now', printf('-%d days', ?))
+                UNION ALL
+                SELECT date(date, '+1 day')
                 FROM dates
-                LEFT JOIN (
-                    SELECT 
-                        date(timestamp) as day,
-                        MAX(contribution) - MIN(contribution) as daily_xp
-                    FROM member_snapshots
-                    WHERE guild_uuid = ?
-                    AND timestamp >= datetime('now', '-14 days')
-                    GROUP BY date(timestamp), member_uuid
-                ) xp_data ON dates.date = xp_data.day
-                GROUP BY dates.date
-                ORDER BY dates.date
-            """, (uuid,))
+                WHERE date < date('now')
+            ),
+            xp_data AS (
+                SELECT 
+                    date(timestamp) AS day,
+                    MAX(contribution) - MIN(contribution) AS daily_xp
+                FROM member_snapshots
+                WHERE guild_uuid = ?
+                AND timestamp >= datetime('now', printf('-%d days', ?))
+                GROUP BY date(timestamp), member_uuid
+            )
+            SELECT 
+                dates.date,
+                COALESCE(SUM(xp_data.daily_xp), 0) AS total_xp
+            FROM dates
+            LEFT JOIN xp_data ON dates.date = xp_data.day
+            GROUP BY dates.date
+            ORDER BY dates.date;
+            """, (numDays - 1, uuid, numDays - 1))
             
             snapshots = guildCursor.fetchall()
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dates = []
             xp_values = []
@@ -1318,34 +1510,14 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             max_daily_xp = max(xp_values) if xp_values else 0
             min_daily_xp = min(xp_values) if xp_values else 0
             
-            plt.figure(figsize=(12, 6))
-            plt.bar(dates, xp_values, width=0.8, color=blue)
-            plt.axhline(y=avg_daily_xp, color='red', linestyle='-', label=f'Daily Average: {avg_daily_xp:,.0f} XP')
-            plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-            plt.xticks(dates)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
-            plt.title(f'Daily Guild XP Contribution - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('XP Gained', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                    transform=plt.gca().transAxes, 
-                    fontsize=9, verticalalignment='bottom', 
-                    horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            plt.close()
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, xp_values, "bar", blue, f'Daily Guild XP Contribution - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = avg_daily_xp, ahxlineLabel = f'Daily Average: {avg_daily_xp:,.0f} XP', timeframeDays=numDays)
             return JSONResponse({"total_xp": total_xp, "daily_average": avg_daily_xp, "highest_day": max_daily_xp, "lowest_day": min_daily_xp, "image": img})
         
         case "guildActivityTerritories":
             guildCursor.execute("""
                 WITH RECURSIVE 
                 timepoints AS (
-                    SELECT datetime('now', '-7 days') as timepoint
+                    SELECT datetime('now', printf('-%d days', ?)) AS timepoint
                     UNION ALL
                     SELECT datetime(timepoint, '+15 minutes')
                     FROM timepoints
@@ -1374,10 +1546,10 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                     ) as territory_count
                 FROM timepoints
                 ORDER BY timepoint;
-            """, (uuid,))
+            """, (numDays, uuid,))
             snapshots = guildCursor.fetchall()
             if not snapshots or all(count == 0 for _, count in snapshots):
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             times = []
             territory_counts = []
@@ -1389,7 +1561,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                     continue
 
             if not times or not territory_counts:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             non_zero_indices = [i for i, count in enumerate(territory_counts) if count > 0]
             if non_zero_indices:
                 start_idx = non_zero_indices[0]
@@ -1402,40 +1574,14 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             min_territories = min(filter(lambda x: x > 0, territory_counts)) if territory_counts else 0
             avg_territories = sum(filter(lambda x: x > 0, territory_counts)) / len(list(filter(lambda x: x > 0, territory_counts))) if territory_counts else 0
 
-            plt.figure(figsize=(12, 6))
-            plt.plot(times, territory_counts, '-', label='Territory Count', color=blue, lw=3)
-            plt.fill_between(times, 0, territory_counts, alpha=0.3)
-            plt.axhline(y=avg_territories, color='red', linestyle='-', label=f'Average: {avg_territories:.1f}')
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = max_territories - min_territories
-            min_y = max(0, min_territories - (y_range * 0.1))
-            max_y = max_territories + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'Territory Count - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of Territories', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            plt.close()
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(times, territory_counts, "line", blue, f'Territory Count - {name}', 'Date (UTC)', 'Number of Territories', color, ahxlineY = avg_territories, ahxlineLabel = f'Average: {avg_territories:.1f}', fillBetween = True, legendName='Territory Count', timeframeDays=numDays)
             return JSONResponse({"current_territories": current_territories, "maximum_territories": max_territories, "minimum_territories": min_territories, "average_territories": avg_territories, "image": img})
             
         case "guildActivityWars":
             guildCursor.execute("""
                 WITH RECURSIVE 
                 timepoints AS (
-                    SELECT datetime('now', '-7 days') as timepoint
+                    SELECT datetime('now', printf('-%d days', ?)) AS timepoint
                     UNION ALL
                     SELECT datetime(timepoint, '+15 minutes')
                     FROM timepoints
@@ -1464,10 +1610,10 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                     ) as wars_count
                 FROM timepoints
                 ORDER BY timepoint;
-            """, (uuid,))
+            """, (numDays, uuid,))
             snapshots = guildCursor.fetchall()
             if not snapshots or all(count == 0 for _, count in snapshots):
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             times = []
             war_counts = []
@@ -1479,7 +1625,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                     continue
 
             if not times or not war_counts:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             non_zero_indices = [i for i, count in enumerate(war_counts) if count > 0]
             if non_zero_indices:
                 start_idx = non_zero_indices[0]
@@ -1491,30 +1637,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             max_war = max(war_counts) if war_counts else 0
             min_war = min(filter(lambda x: x > 0, war_counts)) if war_counts else 0
 
-            plt.figure(figsize=(12, 6))
-            plt.plot(times, war_counts, '-', label='War Count', color=blue, lw=3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = max_war - min_war
-            min_y = max(0, min_war - (y_range * 0.1))
-            max_y = max_war + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'War History - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of Wars', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(times, war_counts, "line", blue, f'War History - {name}', 'Date (UTC)', 'Number of Wars', color, legendName='War Count', timeframeDays=numDays)
             return JSONResponse({"current_war": current_war,  "image": img})
         
         case "guildActivityOnlineMembers":
@@ -1522,41 +1645,19 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 SELECT timestamp, online_members
                 FROM guild_snapshots
                 WHERE guild_uuid = ?
-                AND timestamp >= datetime('now', '-3 day')
+                AND timestamp >= datetime('now', printf('-%d days', ?))
                 ORDER BY timestamp
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = guildCursor.fetchall()
             
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
             raw_numbers = [snapshot[1] for snapshot in snapshots]
             
             overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
-
-            plt.figure(figsize=(18, 6))
-            plt.plot(times, raw_numbers, '-', label='Average Online Member Count', color=blue, lw=3)
-            plt.fill_between(times, 0, raw_numbers, alpha=0.3)
-            plt.axhline(y=overall_average, color='red', linestyle='-', label=f'Average: {overall_average:.1f} players')
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            hour_locator = HourLocator(byhour=[0, 6, 12, 18])
-            plt.gca().xaxis.set_major_locator(hour_locator)
-            plt.title(f'Online Members - {name}', fontsize=14)
-            plt.xlabel('Time (UTC)', fontsize=12)
-            plt.ylabel('Players Online', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(times, raw_numbers, "line", blue, f'Online Members - {name}', 'Date (UTC)', 'Players Online', color, ahxlineY = overall_average, ahxlineLabel = f'Average: {overall_average:.1f} players', fillBetween = True, legendName='Average Online Member Count', timeframeDays=numDays)
             return JSONResponse({"max_players": max(raw_numbers), "min_players": min(raw_numbers), "average": overall_average, "image": img})
             
         case "guildActivityTotalMembers":
@@ -1564,43 +1665,23 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 SELECT timestamp, total_members
                 FROM guild_snapshots
                 WHERE guild_uuid = ?
-                AND timestamp >= datetime('now', '-7 day')
+                AND timestamp >= datetime('now', printf('-%d days', ?))
                 ORDER BY timestamp
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = guildCursor.fetchall()
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             times = [datetime.fromisoformat(snapshot[0]) for snapshot in snapshots]
             total_numbers = [snapshot[1] for snapshot in snapshots]
             overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
-            plt.figure(figsize=(12, 6))
-            plt.plot(times, total_numbers, '-', label='Total Members', color=blue, lw=3)
-            plt.fill_between(times, 0, total_numbers, alpha=0.3)
-            plt.axhline(y=overall_total, color='r', linestyle='-', label=f'Average: {overall_total:.1f} members')
-            time_formatter = DateFormatter('%D')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().xaxis.set_major_locator(AutoDateLocator())
-            plt.title(f'Member Count - {name}', fontsize=14)
-            plt.xlabel('Time (UTC)', fontsize=12)
-            plt.ylabel('Members', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-            transform=plt.gca().transAxes, 
-            fontsize=9, verticalalignment='bottom', 
-            horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(times, total_numbers, "line", blue, f'Member Count - {name}', 'Date (UTC)', 'Members', color, ahxlineY = overall_total, ahxlineLabel = f'Average: {overall_total:.1f} members', fillBetween = True, legendName='Total Members', timeframeDays=numDays)
             return JSONResponse({"max_players": max(total_numbers), "min_players": min(total_numbers), "average": overall_total, "image": img})
         
         case "playerActivityPlaytime":
             playerCursor.execute("""
             WITH RECURSIVE dates(day) AS (
-                SELECT DATE('now', '-13 days')
+                SELECT DATE('now', printf('-%d days', ?))
                 UNION ALL
                 SELECT DATE(day, '+1 day')
                 FROM dates
@@ -1616,7 +1697,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                     ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
                 FROM valid_playtime
                 WHERE uuid = ?
-                AND DATE(timestamp) >= DATE('now', '-14 days')
+                AND DATE(timestamp) >= DATE('now', printf('-%d days', ?))
                 GROUP BY DATE(timestamp)
             )
             SELECT d.day,
@@ -1624,11 +1705,11 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             FROM dates d
             LEFT JOIN playtime_per_day p ON d.day = p.day
             ORDER BY d.day;
-            """, (uuid,))
+            """, (numDays - 1, uuid, numDays - 1))
             daily_data = playerCursor.fetchall()
 
             if not daily_data:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dailyPlaytimes = {
                 datetime.strptime(day, '%Y-%m-%d').date(): minutes
@@ -1639,28 +1720,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             totalPlaytimeinMinutes = sum(playtimeValues)
             averageDailyPlaytime = totalPlaytimeinMinutes / len(dates) if dates else 0
 
-            plt.figure(figsize=(12, 6))
-            plt.bar(dates, playtimeValues, width=0.8, color=blue)
-            plt.axhline(y=averageDailyPlaytime, color='red', linestyle='-', 
-                        label=f'Daily Average: {averageDailyPlaytime:.2f} minutes')
-            plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-            plt.xticks(dates)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
-            plt.title(f'Daily Playtime - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Minutes Played', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                    transform=plt.gca().transAxes, 
-                    fontsize=9, verticalalignment='bottom', 
-                    horizontalalignment='right', color='gray')
-            
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, playtimeValues, "bar", blue, f'Daily Playtime - {name}', 'Date (UTC)', 'Minutes Played', color, ahxlineY = averageDailyPlaytime, ahxlineLabel = f'Daily Average: {averageDailyPlaytime:.0f} minutes', timeframeDays=numDays)
             return JSONResponse({"daily_average": averageDailyPlaytime, "max_day": max(playtimeValues) if playtimeValues else 0, "min_day": min(playtimeValues) if playtimeValues else 0, "image": img})
             
         case "playerActivityContributions":
@@ -1668,13 +1728,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             SELECT timestamp, contribution
             FROM member_snapshots
             WHERE member_uuid = ?
-            AND timestamp >= datetime('now', '-14 days')
+            AND timestamp >= datetime('now', printf('-%d days', ?))
             ORDER BY timestamp
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = guildCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), xp) for ts, xp in snapshots]
 
@@ -1694,27 +1754,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             totalGained = xpValues[-1] - xpValues[0] if len(xpValues) > 1 else 0
             average = totalGained / len(daily_gains) if daily_gains else 0
 
-
-            plt.figure(figsize=(12, 6))
-            plt.bar(timestamps[1:], daily_gains, width=0.8, color=blue)
-            plt.axhline(y=average, color='red', linestyle='-', label=f'Daily Average: {average:.2f} XP')
-            plt.gca().xaxis.set_major_formatter(DateFormatter('%m/%d'))
-            plt.xticks(timestamps[1:])
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.0f}'))
-            plt.title(f'Daily XP Gain - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('XP Gained', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                    transform=plt.gca().transAxes, fontsize=9, verticalalignment='bottom', 
-                    horizontalalignment='right', color='gray')
-
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(timestamps[1:], daily_gains, "bar", blue, f'Daily XP Gain - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = average, ahxlineLabel = f'Daily Average: {average:,.0f} XP', timeframeDays=numDays)
             return JSONResponse({"total_xp": totalGained, "max_xp": max(daily_gains) if daily_gains else 0, "min_xp": min(daily_gains) if daily_gains else 0,  "image": img})
         
         case "playerActivityDungeons":
@@ -1722,13 +1762,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             SELECT u.timestamp, u.totalDungeons
             FROM users_global u
             WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', '-7 days')
+                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
             ORDER BY u.timestamp;
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dates = [datetime.fromisoformat(row[0]) for row in snapshots]
             total_dungeons = [row[1] for row in snapshots]
@@ -1740,34 +1780,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 dungeons_by_day[dt.date()].append(count)
             dailyGain = [max(counts) - min(counts) for counts in dungeons_by_day.values() if len(counts) > 1]
             highestGain = max(dailyGain) if dailyGain else 0
-            maxDungeons = max(total_dungeons) if total_dungeons else 0
-            minDungeons = min(filter(lambda x: x > 0, total_dungeons)) if total_dungeons else 0
-
-            # Plot
-            plt.figure(figsize=(12, 6))
-            plt.plot(dates, total_dungeons, '-', label='Dungeon Count', color=blue, lw=3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = maxDungeons - minDungeons
-            min_y = max(0, minDungeons - (y_range * 0.1))
-            max_y = maxDungeons + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'Dungeon History - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of Dungeon\'s completed', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, total_dungeons, "line", blue, f'Dungeon History - {name}', 'Date (UTC)', 'Number of Dungeon\'s completed', color, legendName='Dungeon Count', timeframeDays=numDays)
             return JSONResponse({"total_dungeons": highestTotal, "highest_gain": highestGain, "image": img})
             
         case "playerActivityTotalDungeons":
@@ -1781,7 +1794,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             dungeons = ast.literal_eval(snapshots[0][0])
 
@@ -1789,25 +1802,10 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             labels = list(sorted_dungeons.keys())
             sizes = list(sorted_dungeons.values())
-
-
-            plt.figure(figsize=(10, 8))
-            sorted_dungeons = dict(sorted(dungeons.items(), key=lambda item: item[1], reverse=True))
-            labels = list(sorted_dungeons.keys())
-            sizes = list(sorted_dungeons.values())
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
-            wedges, _ = plt.pie(sizes)
-            plt.legend(wedges, percent_labels, title="Dungeons", loc="center left", bbox_to_anchor=(1, 0.5))
-            plt.title(f"Dungeon Pie Chart - {name}")
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            
+            img = createPlot(percent_labels, sizes, "pie", None, f"Dungeon Pie Chart - {name}", None, None, color, legendName="Dungeons")
             return JSONResponse({"image": img}) # Technically we could just ship this out like how it is on other endpoints, just straight image, but all activity commands should and will b64 images for consistenty
         
         case "playerActivityRaids":
@@ -1815,13 +1813,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 SELECT u.timestamp, u.totalRaids
                 FROM users_global u
                 WHERE u.uuid = ?
-                    AND u.timestamp >= DATETIME('now', '-7 days')
+                    AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
                 ORDER BY u.timestamp;
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dates = [datetime.fromisoformat(row[0]) for row in snapshots]
             totalRaids = [row[1] for row in snapshots]
@@ -1833,34 +1831,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 raids_by_day[dt.date()].append(count)
             dailyGain = [max(counts) - min(counts) for counts in raids_by_day.values() if len(counts) > 1]
             highestGain = max(dailyGain) if dailyGain else 0
-            maxRaids = max(totalRaids) if totalRaids else 0
-            minRaids = min(filter(lambda x: x > 0, totalRaids)) if totalRaids else 0
 
-            # Plot
-            plt.figure(figsize=(12, 6))
-            plt.plot(dates, totalRaids, '-', label='Raid Count', color=blue, lw=3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = maxRaids - minRaids
-            min_y = max(0, minRaids - (y_range * 0.1))
-            max_y = maxRaids + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'Raid History - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of Raid\'s completed', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, totalRaids, "line", blue, f'Raid History - {name}', 'Date (UTC)', 'Number of Raid\'s completed', color, legendName='Raid Count', timeframeDays=numDays)
             return JSONResponse({"total": highestTotal, "highest_gain": highestGain, "image": img})
             
         case "playerActivityTotalRaids":
@@ -1874,7 +1846,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             
             raids = ast.literal_eval(snapshots[0][0])
 
@@ -1882,25 +1854,11 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             labels = list(sortedRaids.keys())
             sizes = list(sortedRaids.values())
-
-
-            plt.figure(figsize=(10, 8))
-            sortedRaids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
-            labels = list(sortedRaids.keys())
-            sizes = list(sortedRaids.values())
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
-            wedges, _ = plt.pie(sizes)
-            plt.legend(wedges, percent_labels, title="Raids", loc="center left", bbox_to_anchor=(1, 0.5))
-            plt.title(f"Raid Pie Chart - {name}")
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+
+            img = createPlot(percent_labels, sizes, "pie", None, f"Raid Pie Chart - {name}", None, None, color, legendName="Raids")
+
             return JSONResponse({"image": img})
         
         case "playerActivityMobsKilled":
@@ -1908,13 +1866,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             SELECT u.timestamp, u.killedMobs
             FROM users_global u
             WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', '-7 days')
+                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
             ORDER BY u.timestamp;
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dates = [datetime.fromisoformat(row[0]) for row in snapshots]
             totalKills = [row[1] for row in snapshots]
@@ -1925,34 +1883,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             daily_gains = [max(counts) - min(counts) for counts in kills_by_day.values() if len(counts) > 1]
             highestGain = max(daily_gains) if daily_gains else 0
-            maxKills = max(totalKills) if totalKills else 0
-            minKills = min(filter(lambda x: x > 0, totalKills)) if totalKills else 0
-
-            # Plot
-            plt.figure(figsize=(12, 6))
-            plt.plot(dates, totalKills, '-', label='Mob Kill Count', color=blue, lw=3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = maxKills - minKills
-            min_y = max(0, minKills - (y_range * 0.1))
-            max_y = maxKills + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'Mob Kill History - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of Kill\'s', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, totalKills, "line", blue, f'Mob Kill History - {name}', 'Date (UTC)', 'Number of Kill\'s', color, legendName='Mob Kill Count', timeframeDays=numDays)
             return JSONResponse({"total_kills": highestTotal, "highest_gain": highestGain, "image": img})
             
         case "playerActivityWars":
@@ -1960,13 +1891,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             SELECT u.timestamp, u.wars
             FROM users_global u
             WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', '-7 days')
+                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
             ORDER BY u.timestamp;
-            """, (uuid,))
+            """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
             if not snapshots:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             dates = [datetime.fromisoformat(row[0]) for row in snapshots]
             totalWars = [row[1] for row in snapshots]
@@ -1976,34 +1907,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 wars_by_day[dt.date()].append(count)
             daily_gains = [max(counts) - min(counts) for counts in wars_by_day.values() if len(counts) > 1]
             highestGain = max(daily_gains) if daily_gains else 0
-            maxWars = max(totalWars) if totalWars else 0
-            minWars = min(filter(lambda x: x > 0, totalWars)) if totalWars else 0
 
-            # Plot
-            plt.figure(figsize=(12, 6))
-            plt.plot(dates, totalWars, '-', label='War Count', color=blue, lw=3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
-            y_range = maxWars - minWars
-            min_y = max(0, minWars - (y_range * 0.1))
-            max_y = maxWars + (y_range * 0.1)
-            plt.ylim(min_y, max_y)
-            plt.title(f'War Count History - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Number of War\'s', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.margins(x=0.01)
-            plt.tight_layout()
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(dates, totalWars, "line", blue, f'War Count History - {name}', 'Date (UTC)', 'Number of War\'s', color, legendName='War Count', timeframeDays=numDays)
             return JSONResponse({"total_wars": highestTotal, "highest_gain": highestGain, "image": img})
         
         case "guildActivityGraids":
@@ -2018,11 +1923,12 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             graidConn.close()
             guildData = await searchMaster("uuid", uuid)
             prefix = guildData["prefix"]
-            
+            confirmedGRaid = json.loads(confirmedGRaid["guilds"])
+
             if prefix not in confirmedGRaid:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
             now = datetime.utcnow()
-            cutoff = now - timedelta(days=14)
+            cutoff = now - timedelta(days=numDays)
 
             # Get and filter timestamps
             timestamps = [
@@ -2033,7 +1939,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             timestamps.sort()
 
             if not timestamps:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             # Cumulative count
             times = timestamps
@@ -2045,43 +1951,26 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             avg_day = sum(day_counts.values()) / len(day_counts)
             total_raids = len(times)
 
-            plt.figure(figsize=(12, 6))
-            plt.plot(times, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
-            plt.fill_between(times, 0, cumulative_counts, alpha=0.3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
-            plt.ylim(0, max(cumulative_counts) + 5)
-            plt.title(f'Guild Raid Activity - {prefix}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Total Guild Raids', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.margins(x=0.01)
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(times, cumulative_counts, "line", blue, f'Guild Raid Activity - {prefix}', 'Date (UTC)', 'Total Guild Raids', color, fillBetween = True, legendName='Guild Raids', timeframeDays=numDays)
             return JSONResponse({"total_graid": total_raids, "max_graid": max_day, "average_graid": avg_day, "image": img})
             
         case "playerActivityGraids":
             graidConn = connectDB("graid")
             graidCursor = graidConn.cursor()
             graidCursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            confirmedGRaid = graidCursor.fetchone()
-            if not confirmedGRaid:
+            row = graidCursor.fetchone()
+            if not row:
                 graidConn.close()
                 return JSONResponse(status_code=404, content={"error": "Eligible guilds not found"})
 
-
             now = datetime.utcnow()
-            cutoff = now - timedelta(days=14)
+            cutoff = now - timedelta(days=numDays)
+            confirmedGRaid = json.loads(row[0])
 
+            if not isinstance(confirmedGRaid, dict):
+                graidConn.close()
+                return JSONResponse(status_code=500,content={"error": "Parsed data is not a dictionary"}
+            )
             # Step 1: Collect all timestamps the user appeared in
             timestamps = []
             for entries in confirmedGRaid.values():
@@ -2093,7 +1982,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             timestamps.sort()
             if not timestamps:
-                return None, None
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
             # Step 2: Build cumulative count
             cumulative_counts = list(range(1, len(timestamps) + 1))
@@ -2103,36 +1992,12 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             max_day = max(day_counts.values())
             avg_day = sum(day_counts.values()) / len(day_counts)
             total_raids = len(timestamps)
-
-            plt.figure(figsize=(12, 6))
-            plt.plot(timestamps, cumulative_counts, '-', label='Guild Raids', color=blue, lw=3)
-            plt.fill_between(timestamps, 0, cumulative_counts, alpha=0.3)
-            time_formatter = DateFormatter('%m/%d %H:%M')
-            plt.gca().xaxis.set_major_formatter(time_formatter)
-            plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x)}'))
-            plt.ylim(0, max(cumulative_counts) + 5)
-            plt.title(f'Guild Raid Activity - {name}', fontsize=14)
-            plt.xlabel('Date (UTC)', fontsize=12)
-            plt.ylabel('Total Guild Raids', fontsize=12)
-            plt.grid(True, linestyle='-', alpha=0.5)
-            plt.legend()
-            plt.tight_layout()
-            plt.margins(x=0.01)
-            plt.text(1.0, -0.1, f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.", 
-                transform=plt.gca().transAxes, 
-                fontsize=9, verticalalignment='bottom', 
-                horizontalalignment='right',color='gray')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100)
-            buf.seek(0)
-            img = base64.b64encode(buf.getvalue()).decode()
+            img = createPlot(timestamps, cumulative_counts, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, fillBetween = True, legendName='Guild Raids', timeframeDays=numDays)
             return JSONResponse({"total_graid": total_raids, "max_graid": max_day, "average_graid": avg_day, "image": img})
 
         case _: # Default case
-            return JSONResponse(status_code=400, content={"error": "Please provide a correct leaderboard type."})
-
-
-            
+            return JSONResponse(status_code=400, content={"error": "Please provide a correct activity type."})
+     
     guildConn.close()
     playerCursor.close()
     return Response(content=buf.getvalue(), media_type="image/png")
@@ -2142,7 +2007,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 async def current_map():
     return mapCreator()
 
-@mapRouter.get("/heatmap") # Not a great name but its the current map
+@mapRouter.get("/heatmap")
 @cache_route(ttl=600) #10m cache
 async def heat_map(timeframe: str):
     if not timeframe:

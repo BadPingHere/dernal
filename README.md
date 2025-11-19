@@ -17,8 +17,6 @@
   <a href="#license">License</a>
 </p>
 
-![img](/lib/documents/example_image.png)
-
 ## Features and How to use
 
 To use this discord bot, please refer to the [wiki](https://github.com/BadPingHere/dernal/wiki) for help with running the bot, configuring it, and running the commands.

@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import timeframeMap2, timeframeMap3, getGraidDatabaseData, checkCooldown, guildLookup, lookupGuild, guildLeaderboardXPButGuildSpecific, guildActivityXP, guildActivityTerritories, guildActivityWars, guildActivityOnlineMembers, guildActivityTotalMembers, guildLeaderboardOnlineMembers, guildLeaderboardTotalMembers, guildLeaderboardWars, guildLeaderboardXP, guildLeaderboardOnlineButGuildSpecific, guildLeaderboardWarsButGuildSpecific, guildLeaderboardGraids, guildLeaderboardGraidsButGuildSpecific, guildActivityGraids, guildOnline
+from lib.utils import timeframeMap2, timeframeMap3, activityBuilder, leaderboardBuilder, getGraidDatabaseData, checkCooldown, guildLookup, lookupGuild, guildOnline
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -165,10 +165,21 @@ class Guild(commands.GroupCog, name="guild"):
         keys = list(timeframeMap3.keys())
         return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
     
+    async def autocompleteTheme(self, interaction: discord.Interaction, current: str):
+        # Ideal world the themes should be stored elsewhere like utils and imported
+        values = ["light", "dark", "discord"]
+        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+    
+    async def autocompleteActivityTimeframe(self, interaction: discord.Interaction, current: str):
+        # Ideal world the themes should be stored elsewhere like utils and imported
+        values = ["Last 14 Days", "Last 7 Days", "Last 3 Days", "Last 24 Hours", "Last 30 Days"]
+        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+    
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.",)
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)   
-    async def activityXP(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityXP(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -198,16 +209,17 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(guildActivityXP,result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 14 days")
     
-    @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has for the past 7 days.")
+    @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
-    async def activityTerritories(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityTerritories(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -236,16 +248,17 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await asyncio.to_thread(guildActivityTerritories, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 3 days")
 
-    @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done over the past 7 days.")
+    @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
-    async def activityWars(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityWars(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
@@ -276,16 +289,17 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
             conn.close()
             return
-        file, embed = await asyncio.to_thread(guildActivityWars, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 3 days")
 
-    @activityCommands.command(name="members", description="Shows a graph displaying the amount of members a guild has for the past 7 days.")
+    @activityCommands.command(name="members", description="Shows a graph displaying the amount of members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
-    async def activityTotal_members(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityTotal_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -314,16 +328,17 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(guildActivityTotalMembers, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 24 hours")
     
-    @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has for the past 3 days.")
+    @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
-    async def activityOnline_members(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityOnline_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -352,16 +367,17 @@ class Guild(commands.GroupCog, name="guild"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(guildActivityOnlineMembers, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 3 days")
 
-    @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed in the past 14 days.")
+    @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
-    async def activityGRaids(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityGRaids(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -369,10 +385,10 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
         if name not in self.EligibleGuilds :# Guilds above lvl 80
-            await interaction.response.send_message(f"The guild provided is not at or above level 80. If this is a mistake, please report this bug on github.",ephemeral=True)
+            await interaction.response.send_message(f"The guild provided is not at or above level 80. If this is a mistake, please report this bug on Github.",ephemeral=True)
             return  
         await interaction.response.defer()
-        file, embed = await asyncio.to_thread(guildActivityGraids, name)
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraids", prefix=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -393,7 +409,7 @@ class Guild(commands.GroupCog, name="guild"):
         await interaction.response.defer()
         
         if not name: # Normal guild shit
-            data = await asyncio.to_thread(guildLeaderboardOnlineMembers, timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineMembers", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by Online Member Average - {timeframe}", "Online Average")
         else:
             conn = sqlite3.connect('database/guild_activity.db')
@@ -416,7 +432,7 @@ class Guild(commands.GroupCog, name="guild"):
                 await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
                 conn.close()
                 return
-            data = await asyncio.to_thread(guildLeaderboardOnlineButGuildSpecific, result[0], timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineButGuildSpecific", timeframe=timeframe, uuid=result[0])
             view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Playtime Average- {timeframe}", "Hours/day")
 
         if data:
@@ -441,12 +457,12 @@ class Guild(commands.GroupCog, name="guild"):
                 return  
             else:
                 await interaction.response.defer()
-                data = await asyncio.to_thread(guildLeaderboardGraidsButGuildSpecific, name, timeframe)
+                data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, prefix=name)
                 num = len(data)
                 view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
         else:
             await interaction.response.defer()
-            data = await asyncio.to_thread(guildLeaderboardGraids, timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraids", timeframe=timeframe)
             num = len(data)
             view = LeaderboardPaginator(data, f"Top {num} Guilds by Guild Raids - {timeframe}", "Guild Raids")
 
@@ -465,7 +481,7 @@ class Guild(commands.GroupCog, name="guild"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(guildLeaderboardTotalMembers)
+        data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardTotalMembers")
         if data:
             view = LeaderboardPaginator(data, f"Top 100 Guilds by Member Count", "Members")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -485,7 +501,7 @@ class Guild(commands.GroupCog, name="guild"):
         await interaction.response.defer()
 
         if not name: # Normal guild shit
-            data = await asyncio.to_thread(guildLeaderboardWars, timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWars", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by Wars Won - {timeframe}", "Wars Won")
         else:
             conn = sqlite3.connect('database/guild_activity.db')
@@ -508,7 +524,7 @@ class Guild(commands.GroupCog, name="guild"):
                 await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
                 conn.close()
                 return
-            data = await asyncio.to_thread(guildLeaderboardWarsButGuildSpecific, result[0], timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWarsButGuildSpecific", timeframe=timeframe, uuid=result[0])
             view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Wars Won - {timeframe}", "Wars Won")
 
         if data:
@@ -528,7 +544,7 @@ class Guild(commands.GroupCog, name="guild"):
         await interaction.response.defer()
 
         if not name: # Normal guild shit
-            data = await asyncio.to_thread(guildLeaderboardXP, timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXP", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by XP Gain - {timeframe}", "XP")
         else:
             conn = sqlite3.connect('database/guild_activity.db')
@@ -551,7 +567,7 @@ class Guild(commands.GroupCog, name="guild"):
                 await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
                 conn.close()
                 return
-            data = await asyncio.to_thread(guildLeaderboardXPButGuildSpecific, result[0], timeframe)
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXPButGuildSpecific", timeframe=timeframe, uuid=result[0])
             view = LeaderboardPaginator(data, f"Top 100 Players in {name} by XP Gain - {timeframe}", "XP")
 
         if data:
@@ -707,6 +723,21 @@ class Guild(commands.GroupCog, name="guild"):
     leaderboardGraids.autocomplete("timeframe")(timeframeAutocomplete2)
     leaderboardWars.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardXP.autocomplete("timeframe")(timeframeAutocomplete3)
+
+    activityXP.autocomplete("theme")(autocompleteTheme)
+    activityTerritories.autocomplete("theme")(autocompleteTheme)
+    activityWars.autocomplete("theme")(autocompleteTheme)
+    activityTotal_members.autocomplete("theme")(autocompleteTheme)
+    activityOnline_members.autocomplete("theme")(autocompleteTheme)
+    activityGRaids.autocomplete("theme")(autocompleteTheme)
+
+    activityXP.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityTerritories.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityWars.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityTotal_members.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityOnline_members.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityGRaids.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    
 
 async def setup(bot):
     await bot.add_cog(Guild(bot))

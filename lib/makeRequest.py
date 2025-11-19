@@ -218,7 +218,7 @@ def internalMakeRequest(url): # Used for non-wynncraft api usage
 
     while retries < maxRetries:
         try:
-            r = session.get(url, timeout=30)
+            r = session.get(url, timeout=60)
             #print(r.headers)
             if r.status_code >= 400:
                 r.raise_for_status() # bad requests send to hell
@@ -234,7 +234,7 @@ def internalMakeRequest(url): # Used for non-wynncraft api usage
                 continue
             else:
                 logger.error(f"Request error {status}: {err}")
-                return False, {}
+                return False, r
 
     logger.error(f"Failed after {maxRetries} retries for {url}")
-    return False, {}
+    return False, r

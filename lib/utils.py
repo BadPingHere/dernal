@@ -1,28 +1,20 @@
 import discord
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import json
 from collections import Counter
 import logging
 import time
 import sqlite3
 import matplotlib as mpl
-import matplotlib.pyplot as plt
-from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
 from collections import defaultdict
-import io
 import seaborn as sns
 import bisect
 import random
-import ast
 import os
-from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
-import shelve
 import difflib
-import matplotlib.cm as cm
 from pathlib import Path
 from lib.makeRequest import makeRequest, internalMakeRequest
-import re
 import base64
   
 logger = logging.getLogger('discord')
@@ -82,6 +74,7 @@ timeframeMap1 = { # Used for heatmap data
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
+    "Season 28": ("11/07/25", "11/02/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -90,6 +83,7 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
+    "Season 28": ("11/07/25", "11/02/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -170,7 +164,7 @@ def findAttackingMembers(attacker):
                 return [["Unknown", "Unknown", 1738]]
             json = r.json()
             #logger.info(f"json: {json}")
-            if int(json.get("globalData", {}).get("wars", 0)) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer. also defaults to 21 because if you hide stats youre a sweat aka warrer
+            if int(json.get("globalData", {}).get("wars", 0)) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer. also defaults to 0 for hidden stats
                 warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
     else: # In database, we can save resources
         conn = sqlite3.connect('database/player_activity.db')
@@ -494,7 +488,7 @@ def lookupUser(memberList, progressCallback=None):
         if progressCallback:
             progressCallback(i + 1, totalMembers)
 
-        time.sleep(0.5) # Slow down inactivity because we need to preserve our ratelimits
+        time.sleep(0.25) # Slow down inactivity because we need to preserve our ratelimits
         success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
         #logger.info(f"username: {member}")
         if not success:
@@ -543,371 +537,149 @@ def lookupGuild(r, progressCallback=None):
     #logger.info(f"memberlist-2: {memberList}")
     return lookupUser(memberList, progressCallback)
 
-def guildActivityXP(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, guildActivityXP")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityXP?uuid={guild_uuid}&name={name}")
+def leaderboardBuilder(commandType, uuid = None, timeframe = None, prefix = None):
+    if commandType == "guildLeaderboardGraidsButGuildSpecific": # too odd of design
+        # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
+        success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
+        if not success:
+            logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {r.json()}")  
+            return []
+        searchJson = r.json()
+        uuid = searchJson["uuid"]
+        
+    logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", timeframe: {timeframe}" if timeframe else ""))
+    # complicated code to create the url given the present parameters
+    url = (f"http://127.0.0.1:8080/api/leaderboard/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("timeframe", timeframe)) if v)if any((uuid, timeframe)) else ""))
+    success, r = internalMakeRequest(url)
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error for {commandType} in leaderboardBuilder, success is {success}, jsonData is {jsonData}")
+        return []
+    listy = []
+    for row in jsonData:
+        extracted = extractValues(row)
+        listy.append(extracted)
+
+    return listy
+
+def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix = None, timeframe = None):
+    if commandType == "guildActivityGraids": # too odd of design
+        # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
+        success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
+        
+        if not success:
+            logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {r.json()}")  
+            return None, None
+        searchJson = r.json()
+        uuid = searchJson["uuid"]
+
+    logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", name: {name}" if name else "") + (f", theme: {theme}" if theme else ""))
+    url = (f"http://127.0.0.1:8080/api/activity/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("name", name), ("theme", theme), ("timeframe", timeframe),) if v)if any((uuid, name, theme, timeframe)) else ""))
+    success, r = internalMakeRequest(url)
+    if not success:
+        logger.error(f"Error for {commandType} in leaderboardBuilder, success is {success}, jsonData is {r.json()}")
+        return None, None
     jsonData = r.json()
     buf = BytesIO(base64.b64decode(jsonData["image"]))
-    file = discord.File(buf, filename='xp_graph.png')
+    
+    match commandType:
+        case "guildActivityXP":
+            title=f"XP Analysis for {name}"
+            description=f"Total XP (14 days): {jsonData['total_xp']:,.0f}\nDaily Average: {jsonData['daily_average']:,.0f}\nHighest Day: {jsonData['highest_day']:,.0f}\nLowest Day: {jsonData['lowest_day']:,.0f}"
+        
+        case "guildActivityTerritories":
+            title=f"Territory Analysis for {name}"
+            description=f"Current territories: {jsonData['current_territories']:.0f}\nMaximum territories: {jsonData['maximum_territories']:.0f}\nMinimum territories: {jsonData['minimum_territories']:.0f}\nAverage territories: {jsonData['average_territories']:.0f}"
+            
+        case "guildActivityWars":
+            title=f"Warring Analysis for {name}"
+            description=f"Current war count: {jsonData['current_war']:.0f}"
+        
+        case "guildActivityOnlineMembers":
+            title=f"Online Members for {name}"
+            description=(
+                f"Maximum players online: {jsonData['max_players']:.0f}\n"
+                f"Minimum players online: {jsonData['min_players']:.0f}\n"
+                f"Average players online: {jsonData['average']:.1f}"
+            )
+            
+        case "guildActivityTotalMembers":
+            title=f"Members Analysis for {name}"
+            description=(
+                f"Maximum Member Count: {jsonData['max_players']:.0f}\n"
+                f"Minimum Member Count: {jsonData['min_players']:.0f}\n"
+                f"Average Member Count: {jsonData['average']:.0f}"
+            )
+        
+        case "playerActivityPlaytime":
+            title=f"Playtime Analysis for {name}"
+            description=(
+                f"Daily Average: {jsonData['daily_average']:.0f} min\n"
+                f"Highest Day: {jsonData['max_day']} min\n"
+                f"Lowest Day: {jsonData['min_day']} min\n"
+            )
+            
+        case "playerActivityContributions":
+            title=f"XP Gain for {name}"
+            description=(
+                f"Total XP (14 Days): {jsonData['total_xp']:,.0f} xp\n"
+                f"Highest Day: {jsonData['max_xp']:} xp\n"
+                f"Lowest Day: {jsonData['min_xp']:} xp"
+            )
+        
+        case "playerActivityDungeons":
+            title=f"Dungeon Runs for {name}"
+            description=(
+                f"Total Dungeons: {jsonData['total_dungeons']} dungeons\n"
+                f"Highest Gain in One Day: {jsonData['highest_gain']} dungeons\n"
+            )
+            
+        case "playerActivityTotalDungeons":
+            title=f"Dungeon pie chart for {name}"
+            description= None
+        
+        case "playerActivityRaids":
+            title=f"Raid Runs for {name}"
+            description=(
+                f"Total Raids: {jsonData['total']} raids\n"
+                f"Highest Gain in One Day: {jsonData['highest_gain']} raids\n"
+            )
+            
+        case "playerActivityTotalRaids":
+            title=f"Raid pie chart for {name}"
+            description= None
+        
+        case "playerActivityMobsKilled":
+            title=f"Mob's killed for {name}"
+            description=(
+                f"Total Kills: {jsonData['total_kills']} kills\n"
+                f"Highest Gain in One Day: {jsonData['highest_gain']} kills\n"
+            )
+            
+        case "playerActivityWars":
+            title=f"War Count for {name}"
+            description=(
+                f"Total Wars: {jsonData['total_wars']} wars\n"
+                f"Highest Gain in One Day: {jsonData['highest_gain']} wars\n"
+            )
+        
+        case "guildActivityGraids":
+            title=f"Guild Raid Completion for {prefix}"
+            description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}"
+            
+        case "playerActivityGraids":
+            title=f"Guild Raid Completion for {name}"
+            description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}"
+
+    file = discord.File(buf, filename=f'{commandType}.png')
     embed = discord.Embed(
-        title=f"XP Analysis for {name}",
-        description=f"Total XP (14 days): {jsonData['total_xp']:,.0f}\nDaily Average: {jsonData['daily_average']:,.0f}\nHighest Day: {jsonData['highest_day']:,.0f}\nLowest Day: {jsonData['lowest_day']:,.0f}",
+        title=title+f" - {timeframe}",
+        description=description,
         color=discord.Color.blue()
     )
-    embed.set_image(url="attachment://xp_graph.png")
+    embed.set_image(url=f"attachment://{commandType}.png")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
-
-def guildActivityTerritories(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, guildActivityTerritories")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityTerritories?uuid={guild_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='territory_graph.png')
-    embed = discord.Embed(
-        title=f"Territory Analysis for {name}",
-        description=f"Current territories: {jsonData['current_territories']:.0f}\nMaximum territories: {jsonData['maximum_territories']:.0f}\nMinimum territories: {jsonData['minimum_territories']:.0f}\nAverage territories: {jsonData['average_territories']:.0f}",
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://territory_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
-
-def guildActivityWars(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, guildActivityWars")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityWars?uuid={guild_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='wars_graph.png')
-    embed = discord.Embed(
-        title=f"Warring Analysis for {name}",
-        description=f"Current war count: {jsonData['current_war']:.0f}",
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://wars_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
-
-def guildActivityOnlineMembers(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, guildActivityOnlineMembers")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityOnlineMembers?uuid={guild_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='playtime_graph.png')
-    embed = discord.Embed(
-        title=f"Online Members for {name}",
-        description=(
-            f"Maximum players online: {jsonData['max_players']:.0f}\n"
-            f"Minimum players online: {jsonData['min_players']:.0f}\n"
-            f"Average players online: {jsonData['average']:.1f}"
-        ),
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    return file, embed
-
-def guildActivityTotalMembers(guild_uuid, name):
-    logger.info(f"guild_uuid: {guild_uuid}, guildActivityTotalMembers")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityTotalMembers?uuid={guild_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='total_members_graph.png')
-    embed = discord.Embed(
-        title=f"Members Analysis for {name}",
-        description=(
-            f"Maximum Member Count: {jsonData['max_players']:.0f}\n"
-            f"Minimum Member Count: {jsonData['min_players']:.0f}\n"
-            f"Average Member Count: {jsonData['average']:.0f}"
-        ),
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://total_members_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    return file, embed
-
-def guildLeaderboardOnlineMembers(timeframe):
-    logger.info(f"guildLeaderboardOnlineMembers timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardOnlineMembers?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardOnlineMembers, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardTotalMembers():
-    logger.info(f"guildLeaderboardTotalMembers")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardTotalMembers")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardTotalMembers, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardWars(timeframe):
-    logger.info(f"guildLeaderboardWars timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardWars?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardWars, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardXP(timeframe):
-    logger.info(f"guildLeaderboardXP timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardXP?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardXP, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerActivityPlaytime(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityPlaytime")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityPlaytime?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='player_playtime_graph.png')
-    embed = discord.Embed(
-        title=f"Playtime Analysis for {name}",
-        description=(
-            f"Daily Average: {jsonData['daily_average']:.0f} min\n"
-            f"Highest Day: {jsonData['max_day']} min\n"
-            f"Lowest Day: {jsonData['min_day']} min\n"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_playtime_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    return file, embed
-
-def playerActivityContributions(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityContributions")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityContributions?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='player_xp_graph.png')
-    embed = discord.Embed(
-        title=f"XP Gain for {name}",
-        description=(
-            f"Total XP (14 Days): {jsonData['total_xp']:,.0f} xp\n"
-            f"Highest Day: {jsonData['max_xp']:} xp\n"
-            f"Lowest Day: {jsonData['min_xp']:} xp"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_xp_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    return file, embed
-
-def playerActivityDungeons(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityDungeons")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityDungeons?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_dungeon_graph.png')
-    embed = discord.Embed(
-        title=f"Dungeon Runs for {name}",
-        description=(
-            f"Total Dungeons: {jsonData['total_dungeons']} dungeons\n"
-            f"Highest Gain in One Day: {jsonData['highest_gain']} dungeons\n"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_dungeon_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
-
-def playerActivityTotalDungeons(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityTotalDungeons")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityTotalDungeons?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_dungeon_pie.png')
-    embed = discord.Embed(
-        title=f"Dungeon pie chart for {name}",
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_dungeon_pie.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    buf.close()
-    return file, embed
-
-def playerActivityRaids(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityRaids")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityRaids?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_raid_graph.png')
-    embed = discord.Embed(
-        title=f"Raid Runs for {name}",
-        description=(
-            f"Total Raids: {jsonData['total']} raids\n"
-            f"Highest Gain in One Day: {jsonData['highest_gain']} raids\n"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_raid_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    return file, embed
-
-def playerActivityTotalRaids(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityTotalRaids")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityTotalRaids?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_raid_pie.png')
-    embed = discord.Embed(
-        title=f"Raid pie chart for {name}",
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_raid_pie.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    buf.close()
-    return file, embed
-
-def playerActivityMobsKilled(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityMobsKilled")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityMobsKilled?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_mob_kill_graph.png')
-    embed = discord.Embed(
-        title=f"Mob's killed for {name}",
-        description=(
-            f"Total Kills: {jsonData['total_kills']} kills\n"
-            f"Highest Gain in One Day: {jsonData['highest_gain']} kills\n"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_mob_kill_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
-
-def playerActivityWars(player_uuid, name):
-    logger.info(f"player_uuid: {player_uuid}, playerActivityWars")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/playerActivityWars?uuid={player_uuid}&name={name}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-
-    file = discord.File(buf, filename='player_wars_graph.png')
-    embed = discord.Embed(
-        title=f"War Count for {name}",
-        description=(
-            f"Total Wars: {jsonData['total_wars']} wars\n"
-            f"Highest Gain in One Day: {jsonData['highest_gain']} wars\n"
-        ),
-        color=discord.Color.red()
-    )
-    embed.set_image(url="attachment://player_wars_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
-
-def playerLeaderboardRaids(timeframe):
-    logger.info(f"playerLeaderboardRaids timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardRaids?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardRaids, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerLeaderboardDungeons(timeframe):
-    logger.info(f"playerLeaderboardDungeons timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardDungeons?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardDungeons, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerLeaderboardPVPKills():
-    logger.info(f"playerLeaderboardPVPKills")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardPVPKills")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardPVPKills, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerLeaderboardTotalLevel():
-    logger.info(f"playerLeaderboardTotalLevel")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardTotalLevel")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardTotalLevel, success is {success}, jsonData is {jsonData}")
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerLeaderboardPlaytime(timeframe):
-    logger.info(f"playerLeaderboardPlaytime, timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardPlaytime?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardPlaytime, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
 
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
@@ -1447,140 +1219,6 @@ def getHelp(arg):
             else:
                 message = "The command you inputted is not valid. Please try again."
             return message, False
-
-def guildLeaderboardXPButGuildSpecific(guild_uuid, timeframe):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardXPButGuildSpecific, timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardXPButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardXPButGuildSpecific, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardOnlineButGuildSpecific(guild_uuid, timeframe):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardOnlineButGuildSpecific, timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardOnlineButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardOnlineButGuildSpecific, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardWarsButGuildSpecific(guild_uuid, timeframe):
-    logger.info(f"guild_uuid: {guild_uuid}, guildLeaderboardWarsButGuildSpecific, timeframe: {timeframe}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardWarsButGuildSpecific?timeframe={timeframe}&uuid={guild_uuid}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardWarsButGuildSpecific, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardGraids(timeframe):
-    logger.info(f"guildLeaderboardGraids")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardGraids?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardGraids, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildLeaderboardGraidsButGuildSpecific(prefix, timeframe):
-    logger.info(f"guildLeaderboardGraidsButGuildSpecific. prefix is {prefix}")
-    # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
-    if not success:
-        logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {jsonData}")  
-        return []
-    searchJson = r.json()
-    uuid = searchJson["uuid"]
-
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/guildLeaderboardGraidsButGuildSpecific?timeframe={timeframe}&uuid={uuid}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def playerLeaderboardGraids(timeframe):
-    logger.info(f"playerLeaderboardGraids timeframe: {timeframe}")
-    
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/leaderboard/playerLeaderboardGraids?timeframe={timeframe}")
-    jsonData = r.json()
-    if not success:
-        logger.error(f"Error in playerLeaderboardGraids, success is {success}, jsonData is {jsonData}")   
-        return []
-    listy = []
-    for row in jsonData:
-        extracted = extractValues(row)
-        listy.append(extracted)
-
-    return listy
-
-def guildActivityGraids(prefix):
-    # because of a bad setup we need to convert to uuid
-    logger.info(f"guildActivityGraids, prefix: {prefix}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
-    jsonData = r.json()
-    uuid = jsonData["uuid"]
-
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityGraids?uuid={uuid}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='graid_graph.png')
-    embed = discord.Embed(
-        title=f"Guild Raid Completion for {prefix}",
-        description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_day']}\nAverage Guild Raids per Day: {jsonData['avg_day']:.2f}",
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://graid_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    buf.close()
-    return file, embed
-
-def playerActivityGraids(username):
-    logger.info(f"guildActivityGraids, username: {username}")
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/activity/guildActivityGraids?name={username}")
-    jsonData = r.json()
-    buf = BytesIO(base64.b64decode(jsonData["image"]))
-    
-    file = discord.File(buf, filename='graid_graph.png')
-    embed = discord.Embed(
-        title=f"Guild Raid Completion for {username}",
-        description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}",
-        color=discord.Color.blue()
-    )
-    embed.set_image(url="attachment://graid_graph.png")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-    buf.close()
-    return file, embed
 
 def detect_graids(eligibleGuilds): # i will credit this to slumbrous (+my additions) on disc, my shit did NOT fucking work first try.
     for prefix in eligibleGuilds:

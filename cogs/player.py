@@ -2,13 +2,14 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import time
-from lib.utils import getGraidDatabaseData, checkCooldown, playerActivityPlaytime, playerActivityContributions, playerActivityDungeons, playerActivityTotalDungeons, playerActivityRaids, playerActivityTotalRaids, playerActivityMobsKilled, playerActivityWars, playerLeaderboardRaids, playerLeaderboardTotalLevel, playerLeaderboardDungeons, playerLeaderboardPlaytime, playerLeaderboardPVPKills, playerLeaderboardGraids, playerActivityGraids, timeframeMap3, timeframeMap2, playerGuildHistory
+from lib.utils import getGraidDatabaseData, checkCooldown, timeframeMap3, timeframeMap2, playerGuildHistory, leaderboardBuilder, activityBuilder
 import sqlite3
 import logging
 import asyncio
 from discord.ui import View, Button
 from datetime import datetime, timezone
 import os
+from typing import Optional
 
 logger = logging.getLogger('discord')
 
@@ -92,11 +93,22 @@ class Player(commands.GroupCog, name="player"):
         keys = list(timeframeMap2.keys())
         return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
     
+    async def autocompleteTheme(self, interaction: discord.Interaction, current: str):
+        # Ideal world the themes should be stored elsewhere like utils and imported
+        values = ["light", "dark", "discord"]
+        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+    
+    async def autocompleteActivityTimeframe(self, interaction: discord.Interaction, current: str):
+        # Ideal world the themes should be stored elsewhere like utils and imported
+        values = ["Last 14 Days", "Last 7 Days", "Last 3 Days", "Last 24 Hours", "Last 30 Days"]
+        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+    
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.")
     
-    @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day over the past two weeks.")
+    @activityCommands.command(name="playtime", description="Shows the graph displaying the average amount of playtime every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityPlaytime(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityPlaytime(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity playtime was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -119,16 +131,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityPlaytime, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityPlaytime", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 14 days.")
     
-    @activityCommands.command(name="contribution", description="Shows a graph displaying the amount of contributiond xp every day over the past two weeks.")
+    @activityCommands.command(name="contribution", description="Shows a graph displaying the amount of contributiond xp every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityContributions(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityContributions(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -151,16 +164,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityContributions, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityContributions", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 14 days.")
 
-    @activityCommands.command(name="dungeons", description="Shows a graph displaying the amount of dungeons completed total every day for the past week.")
+    @activityCommands.command(name="dungeons", description="Shows a graph displaying the amount of dungeons completed total every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityDungeons(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityDungeons(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity dungeons was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -183,7 +197,7 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityDungeons, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityDungeons", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -192,7 +206,8 @@ class Player(commands.GroupCog, name="player"):
 
     @activityCommands.command(name="dungeons_pie", description="Shows a pie chart displaying the different dungeons's you have done.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityDungeonsPie(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityDungeonsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
         logger.info(f"Command /player activity dungeons_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -215,16 +230,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityTotalDungeons, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityTotalDungeons", uuid=result[0], name=name, theme=theme or "light")
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 7 days.")
 
-    @activityCommands.command(name="raids", description="Shows a graph displaying the amount of raids completed total every day for the past week.")
+    @activityCommands.command(name="raids", description="Shows a graph displaying the amount of raids completed total every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityRaids(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityRaids(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -247,7 +263,7 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityRaids, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityRaids", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
@@ -256,7 +272,8 @@ class Player(commands.GroupCog, name="player"):
 
     @activityCommands.command(name="raids_pie", description="Shows a pie chart displaying the different raid's you have done.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityRaidsPie(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityRaidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
         logger.info(f"Command /player activity raids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -279,16 +296,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityTotalRaids, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityTotalRaids", uuid=result[0], name=name, theme=theme or "light")
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 7 days.")
 
-    @activityCommands.command(name="mobs_killed", description="Shows a graph displaying the amount of total mobs killed every day for the past week.")
+    @activityCommands.command(name="mobs_killed", description="Shows a graph displaying the amount of total mobs killed every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityMobsKilled(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityMobsKilled(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity mobs_killed was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -311,16 +329,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityMobsKilled, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityMobsKilled", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 7 days.")
 
-    @activityCommands.command(name="wars", description="Shows a graph displaying the amount of total wars every day for the past week.")
+    @activityCommands.command(name="wars", description="Shows a graph displaying the amount of total wars every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityWars(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityWars(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -342,16 +361,17 @@ class Player(commands.GroupCog, name="player"):
             conn.close()
             return
             
-        file, embed = await asyncio.to_thread(playerActivityWars, result[0], name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityWars", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 7 days.")
 
-    @activityCommands.command(name="guild_raids", description="Shows a graph with the amount of guild raids done over the past 2 weeks for supported players.")
+    @activityCommands.command(name="guild_raids", description="Shows a graph with the amount of guild raids done for supported players.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
-    async def activityGraids(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityGraids(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /player activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
         response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
         #logger.info(response)
@@ -363,12 +383,12 @@ class Player(commands.GroupCog, name="player"):
             await interaction.response.send_message(f"No data found for username: {name}. Please make you are in a level 100+ guild, and have done guild raids in the past 14 days.", ephemeral=True)
             return
         await interaction.response.defer()
-        file, embed = await asyncio.to_thread(playerActivityGraids, name)
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityGraids", name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 7 days.")
+            await interaction.followup.send("No data available for the last 14 days.")
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="raids", description="Shows the leaderboard of the top 100 players with the highest total raids completed.")
@@ -382,7 +402,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardRaids, timeframe)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardRaids", timeframe=timeframe)
         if data:
             view = LeaderboardPaginator(data, f"Top 100 Players by Raids Completed - {timeframe}", "Raids")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -400,7 +420,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardGraids, timeframe)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardGraids", timeframe=timeframe)
         if data:
             num = len(data)
             view = LeaderboardPaginator(data, f"Top {num} Players by Guild Raids - {timeframe}", "Guild Raids")
@@ -418,7 +438,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardTotalLevel)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardTotalLevel")
         if data:
             view = LeaderboardPaginator(data, "Top 100 Players by Total Level", "Levels")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -436,7 +456,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardDungeons, timeframe)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardDungeons", timeframe=timeframe)
         if data:
             view = LeaderboardPaginator(data, f"Top 100 Players by Dungeons Completed - {timeframe}", "Dungeons")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -454,7 +474,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardPlaytime, timeframe)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardPlaytime", timeframe=timeframe)
         if data:
             view = LeaderboardPaginator(data, f"Top 100 Players by Playtime - {timeframe}", "Hours")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -471,7 +491,7 @@ class Player(commands.GroupCog, name="player"):
             return
         await interaction.response.defer()
         
-        data = await asyncio.to_thread(playerLeaderboardPVPKills)
+        data = await asyncio.to_thread(leaderboardBuilder, "playerLeaderboardPVPKills")
         if data:
             view = LeaderboardPaginator(data, "Top 100 Players by PVP Kills", "Kills")
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -510,6 +530,24 @@ class Player(commands.GroupCog, name="player"):
     leaderboardGRaids.autocomplete("timeframe")(timeframeAutocomplete2)
     leaderboardDungeons.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardPlaytime.autocomplete("timeframe")(timeframeAutocomplete3)
+    
+    activityPlaytime.autocomplete("theme")(autocompleteTheme)
+    activityContributions.autocomplete("theme")(autocompleteTheme)
+    activityDungeons.autocomplete("theme")(autocompleteTheme)
+    activityDungeonsPie.autocomplete("theme")(autocompleteTheme)
+    activityRaids.autocomplete("theme")(autocompleteTheme)
+    activityRaidsPie.autocomplete("theme")(autocompleteTheme)
+    activityMobsKilled.autocomplete("theme")(autocompleteTheme)
+    activityWars.autocomplete("theme")(autocompleteTheme)
+    activityGraids.autocomplete("theme")(autocompleteTheme)
+
+    activityPlaytime.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityContributions.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityDungeons.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityRaids.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityMobsKilled.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityWars.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    activityGraids.autocomplete("timeframe")(autocompleteActivityTimeframe)
   
 async def setup(bot):
     await bot.add_cog(Player(bot))
