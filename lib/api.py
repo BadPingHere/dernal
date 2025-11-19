@@ -395,7 +395,7 @@ def getTimeframe(timeframe, type="normal"):
         elif timeframe == "Last 7 Days":
             days = 7
         elif timeframe == "Last 3 Days":
-            days = 7
+            days = 3
         elif timeframe == "Last 24 Hours":
             days = 1
         elif timeframe == "Last 30 Days":
