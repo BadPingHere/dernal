@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from lib.api import app
+from urllib.parse import urlencode
 
 client = TestClient(app)
 
@@ -78,6 +79,25 @@ def testMaps(): # Tests heatmap and normal map
         response = client.get(f"/api/map/heatmap?timeframe={timeframe}")
         assert response.status_code == 200, f"Timeframe failed testMaps: {timeframe}."
         assert isinstance(response.content, bytes), "Current map response is not raw bytes."
+
+#@pytest.mark.skip(reason="Does not need testing ATM.")
+def testIngMap(): # Tests ingredient map
+    testIngMap = [
+        {"ingredient": "Lunar Charm", "price": "", "tier": ""}, # Test single ings
+        {"ingredient": "Shrieker's Head", "price": "-1", "tier": "41"}, # Test if price and tier are discarded if ing is present; technically the price and tier need to be ints but
+        {"ingredient": "", "price": "32", "tier": ""}, # Test price
+        {"ingredient": "", "price": "", "tier": "3"}, # Test tier
+        {"ingredient": "", "price": "", "tier": ""}, # Test global
+    ]
+    for test in testIngMap:
+        ingredient = test["ingredient"] if test["ingredient"] else None
+        price = test["price"] if test["price"] else None
+        tier = test["tier"] if test["tier"] else None
+        
+        url = (f"/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
+        response = client.get(url)
+        assert response.status_code == 200, f"Ingredient map route failed."
+        assert isinstance(response.content, bytes), "Ingredient map response is not raw bytes."
 
 #@pytest.mark.skip(reason="Does not need testing ATM.")
 def testLeaderboard(): # Tests all leaderboards

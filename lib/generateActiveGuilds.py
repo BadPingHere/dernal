@@ -7,6 +7,12 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.makeRequest import makeRequest
 import csv
 
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+DATABASE_DIR = PROJECT_ROOT / "database"
+FILE = DATABASE_DIR / "guildlist.csv" # all of this just to get autowrite to database folder
+
 def main():
     suitableGuilds = []
     success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/guild")
@@ -26,9 +32,9 @@ def main():
                 if int(jsonData["level"]) >= 45 and int(jsonData["members"]["total"]) >= 3: # so we can thin the herd. because storage will be a BITCH, along with api requests.
                     suitableGuilds.append(uuid)
                 bar()
-                time.sleep(0.2)
+                time.sleep(3)
         print(countOfGuilds, len(suitableGuilds))
-        with open('guildlist.csv', 'w', newline='') as myfile:
+        with FILE.open("w", newline="") as myfile:
             wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
             for guild in suitableGuilds:
                 wr.writerow([guild])  # Write each UUID in a separate row

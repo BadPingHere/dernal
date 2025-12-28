@@ -81,9 +81,7 @@ class HQ(commands.Cog):
     @app_commands.allowed_installs(guilds=True, users=True)
     @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
     @app_commands.command(description="Outputs the top hq locations.")
-    @app_commands.describe(
-        guild='Prefix of the guild Ex: TAq, ICo.',
-    )
+    @app_commands.describe(guild='Prefix of the guild Ex: TAq, ICo.',)
     async def hq(self, interaction: discord.Interaction, guild: Optional[str]):
         logger.info(f"Command /hq was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {guild}.")
         URL = "https://api.wynncraft.com/v3/guild/list/territory"

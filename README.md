@@ -22,7 +22,7 @@
 To use this discord bot, please refer to the [wiki](https://github.com/BadPingHere/dernal/wiki) for help with running the bot, configuring it, and running the commands.
 
 > [!NOTE]  
-> For self-hosting, you will need to run dernal with the activitySQL script to use /guild activity/leaderboard commands, /player activity commands, and /giveaway commands. Or you can join the [Dernal Support Discord](https://discord.gg/MHbMGjKdfe) discord to use our database.
+> For self-hosting, you will need to run dernal with the activitySQL script to use database related commands. You will also need to be running the internal API.
 
 ## Download
 
@@ -37,6 +37,7 @@ This software was inspired or uses assets from:
 - [Wynncraft-Territory-Info](https://github.com/jakematt123/Wynncraft-Territory-Info)
 - [Wynntils](https://wynntils.com/)
 - [discord-ext-prometheus](https://github.com/Apollo-Roboto/discord.py-ext-prometheus)
+- [Wynnventory](https://www.wynnventory.com/)
 
 ## Bug Reporting
 

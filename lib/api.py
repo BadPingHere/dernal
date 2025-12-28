@@ -1,4 +1,3 @@
-import uvicorn
 from fastapi import FastAPI, APIRouter, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -28,6 +27,12 @@ import base64
 import logging
 import logging.handlers
 import sys
+import re
+import requests
+import colorsys
+from typing import Dict, List
+import random
+import unicodedata
 
 #TODO: Some bugs I ran into during testing:
 # 1. /guild activity graid with no recent data (like on dev) will result in a hanging command, same with /player activty graids (likely the same for all the other database related onces, but i wont worry about that.)
@@ -36,6 +41,7 @@ import sys
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_FILE = os.path.join(BASE_DIR, "api.log")
+CACHE_FILE = Path(__file__).resolve().parents[1] / "database" / "ing_cache.json"
 
 logger = logging.getLogger('api')
 logger.setLevel(logging.DEBUG)
@@ -50,13 +56,19 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(formatter)
+ingToMobs: Dict[str, List[str]] = {}
+ingRarity: Dict[str, int] = {}
+mobCoords: Dict[str, List[List[int]]] = {}
+priceCache: Dict[str, float] = {}
+    
     
 timeframeMap1 = { # Used for heatmap data
     "Season 24": ("04/18/25", "06/01/25"),
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "11/02/26"), 
+    "Season 28": ("11/07/25", "12/20/25"), 
+    "Season 29": ("01/01/26", "12/20/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -65,7 +77,8 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "11/02/26"), 
+    "Season 28": ("11/07/25", "12/20/25"), 
+    "Season 29": ("01/01/26", "12/20/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -436,6 +449,270 @@ def cache_route(ttl=None):
             return result
         return wrapper
     return decorator
+
+def saveCache():
+    data = {
+        "ingToMobs": ingToMobs,
+        "mobCoords": mobCoords,
+        "priceCache": priceCache,
+        "ingRarity": ingRarity,
+    }
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CACHE_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+def loadCache():
+    global ingToMobs, mobCoords, priceCache, ingRarity
+
+    if not CACHE_FILE.exists():
+        return False
+
+    try:
+        with open(CACHE_FILE, "r") as f:
+            data = json.load(f)
+
+        ingToMobs = data.get("ingToMobs", {})
+        mobCoords = data.get("mobCoords", {})
+        priceCache = data.get("priceCache", {})
+        ingRarity = data.get("ingRarity", {})
+        return True
+
+    except Exception as e:
+        logger.error("Cache corrupted:", e)
+        return False
+
+def findIngCoords(ingToMobs, mobCoords, ingRarity):
+    def cleanText(text): # helper function to remove all the shitass from names
+        if not text:
+            return text
+        text = unicodedata.normalize("NFKD", text)
+        text = text.encode("ascii", "ignore").decode("ascii")
+        text = re.sub(r"§.", "", text)
+        return text.strip()
+    
+    ingToMobs.clear()
+    mobCoords.clear()
+    ingRarity.clear()
+    try:
+        for i in range(50):
+            time.sleep(0.50)
+            url = f"https://api.wynncraft.com/v3/item/search?page={i}"
+            payload = {
+                "query": "",
+                "type": ["ingredient"],
+                "tier": [],
+                "attackSpeed": [],
+                "levelRange": [0, 110],
+                "professions": [],
+                "identifications": [],
+                "majorIds": []
+            }
+            r = requests.post(url, json=payload)
+            jsonData = r.json()
+            results = jsonData.get("results", {})
+            for ingredientName, info in results.items():
+                ingredientName = cleanText(ingredientName)
+                droppedBy = info.get("droppedBy", []) # Gets the droppedBy data if applicable, some dont have it because of WE and whatnot
+                ingToMobs.setdefault(ingredientName, [])
+                ingRarity[ingredientName] = int(info.get("tier", 0))
+                        
+                for entry in droppedBy:
+                    mobName = cleanText(entry.get("name"))
+                    coords = entry.get("coords")
+                    if mobName:
+                        ingToMobs[ingredientName].append(mobName)
+
+                    if not coords:
+                        continue
+
+                    if isinstance(coords[0], list): # Account for multiple lists of coords
+                        processed = [[c[0], c[2], c[3]] for c in coords]
+                    else:
+                        processed = [[coords[0], coords[2], coords[3]]]
+
+                    if mobName not in mobCoords:
+                        mobCoords[mobName] = []
+                        
+                    mobCoords.setdefault(mobName, [])
+                    mobCoords[mobName].extend(processed)
+    except: # we hit end of pages
+        useless = 1 # iam the king of creating the shittiest code.
+
+def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePriceCache, tier):
+    #font = ImageFont.truetype("lib/documents/arial.ttf", 30)
+    map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
+    if not price: # hotchpotch fix but we just set price to -1
+        price = -1
+
+    def coordToPixel(x, z):
+        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+
+    overlay = Image.new("RGBA", map_img.size)
+    overlay_draw = ImageDraw.Draw(overlay)
+    draw = ImageDraw.Draw(map_img)
+    legend_items = []
+
+    loweercaseIngs = {ing.lower(): ing for ing in ingToMobs.keys()}
+    if ingSearch: # Ing supplied
+        lookup = ingSearch.lower()
+        if lookup in loweercaseIngs:
+            targets = [loweercaseIngs[lookup]]
+        else:
+            return None
+    else: # Ing not supplied
+        if tier is None: # Tier not supplied, search all ings
+            targets = list(ingToMobs.keys())
+        else: # tier supplied search all ings with right tier
+            targets = [ing for ing in ingToMobs if ingRarity.get(ing) == tier]
+    #logger.info(f"Targets: {targets}")
+    for ing in targets:
+        if not updatePriceCache and ing in priceCache:
+            avgLowPrice = priceCache[ing]
+        else:
+            time.sleep(0.1)
+            url = f"https://www.wynnventory.com/api/trademarket/history/{ing}"
+            r = requests.get(url)
+            jsonData = r.json()
+
+            if jsonData:
+                lowestPrices = [entry["lowest_price"] for entry in jsonData if entry["lowest_price"]]
+                avgLowPrice = sum(lowestPrices) / len(lowestPrices) if lowestPrices else 0
+            else:
+                avgLowPrice = 0
+            priceCache[ing] = avgLowPrice
+            saveCache()
+        h = int(hashlib.md5(ing.encode()).hexdigest(), 16)
+        hue = (h % 360) / 360.0
+        sat = 0.85
+        val = 0.95
+        r, g, b = colorsys.hsv_to_rgb(hue, sat, val)
+        color_rgb = (int(r * 255), int(g * 255), int(b * 255))
+        fill_color = (*color_rgb, 70)
+        outline_color = (*color_rgb, 255)
+        legend_items.append((ing, color_rgb))
+        if avgLowPrice >= 64 * price:
+            #print(f"Ing {ing} is good: {avgLowPrice}")
+            mobs = ingToMobs.get(ing, [])
+            #logger.info(ing)
+            #logger.info(mobs)
+            for mob in mobs:
+                #logger.info(mob)
+                coords_list = mobCoords.get(mob, [])
+                for (x, z, radius) in coords_list:
+                    px, py = coordToPixel(x, z)
+                    pr = radius if radius > 0 else 5
+                    box = [px - pr, py - pr, px + pr, py + pr]
+                    overlay_draw.ellipse(box, fill=fill_color)
+
+                    draw.ellipse(box, outline=outline_color, width=2)
+        
+    mapImg = Image.alpha_composite(map_img, overlay)
+    #mapImg.save("ingredient_map.webp", format="webp")
+    mapBytes = BytesIO()
+    mapImg.save(mapBytes, format='webp', optimize=True, compress_level=5)
+    mapBytes.seek(0)
+    return Response(content=mapBytes.getvalue(), media_type="image/webp")
+
+def createPlot(
+    x, 
+    y,
+    graphType,
+    color,
+    title,
+    xlabel,
+    ylabel,
+    timeColor,
+    ahxlineY=None,
+    ahxlineLabel=None,
+    fillBetween=None,
+    legendName=None,
+    timeframeDays=None,
+):
+    #* Parameter info (because this will be long for sure)
+    # x: The x axis data (usually dates)
+    # y: the y axis data (whatever we are measuring)
+    # graphType: the type of graph (bar, line, pie)
+    # color: color for the bars and line
+    # title: title of the graph
+    # xlabel: label for the x axis
+    # ylabel: label for the y axis
+    # timeColor: color for the timestamp
+    # ahxlineY: for the plt.axhline that intersects, mostly for average line, the y value it should use.
+    # ahxlineLabel: the label for the above line
+    # fillBetween: some line graphs (like territories) want fill between under the line so it looks better, so this is either True or None.
+    # legendName: on the legend for line and pie chart graphs the legend needs a name
+    # timeframeDays: number of days the timeframe is set to
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if graphType == "bar":
+        ax.bar(x, y, width=0.8, color=color)
+        if ahxlineY and ahxlineLabel:
+            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
+        ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:,.0f}'))
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.grid(True, linestyle='-', alpha=0.5)
+        ax.legend()
+
+    elif graphType == "line":
+        ax.plot(x, y, '-', label=legendName, color=color, lw=1.5)
+        if fillBetween:
+            ax.fill_between(x, 0, y, alpha=0.3, color=color)
+        if ahxlineY and ahxlineLabel:
+            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
+        if timeframeDays >= 7: # 7 or more days we remove the hour:min since its not needed
+            ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
+        else:
+            ax.xaxis.set_major_formatter(DateFormatter('%m/%d %H:%M'))
+            
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{int(v)}'))
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.grid(True, linestyle='-', alpha=0.5)
+        ax.legend()
+        ax.margins(x=0.01)
+
+    elif graphType == "pie":
+        colorMap = plt.cm.get_cmap('tab20c')
+        cleanedLabels = [s.split(" — ", 1)[0] for s in x] # We remove this to get just dungeon name for colors to be consistent
+        colors = [colorMap((int(hashlib.md5(label.encode()).hexdigest(), 16) % colorMap.N) / colorMap.N)for label in cleanedLabels]
+
+        wedges, texts, autotexts = ax.pie(
+            y,
+            labels=x,
+            autopct='%1.1f%%',
+            startangle=90,
+            colors=colors
+        )
+        ax.axis('equal')
+        if legendName:
+            ax.legend(wedges, x, title=legendName, loc="center left", bbox_to_anchor=(1, 0.5))
+        plt.subplots_adjust(right=0.75)
+
+    else:
+        raise ValueError(f"Unknown graph type: {graphType}")
+
+    plt.title(title, fontsize=14)
+    plt.tight_layout()
+    plt.text(
+        1.0, -0.1,
+        f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.",
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment='bottom',
+        horizontalalignment='right',
+        color=timeColor
+    )
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='webp', bbox_inches='tight', dpi=100)
+    plt.close(fig)
+    buf.seek(0)
+    img = base64.b64encode(buf.getvalue()).decode()
+    
+    return img
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -1300,108 +1577,6 @@ async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: 
     playerCursor.close()
     return data
 
-
-def createPlot(
-    x, 
-    y,
-    graphType,
-    color,
-    title,
-    xlabel,
-    ylabel,
-    timeColor,
-    ahxlineY=None,
-    ahxlineLabel=None,
-    fillBetween=None,
-    legendName=None,
-    timeframeDays=None,
-):
-    #* Parameter info (because this will be long for sure)
-    # x: The x axis data (usually dates)
-    # y: the y axis data (whatever we are measuring)
-    # graphType: the type of graph (bar, line, pie)
-    # color: color for the bars and line
-    # title: title of the graph
-    # xlabel: label for the x axis
-    # ylabel: label for the y axis
-    # timeColor: color for the timestamp
-    # ahxlineY: for the plt.axhline that intersects, mostly for average line, the y value it should use.
-    # ahxlineLabel: the label for the above line
-    # fillBetween: some line graphs (like territories) want fill between under the line so it looks better, so this is either True or None.
-    # legendName: on the legend for line and pie chart graphs the legend needs a name
-    # timeframeDays: number of days the timeframe is set to
-    
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    if graphType == "bar":
-        ax.bar(x, y, width=0.8, color=color)
-        if ahxlineY and ahxlineLabel:
-            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
-        ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{v:,.0f}'))
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.grid(True, linestyle='-', alpha=0.5)
-        ax.legend()
-
-    elif graphType == "line":
-        ax.plot(x, y, '-', label=legendName, color=color, lw=1)
-        if fillBetween:
-            ax.fill_between(x, 0, y, alpha=0.3, color=color)
-        if ahxlineY and ahxlineLabel:
-            ax.axhline(y=ahxlineY, color='red', linestyle='-', label=ahxlineLabel)
-        if timeframeDays >= 7: # 7 or more days we remove the hour:min since its not needed
-            ax.xaxis.set_major_formatter(DateFormatter('%m/%d'))
-        else:
-            ax.xaxis.set_major_formatter(DateFormatter('%m/%d %H:%M'))
-            
-        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f'{int(v)}'))
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
-        ax.grid(True, linestyle='-', alpha=0.5)
-        ax.legend()
-        ax.margins(x=0.01)
-
-    elif graphType == "pie":
-        colorMap = plt.cm.get_cmap('tab20c')
-
-        colors = [colorMap((int(hashlib.md5(label.encode()).hexdigest(), 16) % colorMap.N) / colorMap.N)for label in x]
-
-        wedges, texts, autotexts = ax.pie(
-            y,
-            labels=x,
-            autopct='%1.1f%%',
-            startangle=90,
-            colors=colors
-        )
-        ax.axis('equal')
-        if legendName:
-            ax.legend(wedges, x, title=legendName, loc="center left", bbox_to_anchor=(1, 0.5))
-        plt.subplots_adjust(right=0.75)
-
-    else:
-        raise ValueError(f"Unknown graph type: {graphType}")
-
-    plt.title(title, fontsize=14)
-    plt.tight_layout()
-    plt.text(
-        1.0, -0.1,
-        f"Generated at {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')} UTC.",
-        transform=ax.transAxes,
-        fontsize=9,
-        verticalalignment='bottom',
-        horizontalalignment='right',
-        color=timeColor
-    )
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-    plt.close(fig)
-    buf.seek(0)
-    img = base64.b64encode(buf.getvalue()).decode()
-    
-    return img
-
 @activityRouter.get("/{activityType}")
 @cache_route(ttl=600) #10m cache
 async def activity(activityType: str, uuid: str | None = None, name: str | None = None, theme: str | None = None, timeframe: str | None = None): # Name can be either prefix or gname or player username
@@ -2000,7 +2175,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
      
     guildConn.close()
     playerCursor.close()
-    return Response(content=buf.getvalue(), media_type="image/png")
+    return Response(content=buf.getvalue(), media_type="image/webp") # im actually quite confident that i fucked this up and none of this gets hit anytime.
   
 @mapRouter.get("/current") # Not a great name but its the current map
 @cache_route(ttl=120) #2m cache
@@ -2014,6 +2189,25 @@ async def heat_map(timeframe: str):
         return JSONResponse(status_code=400, content={"error": "Please provide a valid timeframe."})
     return heatmapCreator(timeframe)
   
+@mapRouter.get("/ingmap")
+@cache_route(ttl=3600) #1hr cache
+async def ingredient_map(ingredient: str | None = None, price: int | None = None, tier: int | None = None):
+    updateIngCache = False
+    updatePriceCache = False
+    ingRandomSeed = random.randint(0, 100) # ings rarely change so no need to update
+    priceRandomSeed = random.randint(0, 20) #prices change sometimes so update a bit more
+    if ingRandomSeed == 6:
+        updateIngCache = True
+    if priceRandomSeed == 6:
+     updatePriceCache = True
+     
+    cacheLoaded = loadCache()
+    if updateIngCache or not cacheLoaded:
+        findIngCoords(ingToMobs, mobCoords, ingRarity)
+        saveCache()
+
+    return ingredientMap(ingToMobs, mobCoords, ingredient, price, priceCache, updatePriceCache, tier)
+
 app.include_router(searchRouter)
 app.include_router(graidRouter)
 app.include_router(leaderboardRouter)

@@ -74,7 +74,8 @@ timeframeMap1 = { # Used for heatmap data
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "11/02/26"), 
+    "Season 28": ("11/07/25", "12/20/25"), 
+    "Season 29": ("01/01/26", "12/20/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -83,7 +84,8 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "11/02/26"), 
+    "Season 28": ("11/07/25", "12/20/25"), 
+    "Season 29": ("01/01/26", "12/20/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -671,13 +673,13 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix 
             title=f"Guild Raid Completion for {name}"
             description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}"
 
-    file = discord.File(buf, filename=f'{commandType}.png')
+    file = discord.File(buf, filename=f'{commandType}.webp')
     embed = discord.Embed(
         title=title+f" - {timeframe}",
         description=description,
         color=discord.Color.blue()
     )
-    embed.set_image(url=f"attachment://{commandType}.png")
+    embed.set_image(url=f"attachment://{commandType}.webp")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
 
@@ -834,12 +836,31 @@ def mapCreator():
     success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/current")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
-    file = discord.File(mapBytes, filename="wynn_map.png")
+    file = discord.File(mapBytes, filename="wynn_map.webp")
     embed = discord.Embed(
         title=f"Current Territory Map",
         color=discord.Color.green()
     )
-    embed.set_image(url="attachment://wynn_map.png")
+    embed.set_image(url="attachment://wynn_map.webp")
+    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
+    return file, embed
+
+def ingredientMapCreator(ingredient, price, tier):
+    url = (f"http://127.0.0.1:8080/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
+    success, r = internalMakeRequest(url)
+    mapBytes = BytesIO(r.content)
+    mapBytes.seek(0)
+    file = discord.File(mapBytes, filename="ingredient_map.webp")
+    embed = discord.Embed(
+        title=f"Ingredient Map",
+        description = (
+            f"Ingredient: {ingredient if ingredient else 'None'}\n"
+            f"Price: {(str(price) + 'EB') if price else 'None'}\n"
+            f"Tier: {tier if tier else 'None'}\n"
+        ),
+        color=discord.Color.green()
+    )
+    embed.set_image(url="attachment://ingredient_map.webp")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
 
@@ -847,12 +868,12 @@ def heatmapCreator(timeframe):
     success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/heatmap?timeframe={timeframe}")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
-    file = discord.File(mapBytes, filename="wynn_heatmap.png")
+    file = discord.File(mapBytes, filename="wynn_heatmap.webp")
     embed = discord.Embed(
         title=f"Heatmap for {timeframe}",
         color=discord.Color.green()
     )
-    embed.set_image(url="attachment://wynn_heatmap.png")
+    embed.set_image(url="attachment://wynn_heatmap.webp")
     embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
     return file, embed
 
@@ -1236,7 +1257,7 @@ def detect_graids(eligibleGuilds): # i will credit this to slumbrous (+my additi
             for user, info in members.items():
                 now = info.get("contributed", 0)
                 prev = last_xp.get((prefix, user), now)
-                if thr*0.95 <= now - prev <= (thr*1.01)+2500000: # successful graid (I do (thr*1.01)+2500000 because /guild xp can fuck up the calc of it on lower lvl guilds, itll be less accurate here but fixed at len(party) == 4)
+                if thr*0.99 <= now - prev <= (thr*1.01)+2500000: # successful graid (I do (thr*1.01)+2500000 because /guild xp can fuck up the calc of it on lower lvl guilds, itll be less accurate here but fixed at len(party) == 4)
                     raidingUsers.append(user)
                     #logger.info(f"[GRAID] {user}@{prefix} +{now-prev} XP, thr is {thr}, so a deviation of {(now - prev)-thr} XP.")
                 last_xp[(prefix, user)] = now
