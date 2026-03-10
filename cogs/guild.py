@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import timeframeMap2, timeframeMap3, activityBuilder, leaderboardBuilder, getGraidDatabaseData, checkCooldown, guildLookup, lookupGuild, guildOnline
+from lib.utils import timeframeMap3, activityBuilder, leaderboardBuilder, checkCooldown, guildLookup, lookupGuild, guildOnline
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -155,11 +155,6 @@ class LeaderboardPaginator(View):
 class Guild(commands.GroupCog, name="guild"):
     def __init__(self, bot):
         self.bot = bot
-        self.EligibleGuilds = getGraidDatabaseData("EligibleGuilds")
-    
-    async def timeframeAutocomplete2(self, interaction: discord.Interaction, current: str):
-        keys = list(timeframeMap2.keys())
-        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
     
     async def timeframeAutocomplete3(self, interaction: discord.Interaction, current: str):
         keys = list(timeframeMap3.keys())
@@ -746,7 +741,7 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
     
     leaderboardOnline_members.autocomplete("timeframe")(timeframeAutocomplete3)
-    leaderboardGraids.autocomplete("timeframe")(timeframeAutocomplete2)
+    leaderboardGraids.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardWars.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardXP.autocomplete("timeframe")(timeframeAutocomplete3)
 

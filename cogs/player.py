@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import time
-from lib.utils import getGraidDatabaseData, checkCooldown, timeframeMap3, timeframeMap2, playerGuildHistory, leaderboardBuilder, activityBuilder
+from lib.utils import checkCooldown, timeframeMap3, playerGuildHistory, leaderboardBuilder, activityBuilder
 import sqlite3
 import logging
 import asyncio
@@ -87,10 +87,6 @@ class Player(commands.GroupCog, name="player"):
     
     async def timeframeAutocomplete3(self, interaction: discord.Interaction, current: str):
         keys = list(timeframeMap3.keys())
-        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
-    
-    async def timeframeAutocomplete2(self, interaction: discord.Interaction, current: str):
-        keys = list(timeframeMap2.keys())
         return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
     
     async def autocompleteTheme(self, interaction: discord.Interaction, current: str):
@@ -556,7 +552,7 @@ class Player(commands.GroupCog, name="player"):
 
     # Add autocomplete for timeframe parameters
     leaderboardRaids.autocomplete("timeframe")(timeframeAutocomplete3)
-    leaderboardGRaids.autocomplete("timeframe")(timeframeAutocomplete2)
+    leaderboardGRaids.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardDungeons.autocomplete("timeframe")(timeframeAutocomplete3)
     leaderboardPlaytime.autocomplete("timeframe")(timeframeAutocomplete3)
     

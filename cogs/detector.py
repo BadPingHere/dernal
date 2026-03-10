@@ -6,7 +6,7 @@ import logging
 import os
 import shelve
 from dotenv import load_dotenv
-from lib.utils import checkterritories, detect_graids, writeGraidDatabaseData
+from lib.utils import checkterritories
 from lib.makeRequest import makeRequest
 import asyncio
 from datetime import datetime

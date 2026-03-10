@@ -90,7 +90,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 route_cache = TTLCache(maxsize=200, ttl=300)  # default 5 min
 searchRouter = APIRouter(prefix="/api/search", tags=["Search"])
-graidRouter = APIRouter(prefix="/api/graid", tags=["Guild Raids"])
 leaderboardRouter = APIRouter(prefix="/api/leaderboard", tags=["Leaderboard"])
 activityRouter = APIRouter(prefix="/api/activity", tags=["Activity"])
 mapRouter = APIRouter(prefix="/api/map", tags=["Maps"])
@@ -806,7 +805,6 @@ async def search_username(username: str):
 
     conn.close()
     return data
-
     
 @leaderboardRouter.get("/{leaderboardType}")
 @cache_route(ttl=600) #10m cache
@@ -2258,7 +2256,6 @@ async def ingredient_map(ingredient: str | None = None, price: int | None = None
     return ingredientMap(ingToMobs, mobCoords, ingredient, price, priceCache, updatePriceCache, tier)
 
 app.include_router(searchRouter)
-app.include_router(graidRouter)
 app.include_router(leaderboardRouter)
 app.include_router(activityRouter)
 app.include_router(mapRouter)

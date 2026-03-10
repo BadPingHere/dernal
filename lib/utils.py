@@ -41,17 +41,6 @@ timeframeMap1 = { # Used for heatmap data
     "Everything": None
 }
 
-timeframeMap2 = { # Used for graid data, note to update it in api
-    "Season 25": ("06/06/25", "07/20/25"),
-    "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/02/26", "02/28/26"), 
-    "Last 14 Days": None, # gotta handle ts outta dict
-    "Last 7 Days": None, # gotta handle ts outta dict
-    "Last 24 Hours": None, # gotta handle ts outta dict
-    "Everything": None
-}
 
 timeframeMap3 = { # Used for database data
     "Last 14 Days": None, # gotta handle ts outta dict
