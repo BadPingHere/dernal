@@ -384,9 +384,6 @@ class Guild(commands.GroupCog, name="guild"):
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return
-        if name not in self.EligibleGuilds :# Guilds above lvl 80
-            await interaction.response.send_message(f"The guild provided is not at or above level 80. If this is a mistake, please report this bug on Github.",ephemeral=True)
-            return  
         await interaction.response.defer()
         file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraids", prefix=name, theme=theme or "light", timeframe=timeframe)
         
@@ -394,6 +391,39 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.followup.send(file=file, embed=embed)
         else:
             await interaction.followup.send("No data available for the last 14 days")
+
+    @activityCommands.command(name="graids_pie", description="Shows a pie chart displaying the different graid's a guild has done.")
+    @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityGraidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
+        logger.info(f"Command /guild activity graids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
+            return
+        await interaction.response.defer()
+        
+        conn = sqlite3.connect('database/guild_activity.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE LIMIT 1", (name,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE LIMIT 1", (name,))
+            result = cursor.fetchone()
+    
+        if not result:
+            await interaction.followup.send(f"No data found for guild: {name}. Please make sure you have logged in recently..", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=result[0], name=name, theme=theme or "light")
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 7 days.")
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")
@@ -452,14 +482,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         
         if name:
-            if name not in self.EligibleGuilds:# Guilds above lvl 80
-                await interaction.response.send_message(f"The guild provided is not at or above level 80. If this is a mistake, please report this bug on github.",ephemeral=True)
-                return  
-            else:
-                await interaction.response.defer()
-                data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, prefix=name)
-                num = len(data)
-                view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
+            await interaction.response.defer()
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, prefix=name)
+            num = len(data)
+            view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
         else:
             await interaction.response.defer()
             data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraids", timeframe=timeframe)
@@ -579,7 +605,7 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',)
     async def overview(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild overview was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 5)
 
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)

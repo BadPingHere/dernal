@@ -27,6 +27,7 @@ ratelimitDict = {
         "/player/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
         "/guild/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
         "/leaderboard/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
+        "/item/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
     } for key in KEYS
 }
 
@@ -62,6 +63,8 @@ def getRoute(url):
         return "/guild/"
     elif "/leaderboard" in url:
         return "/leaderboard/"
+    elif "/item" in url:
+        return "/item/"
     return "/unknown/"  # fallback
 
 def refreshRatelimit(route):
@@ -218,7 +221,7 @@ def internalMakeRequest(url): # Used for non-wynncraft api usage
 
     while retries < maxRetries:
         try:
-            r = session.get(url, timeout=60)
+            r = session.get(url, timeout=300) # I dont wanna deal with timeouts.
             #print(r.headers)
             if r.status_code >= 400:
                 r.raise_for_status() # bad requests send to hell

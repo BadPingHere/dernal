@@ -10,7 +10,7 @@ from lib.utils import checkterritories, detect_graids, writeGraidDatabaseData
 from lib.makeRequest import makeRequest
 import asyncio
 from datetime import datetime
-import json
+import sqlite3
 
 logger = logging.getLogger('discord')
 load_dotenv()
@@ -25,18 +25,14 @@ class Detector(commands.GroupCog, name="detector"):
         self.expectedterrcount = {}
         self.untainteddata = {}
         self.untainteddataOLD = {}
-        self.EligibleGuilds = []
         self.serverID = int(os.getenv("SERVER_ID") or 0)
         rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.detectorFilePath = os.path.join(rootDir, 'database', 'detector')
-        self.territoryFilePath = os.path.join(rootDir, 'database', 'territory')
         with shelve.open(self.detectorFilePath) as db:
             self.guildsBeingTracked = dict(db)
             #logger.info(f"self.guildsBeingTracked: {self.guildsBeingTracked}")
-        with shelve.open(self.territoryFilePath) as territoryStorage:
-            self.historicalTerritories = territoryStorage.get("historicalTerritories", {})
+        self.territoryDBPath = os.path.join(rootDir, "database", "territories.db")
         self.backgroundDetector.start()
-        self.collectGraidData.start()
 
             
 
@@ -66,18 +62,27 @@ class Detector(commands.GroupCog, name="detector"):
                 guilds_to_check = list(self.guildsBeingTracked.keys())
                 
                 # Get Heatmap data, sadlt the best place to run it at.
-                dateMonth = str(datetime.now().month)+"/"+str(datetime.now().day)
+                today = datetime.utcnow().date().isoformat()
+
+                conn = sqlite3.connect(self.territoryDBPath)
+                cur = conn.cursor()
+
                 for territory, data in new_data.items():
                     oldGuild = old_data[str(territory)]['guild']['prefix']
                     newGuild = data['guild']['prefix']
-                    if dateMonth not in self.historicalTerritories: # init today's date
-                        self.historicalTerritories[dateMonth] = {}
-                    if territory not in self.historicalTerritories[dateMonth]: # Init territory to 0
-                        self.historicalTerritories[dateMonth][territory] = 0
-                    if oldGuild != newGuild: # Means a change of hands, we add to our heatmap shit
-                        self.historicalTerritories[dateMonth][territory] += 1
-                with shelve.open(self.territoryFilePath) as territoryStorage:
-                    territoryStorage["historicalTerritories"] = self.historicalTerritories
+                    if oldGuild != newGuild:
+                        cur.execute(
+                            """
+                            INSERT INTO territory_changes (date, territory, count)
+                            VALUES (?, ?, 1)
+                            ON CONFLICT(date, territory)
+                            DO UPDATE SET count = count + 1
+                            """,
+                            (today, territory)
+                        )
+
+                conn.commit()
+                conn.close()
 
                 for guildID in guilds_to_check:
                     if guildID not in self.guildsBeingTracked:
@@ -115,24 +120,7 @@ class Detector(commands.GroupCog, name="detector"):
             # Update the current data for next iteration
             self.untainteddata = new_data
         except Exception as e: # For one of the many errors
-            logger.error(f"Unhandled exception in Detector: {e}", exc_info=True)
-
-    @tasks.loop(seconds=60)
-    async def collectGraidData(self): # technically this doesnt belong in detector... but its for sure detecting shit.
-        try:
-            if not self.EligibleGuilds: #init lvl 80 guilds
-                success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/leaderboards/guildLevel")
-                if not success:
-                    logger.error(f"Unsucessful request in collectGraidData: {success}")
-                for num, data in (r.json()).items():
-                    if int(data["level"]) >= 80:
-                        self.EligibleGuilds.append(data["prefix"])
-                    else:
-                        break
-                writeGraidDatabaseData("EligibleGuilds", self.EligibleGuilds)
-            await asyncio.to_thread(detect_graids, self.EligibleGuilds)
-        except Exception as e: # For one of the many errors
-            logger.error(f"Unhandled exception in collectGraidData: {e}", exc_info=True)
+            logger.error(f"Unhandled exception in Detector: {e}", exc_info=True)              
 
     @app_commands.command(name="remove", description="Remove a guild from being detected.")
     async def remove(self, interaction: discord.Interaction, prefix: str):

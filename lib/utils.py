@@ -19,48 +19,9 @@ import base64
   
 logger = logging.getLogger('discord')
 
-def getGraidDatabaseData(key):
-    if key == "guild_raids":
-        keyName = "guild_raids"
-    elif key == "EligibleGuilds":
-        keyName = "EligibleGuilds"
-
-    graidFilePath = os.path.join(rootDir, 'database', 'graid.db')
-    conn = sqlite3.connect(graidFilePath)
-    cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS graid_data (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-    """)
-    cur.execute("SELECT value FROM graid_data WHERE key = ?", (keyName,))
-    row = cur.fetchone()
-    conn.close()
-    if row:
-        return json.loads(row[0])
-    if key == "guild_raids":
-        return {}
-    elif key == "EligibleGuilds":
-        return []
-    return None
-
-def writeGraidDatabaseData(key, data):
-    graidFilePath = os.path.join(rootDir, 'database', 'graid.db')
-    conn = sqlite3.connect(graidFilePath)
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT OR REPLACE INTO graid_data (key, value) VALUES (?, ?)",
-        (key, json.dumps(data))
-    )
-    conn.commit()
-    conn.close()
-
 cooldownHolder = {}
 last_xp = {}  # {(guild_prefix, username): contributed}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-territoryFilePath = os.path.join(rootDir, 'database', 'territory')
-confirmedGRaid = getGraidDatabaseData("guild_raids")
 
 path = Path(__file__).resolve().parents[1] / '.env'
 CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
@@ -75,7 +36,7 @@ timeframeMap1 = { # Used for heatmap data
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
     "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/01/26", "12/20/26"), 
+    "Season 29": ("01/02/26", "02/28/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -85,7 +46,7 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
     "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/01/26", "12/20/26"), 
+    "Season 29": ("01/02/26", "02/28/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -587,7 +548,7 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix 
     match commandType:
         case "guildActivityXP":
             title=f"XP Analysis for {name}"
-            description=f"Total XP (14 days): {jsonData['total_xp']:,.0f}\nDaily Average: {jsonData['daily_average']:,.0f}\nHighest Day: {jsonData['highest_day']:,.0f}\nLowest Day: {jsonData['lowest_day']:,.0f}"
+            description=f"Total XP: {jsonData['total_xp']:,.0f}\nDaily Average: {jsonData['daily_average']:,.0f}\nHighest Day: {jsonData['highest_day']:,.0f}\nLowest Day: {jsonData['lowest_day']:,.0f}"
         
         case "guildActivityTerritories":
             title=f"Territory Analysis for {name}"
@@ -673,9 +634,17 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix 
             title=f"Guild Raid Completion for {name}"
             description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}"
 
+        case "playerActivityGraidPie":
+            title=f"Graid pie chart for {name}"
+            description= None
+        
+        case "guildActivityGraidPie":
+            title=f"Graid pie chart for {name}"
+            description= None
+        
     file = discord.File(buf, filename=f'{commandType}.webp')
     embed = discord.Embed(
-        title=title+f" - {timeframe}",
+        title=title + f" - {timeframe}" if timeframe else title,
         description=description,
         color=discord.Color.blue()
     )
@@ -854,6 +823,7 @@ def ingredientMapCreator(ingredient, price, tier):
     embed = discord.Embed(
         title=f"Ingredient Map",
         description = (
+            f"Currently, WynnAPI is not showing drop locations for some ingredients. Ask nepmia to fix that.\n"
             f"Ingredient: {ingredient if ingredient else 'None'}\n"
             f"Price: {(str(price) + 'EB') if price else 'None'}\n"
             f"Tier: {tier if tier else 'None'}\n"
@@ -1241,37 +1211,6 @@ def getHelp(arg):
                 message = "The command you inputted is not valid. Please try again."
             return message, False
 
-def detect_graids(eligibleGuilds): # i will credit this to slumbrous (+my additions) on disc, my shit did NOT fucking work first try.
-    for prefix in eligibleGuilds:
-        raidingUsers = []
-        
-        success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/prefix/{prefix}")
-        if not success:
-            continue
-        d = r.json()
-        lvl = min(d.get("level", 0), 130)
-        thr = round((20000 * sum(1.15**(n-1) for n in range(1, lvl+1)))/4000) # amount of xp the guld recieves for XP /4000 (since every person gets 1/4th of 1/1000 of total level req)
-        for members in d["members"].values():
-            if not isinstance(members, dict):
-                continue
-            for user, info in members.items():
-                now = info.get("contributed", 0)
-                prev = last_xp.get((prefix, user), now)
-                if thr*0.99 <= now - prev <= (thr*1.01)+2500000: # successful graid (I do (thr*1.01)+2500000 because /guild xp can fuck up the calc of it on lower lvl guilds, itll be less accurate here but fixed at len(party) == 4)
-                    raidingUsers.append(user)
-                    #logger.info(f"[GRAID] {user}@{prefix} +{now-prev} XP, thr is {thr}, so a deviation of {(now - prev)-thr} XP.")
-                last_xp[(prefix, user)] = now
-
-        if prefix not in confirmedGRaid: #init it
-                confirmedGRaid[prefix] = []
-        if raidingUsers: # Raid happened, cut them up and put into confirmed raids
-            splitRaidingUsers = [raidingUsers[i:i+4] for i in range(0, len(raidingUsers), 4)]
-            for party in splitRaidingUsers:
-                if len(party) == 4: # should fix false finds
-                    confirmedGRaid[prefix].append({"timestamp": time.time(), "party": party})
-                    writeGraidDatabaseData("guild_raids", confirmedGRaid)
-                    #logger.info(f"confirmedGRaid: timestamp: {time.time()} party: {party}")
-    
 def playerGuildHistory(playerUUID, username):
     conn = sqlite3.connect('database/guild_activity.db')
     cursor = conn.cursor()

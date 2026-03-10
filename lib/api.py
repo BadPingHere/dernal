@@ -68,7 +68,7 @@ timeframeMap1 = { # Used for heatmap data
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
     "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/01/26", "12/20/26"), 
+    "Season 29": ("01/02/26", "02/28/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
@@ -78,7 +78,7 @@ timeframeMap2 = { # Used for graid data, note to update it in api
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
     "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/01/26", "12/20/26"), 
+    "Season 29": ("01/02/26", "02/28/26"), 
     "Last 14 Days": None, # gotta handle ts outta dict
     "Last 7 Days": None, # gotta handle ts outta dict
     "Last 24 Hours": None, # gotta handle ts outta dict
@@ -97,10 +97,9 @@ mapRouter = APIRouter(prefix="/api/map", tags=["Maps"])
 
 GUILDDBPATH = Path(__file__).resolve().parents[1] / "database" / "guild_activity.db"
 PLAYERDBPATH = Path(__file__).resolve().parents[1] / "database" / "player_activity.db"
-GRAIDDBPATH = Path(__file__).resolve().parents[1] / "database" / "graid.db"
+TERRITORIESDBPATH = Path(__file__).resolve().parents[1] / "database" / "territories.db"
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-territoryFilePath = os.path.join(rootDir, 'database', 'territory')
 
 
 def mapCreator():
@@ -234,27 +233,38 @@ def heatmapCreator(timeframe):
         startDay, endDay = timeframeMap1.get(timeframe, (None, None))
         startDate = datetime.strptime(startDay, "%m/%d/%y")
         endDate = datetime.strptime(endDay, "%m/%d/%y")
+    
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
     
     def coordToPixel(x, z):
         return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
 
-    with shelve.open(territoryFilePath) as territoryStorage:
-        historicalTerritories = territoryStorage.get("historicalTerritories", {})
+
     success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
     territory_data = r.json()
     activityCount = defaultdict(int)
-    if timeframe == "Everything": # add it all
-        for day in historicalTerritories.values():
-            for territory, count in day.items():
-                activityCount[territory] += count
+
+    conn = sqlite3.connect(TERRITORIESDBPATH)
+    cur = conn.cursor()
+
+    if timeframe == "Everything":
+        cur.execute("""
+        SELECT territory, SUM(count)
+        FROM territory_changes
+        GROUP BY territory
+        """)
     else:
-        for date, data in historicalTerritories.items():
-            fullDate = datetime.strptime(date + f"/{datetime.now().year}", "%m/%d/%Y")
-            if startDate <= fullDate <= endDate: # Check if its between our area
-                for territory, count in data.items():
-                    activityCount[territory] += count
-    #logger.info(activityCount)
+        cur.execute("""
+        SELECT territory, SUM(count)
+        FROM territory_changes
+        WHERE date BETWEEN ? AND ?
+        GROUP BY territory
+        """, (startDate.isoformat(), endDate.isoformat()))
+
+    for territory, total in cur.fetchall():
+        activityCount[territory] = total
+
+    conn.close()
     maxCount = max(activityCount.values(), default=1)
 
     def heatToColor(heat): # I'd like to make this better in the future
@@ -322,10 +332,6 @@ def connectDB(database):
         return conn
     if database == "player":
         conn = sqlite3.connect(PLAYERDBPATH)
-        conn.row_factory = sqlite3.Row
-        return conn
-    if database == "graid":
-        conn = sqlite3.connect(GRAIDDBPATH)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -801,36 +807,6 @@ async def search_username(username: str):
     conn.close()
     return data
 
-@graidRouter.get("/eligible")
-@cache_route(ttl=3600) #1hr cache
-async def eligible():
-    conn = connectDB("graid")
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM graid_data WHERE key = 'EligibleGuilds'")
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
-        return JSONResponse(status_code=404, content={"error": "Eligible guilds not found"})
-
-    guilds = json.loads(row[0])
-    return {"guilds": guilds}
-
-@graidRouter.get("/completions")
-@cache_route(ttl=300) #5m cache
-async def completions():
-    conn = connectDB("graid")
-    cursor = conn.cursor()
-    cursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-    
-    row = cursor.fetchone()
-    if not row:
-        conn.close()
-        return JSONResponse(status_code=404, content={"error": "Eligible guilds not found"})
-
-    conn.close()
-    data = json.loads(row[0])
-    return data
     
 @leaderboardRouter.get("/{leaderboardType}")
 @cache_route(ttl=600) #10m cache
@@ -1421,7 +1397,7 @@ async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: 
                     RANK() OVER (ORDER BY avg_daily_hours DESC) AS rank
                 FROM playtime_diff
                 ORDER BY avg_daily_hours DESC
-                LIMIT 100;
+                LIMIT 150;
             """
 
             params.append(days)
@@ -1496,80 +1472,85 @@ async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: 
             data = playerCursor.fetchall()
         
         case "guildLeaderboardGraids":
-            conn = connectDB("graid")
-            cursor = conn.cursor()
-            cursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            
-            row = cursor.fetchone()
-            startDate, endDate = getTimeframe(timeframe, "graid")
+            startDate, endDate, days = getTimeframe(timeframe, "special")
+            guildCursor.execute("""
+            WITH player_deltas AS (
+                SELECT
+                    guild_uuid,
+                    member_uuid,
+                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
+                FROM member_snapshots
+                WHERE timestamp >= datetime('now', ?)
+                GROUP BY guild_uuid, member_uuid
+                HAVING MIN(totalGraid) >= 1
+            ),
+            guild_totals AS (
+                SELECT
+                    guild_uuid,
+                    SUM(graid_delta) AS total_graids
+                FROM player_deltas
+                GROUP BY guild_uuid
+            )
+            SELECT
+                g.prefix,
+                gt.total_graids
+            FROM guild_totals gt
+            JOIN guilds g
+            ON g.uuid = gt.guild_uuid
+            ORDER BY gt.total_graids DESC
+            LIMIT 100;
+            """, (f'-{days} days',))
+            data = guildCursor.fetchall()
 
-            leaderboard = {}
-            for prefix, entries in json.loads(row[0]).items():
-                count = 0
-                for entry in entries:
-                    ts = datetime.fromtimestamp(entry["timestamp"])
-                    if startDate and endDate:
-                        if startDate <= ts <= endDate:
-                            count += 1
-                    elif not startDate and not endDate:  # all data, everything
-                        count += 1
-                leaderboard[prefix] = count
-                
-            sortedLeaderboard = sorted(leaderboard.items(), key=lambda x: x[1], reverse=True)
-            
-            return sortedLeaderboard
-        
         case "guildLeaderboardGraidsButGuildSpecific":
-            # So because of bad design, this endpoint uses prefix but requires being called with a uuid from api so we need to convert uuid to prefix.
-            guildData = await searchMaster("uuid", uuid)
-            prefix = guildData["prefix"]
-            
-            conn = connectDB("graid")
-            cursor = conn.cursor()
-            cursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            
-            row = cursor.fetchone()
-            startDate, endDate = getTimeframe(timeframe, "graid")
-            if prefix not in row[0]: # Guild not valid not being tracked not eligible
-                return JSONResponse(status_code=400, content={"error": "Please provide a valid guild."})
-            player_counter = Counter()
+            startDate, endDate, days = getTimeframe(timeframe, "special")
+            guildCursor.execute("""
+            WITH player_deltas AS (
+                SELECT
+                    member_uuid,
+                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
+                FROM member_snapshots
+                WHERE guild_uuid = ?
+                AND timestamp >= datetime('now', ?)
+                GROUP BY member_uuid
+                HAVING MIN(totalGraid) >= 1
+            )
+            SELECT
+                m.name AS username,
+                pd.graid_delta AS total_graids
+            FROM player_deltas pd
+            JOIN members m
+            ON m.uuid = pd.member_uuid
+            ORDER BY total_graids DESC
+            LIMIT 100;
+            """, (uuid, f'-{days} days'),)
+            data = guildCursor.fetchall()
 
-            for entry in json.loads(row[0])[prefix]:
-                ts = datetime.fromtimestamp(entry["timestamp"])
-                if startDate and endDate:
-                    if startDate <= ts <= endDate:
-                        for player in entry["party"]:
-                            player_counter[player] += 1
-                elif not startDate and not endDate:  # "Everything"
-                    for player in entry["party"]:
-                        player_counter[player] += 1
-
-            # Sort and display
-            sortedPlayers = player_counter.most_common(100)
-            return sortedPlayers
-        
         case "playerLeaderboardGraids":
-            conn = connectDB("graid")
-            cursor = conn.cursor()
-            cursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            cutoff = getTimeframe(timeframe, "specialGraid")
-            row = cursor.fetchone()
-            startDate, endDate = getTimeframe(timeframe, "graid")
-            player_counter = Counter()
-
-            for entries in json.loads(row[0]).values():
-                for entry in entries:
-                    if entry["timestamp"] >= cutoff:
-                        for player in entry["party"]:
-                            player_counter[player] += 1
-
-            # Sort and display
-            sortedPlayers = player_counter.most_common(100) # Limit to 100
+            startDate, endDate, days = getTimeframe(timeframe, "special")
+            guildCursor.execute("""
+            WITH player_deltas AS (
+                SELECT
+                    member_uuid,
+                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
+                FROM member_snapshots
+                WHERE timestamp >= datetime('now', ?)
+                GROUP BY member_uuid
+                HAVING MIN(totalGraid) >= 1
+            )
+            SELECT
+                m.name AS username,
+                pd.graid_delta AS total_graids
+            FROM player_deltas pd
+            JOIN members m
+            ON m.uuid = pd.member_uuid
+            ORDER BY total_graids DESC
+            LIMIT 100;
+            """, (f'-{days} days',))
+            data = guildCursor.fetchall()
             
-            return sortedPlayers
-        
         case _: # Default case
-            return JSONResponse(status_code=400, content={"error": "Please provide a correct leaderboard type."})
+            return JSONResponse(status_code=400, content={"error": "Please provide a valid leaderboard type."})
 
 
             
@@ -2087,89 +2068,157 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             return JSONResponse({"total_wars": highestTotal, "highest_gain": highestGain, "image": img})
         
         case "guildActivityGraids":
-            graidConn = connectDB("graid")
-            graidCursor = graidConn.cursor()
-            graidCursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            confirmedGRaid = graidCursor.fetchone()
-            if not confirmedGRaid:
-                graidConn.close()
-                return JSONResponse(status_code=404, content={"error": "Eligible guilds not found"})
-
-            graidConn.close()
-            guildData = await searchMaster("uuid", uuid)
-            prefix = guildData["prefix"]
-            confirmedGRaid = json.loads(confirmedGRaid["guilds"])
-
-            if prefix not in confirmedGRaid:
-                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
-            now = datetime.utcnow()
-            cutoff = now - timedelta(days=numDays)
-
-            # Get and filter timestamps
-            timestamps = [
-                datetime.utcfromtimestamp(entry["timestamp"])
-                for entry in confirmedGRaid[prefix]
-                if datetime.utcfromtimestamp(entry["timestamp"]) >= cutoff
-            ]
-            timestamps.sort()
-
-            if not timestamps:
-                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
-
-            # Cumulative count
-            times = timestamps
-            cumulative_counts = list(range(1, len(times) + 1))
-
-            # Raids per day
-            day_counts = Counter(t.date() for t in times)
-            max_day = max(day_counts.values())
-            avg_day = sum(day_counts.values()) / len(day_counts)
-            total_raids = len(times)
-
-            img = createPlot(times, cumulative_counts, "line", blue, f'Guild Raid Activity - {prefix}', 'Date (UTC)', 'Total Guild Raids', color, fillBetween = True, legendName='Guild Raids', timeframeDays=numDays)
-            return JSONResponse({"total_graid": total_raids, "max_graid": max_day, "average_graid": avg_day, "image": img})
-            
-        case "playerActivityGraids":
-            graidConn = connectDB("graid")
-            graidCursor = graidConn.cursor()
-            graidCursor.execute("SELECT value AS guilds FROM graid_data WHERE key = 'guild_raids'")
-            row = graidCursor.fetchone()
-            if not row:
-                graidConn.close()
-                return JSONResponse(status_code=404, content={"error": "Eligible guilds not found"})
-
-            now = datetime.utcnow()
-            cutoff = now - timedelta(days=numDays)
-            confirmedGRaid = json.loads(row[0])
-
-            if not isinstance(confirmedGRaid, dict):
-                graidConn.close()
-                return JSONResponse(status_code=500,content={"error": "Parsed data is not a dictionary"}
+            guildCursor.execute("""
+            WITH member_deltas AS (
+                SELECT
+                    timestamp,
+                    totalGraid - LAG(totalGraid) OVER (
+                        PARTITION BY member_uuid
+                        ORDER BY timestamp
+                    ) AS raid_delta
+                FROM member_snapshots
+                WHERE guild_uuid = ?
+                AND timestamp >= datetime('now', printf('-%d days', ?))
             )
-            # Step 1: Collect all timestamps the user appeared in
-            timestamps = []
-            for entries in confirmedGRaid.values():
-                for entry in entries:
-                    if name in entry.get("party", []):
-                        ts = datetime.utcfromtimestamp(entry["timestamp"])
-                        if ts >= cutoff:
-                            timestamps.append(ts)
+            SELECT timestamp
+            FROM member_deltas
+            WHERE raid_delta > 0
+            ORDER BY timestamp
+            """, (uuid, numDays - 1))
 
-            timestamps.sort()
-            if not timestamps:
+            snapshots = guildCursor.fetchall()
+            if not snapshots:
                 return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
-            # Step 2: Build cumulative count
-            cumulative_counts = list(range(1, len(timestamps) + 1))
+            timestamps = []
+            for (ts,) in snapshots:
+                timestamps.append(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'))
 
-            # Step 3: Daily stats
+            timestamps.sort()
+
+            cumulative_counts = list(range(1, len(timestamps) + 1))
             day_counts = Counter(t.date() for t in timestamps)
             max_day = max(day_counts.values())
             avg_day = sum(day_counts.values()) / len(day_counts)
             total_raids = len(timestamps)
-            img = createPlot(timestamps, cumulative_counts, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, fillBetween = True, legendName='Guild Raids', timeframeDays=numDays)
-            return JSONResponse({"total_graid": total_raids, "max_graid": max_day, "average_graid": avg_day, "image": img})
+            
+            guildCursor.execute("""
+                SELECT prefix
+                FROM guilds
+                WHERE uuid = ?
+                LIMIT 1
+            """, (uuid,))
+            prefix = guildCursor.fetchone()[0]
 
+            img = createPlot(timestamps,cumulative_counts,"line",blue,f'Guild Raid Activity - {prefix}','Date (UTC)','Total Guild Raids',color,fillBetween=True,legendName='Guild Raids',timeframeDays=numDays)
+            return JSONResponse({"total_graid": total_raids,"max_graid": max_day,"average_graid": avg_day,"image": img})
+        
+        case "playerActivityGraids":
+            startDate, endDate, days = getTimeframe(timeframe, "special")
+            playerCursor.execute("""
+            WITH player_snapshots AS (
+                SELECT
+                    timestamp,
+                    totalGraid,
+                    LAG(totalGraid) OVER (PARTITION BY username ORDER BY timestamp) AS prev_graids
+                FROM users_global
+                WHERE username = ?
+                AND timestamp >= datetime('now', ?)
+            )
+            SELECT
+                timestamp,
+                totalGraid
+            FROM player_snapshots
+            WHERE prev_graids IS NOT NULL
+            AND totalGraid > prev_graids
+            ORDER BY timestamp;
+            """, (name, f'-{days - 1} days'))
+
+            snapshots = playerCursor.fetchall()
+            if not snapshots:
+                logger.info(snapshots)
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
+
+            dates = [datetime.fromisoformat(row[0]) for row in snapshots]
+            totalGraids = [row[1] for row in snapshots]
+
+            highestTotal = totalGraids[-1] if totalGraids else 0
+            graids_by_day = defaultdict(list)
+            for dt, count in zip(dates, totalGraids):
+                graids_by_day[dt.date()].append(count)
+            dailyGain = [max(counts) - min(counts) for counts in graids_by_day.values() if len(counts) > 1]
+            highestGain = max(dailyGain) if dailyGain else 0
+            avgGain = round(sum(dailyGain) / len(dailyGain), 2) if dailyGain else 0
+            img = createPlot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', timeframeDays=numDays)
+            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain,"average_graid": avgGain, "image": img})
+        
+        case "playerActivityGraidPie":
+            playerCursor.execute("""
+                SELECT graidDict
+                FROM users_global
+                WHERE username = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (name,))
+            snapshots = playerCursor.fetchone() # It should just be the list but lil ol me fucked it and i wont refix it.
+
+            if not snapshots:
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
+            
+            raids = ast.literal_eval(snapshots[0])["list"]
+
+            sortedGraids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
+            labels = list(sortedGraids.keys())
+            sizes = list(sortedGraids.values())
+            total = sum(sizes)
+            percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
+
+            img = createPlot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids")
+
+            return JSONResponse({"image": img})
+        
+        case "guildActivityGraidPie":
+
+            guildCursor.execute("""
+                SELECT ms.graidDict
+                FROM member_snapshots ms
+                JOIN (
+                    SELECT member_uuid, MAX(timestamp) AS max_ts
+                    FROM member_snapshots
+                    WHERE guild_uuid = ?
+                    GROUP BY member_uuid
+                ) latest
+                ON ms.member_uuid = latest.member_uuid
+                AND ms.timestamp = latest.max_ts
+                WHERE ms.guild_uuid = ?
+            """, (uuid, uuid))
+
+            rows = guildCursor.fetchall()
+
+            if not rows:
+                return JSONResponse(status_code=500, content={"error": "No guild data found."})
+
+            combined_raids = {}
+
+            for row in rows:
+                if not row[0]:
+                    continue
+
+                raid_data = ast.literal_eval(row[0])["list"]
+
+                for raid, count in raid_data.items():
+                    combined_raids[raid] = combined_raids.get(raid, 0) + count
+
+            sortedGraids = dict(sorted(combined_raids.items(), key=lambda item: item[1], reverse=True))
+            labels = list(sortedGraids.keys())
+            sizes = list(sortedGraids.values())
+            total = sum(sizes)
+            percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
+
+            img = createPlot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids")
+            
+            return JSONResponse({"image": img})
+        
         case _: # Default case
             return JSONResponse(status_code=400, content={"error": "Please provide a correct activity type."})
      

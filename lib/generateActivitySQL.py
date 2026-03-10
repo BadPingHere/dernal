@@ -54,10 +54,12 @@ def connectGuildDB():
     conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
     conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
+    #conn.execute("ALTER TABLE member_snapshots ADD COLUMN totalGraid INTEGER;")
+    #conn.execute("ALTER TABLE member_snapshots ADD COLUMN graidDict TEXT;")
 
     if not checkTablesExist(conn):
         createTables(conn)
-    
+
     return conn
 
 def connectPlayerDB():
@@ -136,6 +138,8 @@ def connectPlayerDB():
     );
     ''')
 
+    #conn.execute("ALTER TABLE users_global ADD COLUMN totalGraid INTEGER;")
+    #conn.execute("ALTER TABLE users_global ADD COLUMN graidDict TEXT;")
     conn.execute('CREATE INDEX IF NOT EXISTS idx_users_uuid_timestamp ON users(uuid, timestamp);')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_usersglobal_uuid_timestamp ON users_global(uuid, timestamp);')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_userscharacters_uuid_timestamp ON users_characters(uuid, timestamp);')
@@ -146,7 +150,7 @@ def connectPlayerDB():
 def storePlayerData(player_db_conn, username):
     success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
     if not success:
-        logger.error(f"Unsuccessful request! Success is {success}, r is {r}, r.json() is {r.json()}")
+        logger.error(f"Unsuccessful request! Success is {success}, r is {r}")
     try:
         jsonData = r.json()
         restrictionsDict = jsonData["restrictions"]
@@ -160,12 +164,14 @@ def storePlayerData(player_db_conn, username):
             playtime = jsonData["playtime"]
             dungeonsDict = str(jsonData["globalData"]["dungeons"]["list"])
             raidsDict = str(jsonData["globalData"]["raids"]["list"])
+            totalGraid = jsonData["globalData"]["guildRaids"].get("total", 0)
+            graidDict = str(jsonData["globalData"]["guildRaids"])
             player_db_conn.execute(
             """
-            INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests, pvpKills, pvpDeaths)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, totalGraid, graidDict, completedQuests, pvpKills, pvpDeaths)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["mobsKilled"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
+                (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["mobsKilled"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, totalGraid, graidDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
             )
             
         if restrictionsDict.get("characterDataAccess") is False: # if true no character data, no reason to input
@@ -217,8 +223,8 @@ def storePlayerData(player_db_conn, username):
         )
 
     except Exception as e:
-        logger.error(f"Unsuccessful request2! Success is {success}, r.json() is {r.json()}.")
-        logger.error(f"Failed to fetch/store uuid {jsonData['uuid']}: {e}")
+        logger.error(f"Unsuccessful request2! Success is {success}")
+        logger.error(f"Failed to fetch/store username {username}: {e}")
 
 def cleanguildDatabase(conn):
     try:
@@ -393,6 +399,8 @@ def insertMemberSnapshot(conn, guild_uuid, members_data):
     for role, members in members_data.items():
         if role != "total":
             for name, member in members.items():
+                totalGraid = member["guildRaids"].get("total", 0)
+                graidDict = str(member["guildRaids"])
                 cur.execute(
                     """
                     INSERT OR REPLACE INTO members (uuid, name)
@@ -409,14 +417,16 @@ def insertMemberSnapshot(conn, guild_uuid, members_data):
                 )
                 cur.execute(
                     """
-                    INSERT INTO member_snapshots (guild_uuid, member_uuid, contribution, contribution_rank, online, server)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO member_snapshots (guild_uuid, member_uuid, contribution, contribution_rank, totalGraid, graidDict, online, server)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         guild_uuid,
                         member["uuid"],
                         member["contributed"],
                         member["contributionRank"],
+                        totalGraid,
+                        graidDict,
                         1 if member["online"] else 0,
                         member["server"],
                     ),

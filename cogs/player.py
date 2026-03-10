@@ -303,6 +303,39 @@ class Player(commands.GroupCog, name="player"):
         else:
             await interaction.followup.send("No data available for the last 7 days.")
 
+    @activityCommands.command(name="graids_pie", description="Shows a pie chart displaying the different graid's you have done.")
+    @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
+    @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
+    async def activityGraidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
+        logger.info(f"Command /player activity graids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
+        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
+        #logger.info(response)
+        if response != True: # If not true, there is cooldown, we dont run it!!!
+            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
+            return
+        await interaction.response.defer()
+        
+        conn = sqlite3.connect('database/player_activity.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT uuid FROM users WHERE username = ? COLLATE NOCASE LIMIT 1", (name,))
+        result = cursor.fetchone()
+        if not result:
+            cursor.execute("SELECT uuid FROM users WHERE username = ? COLLATE NOCASE LIMIT 1", (name,))
+            result = cursor.fetchone()
+    
+        if not result:
+            await interaction.followup.send(f"No data found for username: {name}. Please make sure you have logged in recently..", ephemeral=True)
+            conn.close()
+            return
+            
+        file, embed = await asyncio.to_thread(activityBuilder,"playerActivityGraidPie", uuid=result[0], name=name, theme=theme or "light")
+        
+        if file and embed:
+            await interaction.followup.send(file=file, embed=embed)
+        else:
+            await interaction.followup.send("No data available for the last 7 days.")
+
     @activityCommands.command(name="mobs_killed", description="Shows a graph displaying the amount of total mobs killed every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
@@ -378,10 +411,6 @@ class Player(commands.GroupCog, name="player"):
         if response != True: # If not true, there is cooldown, we dont run it!!!
             await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
             return 
-        confirmedGRaid = getGraidDatabaseData("guild_raids")
-        if name not in str(confirmedGRaid):
-            await interaction.response.send_message(f"No data found for username: {name}. Please make you are in a level 100+ guild, and have done guild raids in the past 14 days.", ephemeral=True)
-            return
         await interaction.response.defer()
         file, embed = await asyncio.to_thread(activityBuilder,"playerActivityGraids", name=name, theme=theme or "light", timeframe=timeframe)
         
