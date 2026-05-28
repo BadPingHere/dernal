@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ui import View, Button
 from typing import Optional
 import time
-from lib.utils import timeframeMap3, activityBuilder, leaderboardBuilder, checkCooldown, guildLookup, lookupGuild, guildOnline
+from lib.utils import activityBuilder, leaderboardBuilder, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -25,12 +25,18 @@ class InactivityView(View):
         self.children[0].disabled = self.current_category_index == 0  # Disable back button if at the start
         self.children[1].disabled = self.current_category_index == len(self.category_keys) - 1  # Disable next button if at the end
 
+    def get_description(self, category):
+        desc = self.get_user_list(category)
+        if category == "Four Week Inactive Users":
+            desc = "-# Note: Players with 'lastJoin' hidden on api will show as last logged in 1960.\n" + desc
+        return desc
+
     async def update_embed(self, interaction: discord.Interaction):
         # Create and send the updated embed based on the current category
         current_category = self.category_keys[self.current_category_index]
         embed = discord.Embed(
             title=f"{current_category}",
-            description=self.get_user_list(current_category),
+            description=self.get_description(current_category),
             color=discord.Color.blue()
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -56,33 +62,6 @@ class InactivityView(View):
         self.update_buttons()
         await self.update_embed(interaction)
 
-async def progressEmbed(current, total, guild_name):
-    percentage = (current / total) * 100
-    filled_blocks = int(percentage // 5) # 5% per block
-    empty_blocks = 20 - filled_blocks
-    
-    progress_bar = "█" * filled_blocks + "░" * empty_blocks
-    
-    embed = discord.Embed(
-        title=f"🔍 Analyzing {guild_name} Inactivity",
-        description=f"**Progress: {current}/{total} members processed**\n"
-                   f"`{progress_bar}` {percentage:.1f}%\n\n"
-                   f"*This may take several minutes due to API limitations. Blame wynncraft, not me.*",
-        color=discord.Color.blue()
-    )
-    
-    if current > 0:
-        estimated_total_time = total * 0.6  # Rough estimate: 0.6 seconds per member
-        elapsed_time = current * 0.6
-        remaining_time = estimated_total_time - elapsed_time
-        if remaining_time > 60:
-            time_str = f"~{int(remaining_time//60)}m {int(remaining_time%60)}s remaining"
-        else:
-            time_str = f"~{int(remaining_time)}s remaining"
-        embed.add_field(name="Estimated Time", value=time_str, inline=False)
-        embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    return embed
 class LeaderboardPaginator(View):
     def __init__(self, data, title, shorthandTitle):
         super().__init__(timeout=None)
@@ -98,16 +77,20 @@ class LeaderboardPaginator(View):
         start = self.page * self.per_page
         end = start + self.per_page
         page_data = self.data[start:end]
+        leaderboardDesc = ""
 
-        leaderboardDesc = "```\n{:<3} {:<30} {:<10}\n".format("#", "Name", f"{self.shorthandTitle}")
-        separator = "-" * 45 + "\n"
+        if self.shorthandTitle == "SR": #coming from guild leaderboard sr, add a note
+            leaderboardDesc = "Note: This is not a 100% accurate list, as small guilds not being\n tracked won't show up."
+
+        leaderboardDesc += "```\n{:<3} {:<24} {:<10}\n".format("#", "Name", f"{self.shorthandTitle}")
+        separator = "-" * 39 + "\n"
         leaderboardDesc += separator
         for i, (name, value) in enumerate(page_data, start=start + 1):
             if value % 1 == 0: # Checks if int
                 formattedValue = f"{int(value):,}"
             else:
                 formattedValue = f"{value:,.2f}"
-            leaderboardDesc += "{:<3} {:<30} {:<10}\n".format(i, name, formattedValue)
+            leaderboardDesc += "{:<3} {:<24} {:<10}\n".format(i, name, formattedValue)
         leaderboardDesc += "```"
 
         embed = discord.Embed(
@@ -156,19 +139,14 @@ class Guild(commands.GroupCog, name="guild"):
     def __init__(self, bot):
         self.bot = bot
     
-    async def timeframeAutocomplete3(self, interaction: discord.Interaction, current: str):
-        keys = list(timeframeMap3.keys())
-        return [app_commands.Choice(name=k, value=k)for k in keys if current.lower() in k.lower()][:25]
+    async def autocompletLeaderboardTimeframe(self, interaction: discord.Interaction, current: str):
+        return [app_commands.Choice(name=k, value=k)for k in leaderboardTimeframeMap if current.lower() in k.lower()][:25]
     
     async def autocompleteTheme(self, interaction: discord.Interaction, current: str):
-        # Ideal world the themes should be stored elsewhere like utils and imported
-        values = ["light", "dark", "discord"]
-        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+        return [app_commands.Choice(name=k, value=k)for k in themeMap if current.lower() in k.lower()][:25]
     
     async def autocompleteActivityTimeframe(self, interaction: discord.Interaction, current: str):
-        # Ideal world the themes should be stored elsewhere like utils and imported
-        values = ["Last 14 Days", "Last 7 Days", "Last 3 Days", "Last 24 Hours", "Last 30 Days"]
-        return [app_commands.Choice(name=k, value=k)for k in values if current.lower() in k.lower()][:25]
+        return [app_commands.Choice(name=k, value=k)for k in activityTimeframeMap if current.lower() in k.lower()][:25]
     
     activityCommands = app_commands.Group(name="activity", description="this is never seen, yet discord flips the x out if its not here.",)
     @activityCommands.command(name="xp", description="Shows a bar graph displaying the total xp a guild has every day, for the past 2 weeks.")
@@ -176,79 +154,42 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityXP(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
-            
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
         
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-            
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=guildUUID[0], name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 14 days")
+            await interaction.followup.send(f"No data available for the {timeframe}")
     
     @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityTerritories(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
             
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
-        
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 3 days")
+            await interaction.followup.send(f"No data available for the {timeframe}")
 
     @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
@@ -256,169 +197,106 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityWars(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         
         await interaction.response.defer()
             
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
-        
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 3 days")
+            await interaction.followup.send(f"No data available for the {timeframe}")
 
     @activityCommands.command(name="members", description="Shows a graph displaying the amount of members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityTotal_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
         
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-            
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 24 hours")
+            await interaction.followup.send(f"No data available for the {timeframe}")
     
     @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityOnline_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
         
-        if len(name) <= 4:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        else:
-            cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-            result = cursor.fetchone()
-            if not result:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-        
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-            
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=result[0], name=name, theme=theme or "light", timeframe=timeframe)
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 3 days")
+            await interaction.followup.send(f"No data available for the {timeframe}")
 
     @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityGRaids(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraids", prefix=name, theme=theme or "light", timeframe=timeframe)
+
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
+            return
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraids", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 14 days")
+            await interaction.followup.send(f"No data available for the {timeframe}")
 
     @activityCommands.command(name="graids_pie", description="Shows a pie chart displaying the different graid's a guild has done.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityGraidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
         logger.info(f"Command /guild activity graids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
         
-        conn = sqlite3.connect('database/guild_activity.db')
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE LIMIT 1", (name,))
-        result = cursor.fetchone()
-        if not result:
-            cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE LIMIT 1", (name,))
-            result = cursor.fetchone()
-    
-        if not result:
-            await interaction.followup.send(f"No data found for guild: {name}. Please make sure you have logged in recently..", ephemeral=True)
-            conn.close()
+        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
             return
-            
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=result[0], name=name, theme=theme or "light")
+        guildUUID = jsonData["guild_uuid"]
+
+        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=guildUUID, name=name, theme=theme or "light")
         
         if file and embed:
             await interaction.followup.send(file=file, embed=embed)
         else:
-            await interaction.followup.send("No data available for the last 7 days.")
+            await interaction.followup.send("No data available.")
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")
@@ -426,39 +304,21 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardOnline_members(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
         logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
         
         if not name: # Normal guild shit
             data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineMembers", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by Online Member Average - {timeframe}", "Online Average")
         else:
-            conn = sqlite3.connect('database/guild_activity.db')
-            cursor = conn.cursor()
-            
-            if len(name) <= 4:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            else:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            
-            if not result:
-                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-                conn.close()
+            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+            if not success:
+                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
                 return
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineButGuildSpecific", timeframe=timeframe, uuid=result[0])
-            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Playtime Average- {timeframe}", "Hours/day")
+            guildUUID = jsonData["guild_uuid"]
+
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
+            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Playtime Average- {timeframe}", "Hours")
 
         if data:
             await interaction.followup.send(embed=view.get_embed(), view=view)
@@ -470,15 +330,16 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardGraids(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
         logger.info(f"Command /guild leaderboard guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
         
         if name:
             await interaction.response.defer()
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, prefix=name)
+            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+            if not success:
+                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
+                return
+            guildUUID = jsonData["guild_uuid"]
+
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
             num = len(data)
             view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
         else:
@@ -492,60 +353,25 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.followup.send("No data available.")
 
-    @leaderboardCommands.command(name="members", description="Shows a leaderboard of the top 100 guild's member count.")
-    async def leaderboardTotal_members(self, interaction: discord.Interaction):
-        logger.info(f"Command /guild leaderboard members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id})")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
-        await interaction.response.defer()
-        
-        data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardTotalMembers")
-        if data:
-            view = LeaderboardPaginator(data, f"Top 100 Guilds by Member Count", "Members")
-            await interaction.followup.send(embed=view.get_embed(), view=view)
-        else:
-            await interaction.followup.send("No data available.")
-    
     @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 100 guild's war amount.")
     @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardWars(self, interaction: discord.Interaction, timeframe: str,  name: Optional[str]):
         logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
 
         if not name: # Normal guild shit
             data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWars", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by Wars Won - {timeframe}", "Wars Won")
         else:
-            conn = sqlite3.connect('database/guild_activity.db')
-            cursor = conn.cursor()
-            
-            if len(name) <= 4:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            else:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            
-            if not result:
-                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-                conn.close()
+            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+            if not success:
+                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
                 return
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWarsButGuildSpecific", timeframe=timeframe, uuid=result[0])
+            guildUUID = jsonData["guild_uuid"]
+
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWarsButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
             view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Wars Won - {timeframe}", "Wars Won")
 
         if data:
@@ -557,54 +383,60 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.',)
     async def leaderboardXP(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
         logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+
         await interaction.response.defer()
 
         if not name: # Normal guild shit
             data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXP", timeframe=timeframe)
             view = LeaderboardPaginator(data, f"Top 100 Guilds by XP Gain - {timeframe}", "XP")
         else:
-            conn = sqlite3.connect('database/guild_activity.db')
-            cursor = conn.cursor()
-            
-            if len(name) <= 4:
-                cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            else:
-                cursor.execute("SELECT uuid FROM guilds WHERE name = ? COLLATE NOCASE", (name,))
-                result = cursor.fetchone()
-                if not result:
-                    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (name,))
-                    result = cursor.fetchone()
-            
-            if not result:
-                await interaction.followup.send(f"No data found for guild: {name}", ephemeral=True)
-                conn.close()
+            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+            if not success:
+                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
                 return
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXPButGuildSpecific", timeframe=timeframe, uuid=result[0])
+            guildUUID = jsonData["guild_uuid"]
+
+            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXPButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
             view = LeaderboardPaginator(data, f"Top 100 Players in {name} by XP Gain - {timeframe}", "XP")
 
         if data:
             await interaction.followup.send(embed=view.get_embed(), view=view)
         else:
             await interaction.followup.send("No data available.")
-            
+
+    @leaderboardCommands.command(name="season_rating", description="Shows a leaderboard of the top 100 season ratings for a given season")
+    @app_commands.describe(season='Season number you want the leaderboard for Ex. 8, 30.',)
+    @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows all partipated seasons and their rating.',)
+    async def leaderboardSR(self, interaction: discord.Interaction, season: Optional[int], name: Optional[str]):
+        await interaction.response.defer()
+
+        if not season and not name:
+            await interaction.send(f"You must input a season or guild prefix/name.", ephemeral=True)
+
+        logger.info(f"Command /guild leaderboard season_rating was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {season}. The timeframe is {name}.")
+
+        if season: # We get the season's data
+            data = await asyncio.to_thread(SRleaderboardBuilder, season=season)
+            view = LeaderboardPaginator(data, f"Season {season} Ranking", "SR")
+
+            if data:
+                await interaction.followup.send(embed=view.get_embed(), view=view)
+            else:
+                await interaction.followup.send("No data available.")
+        else: # we get a specific guild's rankings
+            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
+            if not success:
+                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
+                return
+            guildUUID = jsonData["guild_uuid"]
+
+            embed = await asyncio.to_thread(SRleaderboardBuilder, uuid=guildUUID, name=name)
+            await interaction.followup.send(embed=embed)
+              
     @app_commands.command(description="Shows you to get a quick overview of a guild, like level, online members, etc.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',)
     async def overview(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild overview was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 5)
-
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -625,11 +457,9 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',) 
     async def inactivity(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
 
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
+        await interaction.response.defer()
+
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
         else:
@@ -638,73 +468,29 @@ class Guild(commands.GroupCog, name="guild"):
         success, r = await asyncio.to_thread(makeRequest, URL)
         if not success:
             logger.error("Error while getting request in /guild inactivity")
-            await interaction.response.send_message("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
+            await interaction.followup.send("There was an error while getting data from the API. If this issue is persistent, please report it on my github.", ephemeral=True)
             return
         if not r.ok:
-            await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
+            await interaction.followup.send(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
             return
         guildData = r.json()
         guildPrefix = guildData.get("prefix")
 
-        total_members = guildData["members"]["total"]
-        
-        # Send initial progress message
-        await interaction.response.defer()
-        progress_embed = await progressEmbed(0, total_members, guildPrefix)
-        message = await interaction.followup.send(embed=progress_embed)
-        
-        # Create a shared progress state
-        progress_state = {"current": 0, "last_update": 0}
-        
-        # Create a separate async task to handle progress updates
-        async def progress_updater():
-            while progress_state["current"] < total_members:
-                await asyncio.sleep(1)  # Check every 2 seconds
-                current = progress_state["current"]
-                if current > progress_state["last_update"]:
-                    try:
-                        embed = await progressEmbed(current, total_members, guildPrefix)
-                        await message.edit(embed=embed)
-                        progress_state["last_update"] = current
-                    except discord.HTTPException as e:
-                        logger.warning(f"Failed to update progress message: {e}")
-        
-        # Start the progress updater task
-        updater_task = asyncio.create_task(progress_updater())
-        
-        # Simple progress callback that just updates the shared state
-        def sync_progress_callback(current, total):
-            progress_state["current"] = current
-        
-        # Run the lookup with progress updates
         try:
-            inactivityDict = await asyncio.to_thread(lookupGuild, r, sync_progress_callback)
+            inactivityDict = await asyncio.to_thread(inactivityCheck, r)
             
-            # Cancel the updater task
-            updater_task.cancel()
-            try:
-                await updater_task
-            except asyncio.CancelledError:
-                pass
-            
-            # Send final result
             view = InactivityView(inactivityDict)
             embed = discord.Embed(
                 title=f"{view.category_keys[view.current_category_index]} - {guildPrefix}",
-                description=view.get_user_list(view.category_keys[view.current_category_index]),
+                description=view.get_description(view.category_keys[view.current_category_index]),
                 color=discord.Color.blue()
             )
             embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-            await message.edit(embed=embed, view=view)
+            logger.info(view)
+            logger.info(embed)
+            await interaction.followup.send(embed=embed, view=view)
             
         except Exception as e:
-            # Cancel the updater task if there's an error
-            updater_task.cancel()
-            try:
-                await updater_task
-            except asyncio.CancelledError:
-                pass
-                
             logger.error(f"Error during inactivity lookup: {e}")
             embed = discord.Embed(
                 title="❌ Error",
@@ -712,17 +498,12 @@ class Guild(commands.GroupCog, name="guild"):
                 color=discord.Color.red()
             )
             embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-            await message.edit(embed=embed)
+            await interaction.followup.send(embed=embed)
         
     @app_commands.command(description="Displays the current online members of a guild.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',)
     async def online(self, interaction: discord.Interaction, name: str):
         logger.info(f"Command /guild online was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
-
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
         
         if len(name) >= 5:
             URL = f"https://api.wynncraft.com/v3/guild/{name}"
@@ -740,11 +521,7 @@ class Guild(commands.GroupCog, name="guild"):
         else:
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
     
-    leaderboardOnline_members.autocomplete("timeframe")(timeframeAutocomplete3)
-    leaderboardGraids.autocomplete("timeframe")(timeframeAutocomplete3)
-    leaderboardWars.autocomplete("timeframe")(timeframeAutocomplete3)
-    leaderboardXP.autocomplete("timeframe")(timeframeAutocomplete3)
-
+    # Autocomplete Theme
     activityXP.autocomplete("theme")(autocompleteTheme)
     activityTerritories.autocomplete("theme")(autocompleteTheme)
     activityWars.autocomplete("theme")(autocompleteTheme)
@@ -752,12 +529,17 @@ class Guild(commands.GroupCog, name="guild"):
     activityOnline_members.autocomplete("theme")(autocompleteTheme)
     activityGRaids.autocomplete("theme")(autocompleteTheme)
 
+    # Autocomplete timeframe
     activityXP.autocomplete("timeframe")(autocompleteActivityTimeframe)
     activityTerritories.autocomplete("timeframe")(autocompleteActivityTimeframe)
     activityWars.autocomplete("timeframe")(autocompleteActivityTimeframe)
     activityTotal_members.autocomplete("timeframe")(autocompleteActivityTimeframe)
     activityOnline_members.autocomplete("timeframe")(autocompleteActivityTimeframe)
     activityGRaids.autocomplete("timeframe")(autocompleteActivityTimeframe)
+    leaderboardOnline_members.autocomplete("timeframe")(autocompletLeaderboardTimeframe)
+    leaderboardGraids.autocomplete("timeframe")(autocompletLeaderboardTimeframe)
+    leaderboardWars.autocomplete("timeframe")(autocompletLeaderboardTimeframe)
+    leaderboardXP.autocomplete("timeframe")(autocompletLeaderboardTimeframe)
     
 
 async def setup(bot):

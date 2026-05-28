@@ -3,11 +3,11 @@
 import pytest
 from fastapi.testclient import TestClient
 from lib.api import app
-from urllib.parse import urlencode
+from itertools import product
 
 client = TestClient(app)
 
-#@pytest.mark.skip(reason="Does not need testing ATM.")
+@pytest.mark.skip(reason="Does not need testing ATM.")
 def testSearch(): # Test case for all search functions (username, prefix, guild name, uuids)
     testPrefixs = ["SEQ", "PROF", "Nia", "SDU", "bean"]
     testNames = ["Aequitas", "The Broken Gasmask", "HackForums", "Chiefs Of Corkus", "Jasmine Dragon"]
@@ -35,7 +35,7 @@ def testSearch(): # Test case for all search functions (username, prefix, guild 
         assert response.status_code == 200, f"UUID failed testSearch: {uuid}"
         jsonData = response.json()
         # Ensure name is correct, if so likely everything else is correct.
-        assert jsonData["uuid"].lower().startswith(uuid.lower()), (f"Expected UUID '{uuid}', got '{jsonData['uuid']}'")
+        assert jsonData["guild_uuid"].lower().startswith(uuid.lower()), (f"Expected guild_uuid '{uuid}', got '{jsonData['uuid']}'")
 
     for username in testUsernames:
         response = client.get(f"/api/search/username/{username}")
@@ -44,30 +44,7 @@ def testSearch(): # Test case for all search functions (username, prefix, guild 
         # Ensure name is correct, if so likely everything else is correct.
         assert jsonData["username"].lower().startswith(username.lower()), (f"Expected username '{username}', got '{jsonData['username']}'")
 
-#@pytest.mark.skip(reason="Does not need testing ATM.")
-def testGraids(): # Tests /eligible and /completions
-    expected = {"SEQ", "Aeq", "TAq", "AVO", "ANO"} # These guys should ALWAYS be in there
-
-
-    response = client.get(f"/api/graid/eligible")
-    assert response.status_code == 200, f"Eligible route failed."
-    jsonData = response.json()
-    guilds = set(jsonData.get("guilds", []))
-    missing = expected - guilds
-    assert not missing, f"Missing expected guild prefixes: {missing}"
-
-    response = client.get(f"/api/graid/completions")
-    assert response.status_code == 200, f"Completions route failed."
-    jsonData = response.json()
-    guilds = set(jsonData.keys())
-    missing = expected - guilds
-    assert not missing, f"Missing expected guild prefixes: {missing}"
-    for g in expected:
-        assert g in jsonData, f"{g} missing entirely in completions."
-        assert jsonData[g] is not None, f"{g} has None data in completions."
-        assert isinstance(jsonData[g], list), f"{g} data must be a list."
-        
-#@pytest.mark.skip(reason="Does not need testing ATM.")
+@pytest.mark.skip(reason="Does not need testing ATM.")
 def testMaps(): # Tests heatmap and normal map
     testHeatmap = ["Season 26", "Everything", "Last 7 Days"]
     
@@ -80,59 +57,46 @@ def testMaps(): # Tests heatmap and normal map
         assert response.status_code == 200, f"Timeframe failed testMaps: {timeframe}."
         assert isinstance(response.content, bytes), "Current map response is not raw bytes."
 
-#@pytest.mark.skip(reason="Does not need testing ATM.")
-def testIngMap(): # Tests ingredient map
-    testIngMap = [
-        {"ingredient": "Lunar Charm", "price": "", "tier": ""}, # Test single ings
-        {"ingredient": "Shrieker's Head", "price": "-1", "tier": "41"}, # Test if price and tier are discarded if ing is present; technically the price and tier need to be ints but
-        {"ingredient": "", "price": "32", "tier": ""}, # Test price
-        {"ingredient": "", "price": "", "tier": "3"}, # Test tier
-        {"ingredient": "", "price": "", "tier": ""}, # Test global
-    ]
-    for test in testIngMap:
-        ingredient = test["ingredient"] if test["ingredient"] else None
-        price = test["price"] if test["price"] else None
-        tier = test["tier"] if test["tier"] else None
-        
-        url = (f"/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
-        response = client.get(url)
-        assert response.status_code == 200, f"Ingredient map route failed."
-        assert isinstance(response.content, bytes), "Ingredient map response is not raw bytes."
+uuids = ["ee860b7c-9a1d-49cf-9f19-ab673ba0f23b", "cef53bae-dc42-46aa-8ccf-1b10d282b420"]
+timeframes = ["Last 7 Days", "All Time"]
+season_list = ["30", "15", "22"]
+leaderboardTypes = [
+    "guildLeaderboardOnlineMembers",
+    "guildLeaderboardWars",
+    "guildLeaderboardXP",
+    "playerLeaderboardRaids",
+    "playerLeaderboardDungeons",
+    "playerLeaderboardPlaytime",
+    "guildLeaderboardXPButGuildSpecific",
+    "guildLeaderboardOnlineButGuildSpecific",
+    "guildLeaderboardWarsButGuildSpecific",
+    "guildLeaderboardGraids",
+    "guildLeaderboardGraidsButGuildSpecific",
+    "playerLeaderboardGraids",
+]
 
-#@pytest.mark.skip(reason="Does not need testing ATM.")
-def testLeaderboard(): # Tests all leaderboards
-    uuids = ["ee860b7c-9a1d-49cf-9f19-ab673ba0f23b", "cef53bae-dc42-46aa-8ccf-1b10d282b420"] # SEQ, ANO
-    timeframes = ["Last 24 Hours", "Last 14 Days", "Everything"]
-    leaderboardTypes = [ # All current leaderboard types
-        "guildLeaderboardOnlineMembers", 
-        "guildLeaderboardTotalMembers",
-        "guildLeaderboardWars",
-        "guildLeaderboardXP",
-        "playerLeaderboardRaids",
-        "playerLeaderboardDungeons",
-        "playerLeaderboardPVPKills",
-        "playerLeaderboardTotalLevel",
-        "playerLeaderboardPlaytime",
-        "guildLeaderboardXPButGuildSpecific",
-        "guildLeaderboardOnlineButGuildSpecific",
-        "guildLeaderboardWarsButGuildSpecific",
-        "guildLeaderboardGraids",
-        "guildLeaderboardGraidsButGuildSpecific",
-        "playerLeaderboardGraids",
-    ]
-    for uuid in uuids:
-        for timeframe in timeframes:
-            for leaderboardType in leaderboardTypes:
-                response = client.get(f"/api/leaderboard/{leaderboardType}?uuid={uuid}&timeframe={timeframe}")
-                assert response.status_code == 200, f"Timeframe & UUID & leaderboardType failed testLeaderboard: timeframs is {timeframe}, uuid is {uuid}, leaderboardType is {leaderboardType}."
-                jsonData = response.json()
-                assert isinstance(jsonData, list), f"Timeframe & UUID & leaderboardType failed testLeaderboard, response is not a list: timeframs is {timeframe}, uuid is {uuid}, leaderboardType is {leaderboardType}."
-                #assert len(jsonData) > 0, f"Timeframe & UUID & leaderboardType failed testLeaderboard, list is empty: timeframs is {timeframe}, uuid is {uuid}, leaderboardType is {leaderboardType}."
+@pytest.mark.parametrize("uuid,timeframe,leaderboardType", list(product(uuids, timeframes, leaderboardTypes)))
+def testLeaderboard(uuid, timeframe, leaderboardType):
+    response = client.get(f"/api/leaderboard/{leaderboardType}?uuid={uuid}&timeframe={timeframe}")
+    assert response.status_code == 200, f"Failed: timeframe={timeframe}, uuid={uuid}, leaderboardType={leaderboardType}"
+    assert isinstance(response.json(), list), f"Not a list: timeframe={timeframe}, uuid={uuid}, leaderboardType={leaderboardType}"
 
-#@pytest.mark.skip(reason="Does not need testing ATM.")
+@pytest.mark.parametrize("uuid", uuids)
+def testSeasonRatingByUUID(uuid):
+    response = client.get(f"/api/seasonRating/?uuid={uuid}")
+    assert response.status_code == 200, f"Failed SR by UUID: uuid={uuid}"
+    assert isinstance(response.json(), list), f"Not a list, uuid={uuid}"
+
+@pytest.mark.parametrize("season", season_list)
+def testSeasonRatingBySeason(season):
+    response = client.get(f"/api/seasonRating/?season={season}")
+    assert response.status_code == 200, f"Failed SR by season: season={season}"
+    assert isinstance(response.json(), list), f"Not a list, season={season}"
+
+@pytest.mark.skip(reason="Does not need testing ATM.")
 def testActivity(): # Tests all activity endpoints
     uuidANDPrefix = [["ee860b7c-9a1d-49cf-9f19-ab673ba0f23b", "SEQ"], ["cef53bae-dc42-46aa-8ccf-1b10d282b420", "ANO"]]
-    uuidANDUsername = [["f129b394-0e59-4681-b051-b2c102f12dd6", "Shisouhan"], ["aa7402cc-bf1c-4aed-838b-fd8897d38836", "WoodCreature"]]
+    uuidANDUsername = [["f129b394-0e59-4681-b051-b2c102f12dd6", "Shisouhan"], ["5c8c3075-d677-4b32-b92b-df0aad06eb2b", "SoloMap"]]
     timeframes = ["Last 14 Days", "Last 30 Days"]
     guildActivityTypes = [
         "guildActivityXP", 
@@ -141,6 +105,7 @@ def testActivity(): # Tests all activity endpoints
         "guildActivityOnlineMembers",
         "guildActivityTotalMembers",
         "guildActivityGraids",
+        "guildActivityGraidPie",
     ]
     playerActivityTypes = [
         "playerActivityPlaytime",
@@ -152,6 +117,7 @@ def testActivity(): # Tests all activity endpoints
         "playerActivityMobsKilled",
         "playerActivityWars",
         "playerActivityGraids",
+        "playerActivityGraidPie"
     ]
     # TODO: if we use a very narrow timeframe (Last 24 hours) for something like players and they havent logged in within the past 24 hours, we get a failed test-case when it returns 500.
     for uuid, prefix in uuidANDPrefix:

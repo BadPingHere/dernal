@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import time
-from lib.utils import rollGiveaway, checkCooldown
+from lib.utils import rollGiveaway
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -202,19 +202,14 @@ class giveaway(commands.Cog):
             return
         
         logger.info(f"Command /giveaway configure was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter prefix is: {prefix}.")
-        response = await asyncio.to_thread(checkCooldown, interaction.guild.id, 10)
-
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
         
         # Check if guild exists in database
-        conn = sqlite3.connect('database/guild_activity.db')
+        conn = sqlite3.connect('database/activity.db')
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (prefix,))
+
+        cursor.execute("SELECT guild_uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (prefix,))
         result = cursor.fetchone()
-        
+
         if not result:
             await interaction.response.send_message(f"No guild found with prefix: {prefix}", ephemeral=True)
             conn.close()

@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from lib.utils import checkCooldown, ingredientMapCreator
+from lib.utils import ingredientMapCreator
 import logging
 import asyncio
 from typing import Optional, Annotated
@@ -21,11 +21,6 @@ class Territory(commands.GroupCog, name="ingredient"):
     @app_commands.describe(price='The price floor of ingredients you wish to search for in EB.',)
     @app_commands.describe(tier='The tier of ingredient to search for.',)
     async def map(self, interaction: discord.Interaction, ingredient: Optional[str], price: Optional[int], tier: Optional[int]):
-        response = await asyncio.to_thread(checkCooldown, interaction.user.id, 10)
-        #logger.info(response)
-        if response != True: # If not true, there is cooldown, we dont run it!!!
-            await interaction.response.send_message(f"Due to a cooldown, we cannot process this request. Please try again after {response} more seconds.",ephemeral=True)
-            return
         logger.info(f"Command /ingredient map was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). ingredient is {ingredient}, price is {price}, tier is {tier}.")
 
         await interaction.response.defer()

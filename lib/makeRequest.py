@@ -164,7 +164,7 @@ def makeRequest(url): # For wynnAPI use only
                             else:
                                 raise Exception(f"Unsucessful request, UUID not in response: {r.json()}")
                         else:
-                            raise Exception(f"Unsucessful request: {r.text()}")
+                            raise Exception(f"Unsucessful request: {r.text}")
                     except Exception as e: # backup route, pick randomly!!
                         print(f"An error occured while trying to find a user's UUID via mojang API. {e}")
                         objects = jsonData.get("objects", {})
@@ -221,7 +221,7 @@ def internalMakeRequest(url): # Used for non-wynncraft api usage
 
     while retries < maxRetries:
         try:
-            r = session.get(url, timeout=300) # I dont wanna deal with timeouts.
+            r = session.get(url, timeout=900) # I dont wanna deal with timeouts.
             #print(r.headers)
             if r.status_code >= 400:
                 r.raise_for_status() # bad requests send to hell

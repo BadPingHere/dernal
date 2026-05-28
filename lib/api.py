@@ -14,11 +14,12 @@ from collections import Counter, defaultdict
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from lib.makeRequest import makeRequest, internalMakeRequest
-import shelve
 import os
 import matplotlib.cm as cm
 import seaborn as sns
 import matplotlib as mpl
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io
 from matplotlib.dates import HourLocator, DateFormatter, AutoDateLocator
@@ -34,10 +35,6 @@ from typing import Dict, List
 import random
 import unicodedata
 
-#TODO: Some bugs I ran into during testing:
-# 1. /guild activity graid with no recent data (like on dev) will result in a hanging command, same with /player activty graids (likely the same for all the other database related onces, but i wont worry about that.)
-# All around error handling with lack of data seems to be fucked rn
-# 2. /guild activity graid will not have a straight line. Ex if 10/29-11/8 has data, and you request it on 11/12, the end of the graph will be 11/8.
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_FILE = os.path.join(BASE_DIR, "api.log")
@@ -73,17 +70,6 @@ timeframeMap1 = { # Used for heatmap data
     "Everything": None
 }
 
-timeframeMap2 = { # Used for graid data, note to update it in api
-    "Season 25": ("06/06/25", "07/20/25"),
-    "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/02/26", "02/28/26"), 
-    "Last 14 Days": None, # gotta handle ts outta dict
-    "Last 7 Days": None, # gotta handle ts outta dict
-    "Last 24 Hours": None, # gotta handle ts outta dict
-    "Everything": None
-}
 
 app = FastAPI(title="Dernal API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -91,11 +77,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 route_cache = TTLCache(maxsize=200, ttl=300)  # default 5 min
 searchRouter = APIRouter(prefix="/api/search", tags=["Search"])
 leaderboardRouter = APIRouter(prefix="/api/leaderboard", tags=["Leaderboard"])
+seasonRatingdRouter = APIRouter(prefix="/api/seasonRating", tags=["Leaderboard"])
 activityRouter = APIRouter(prefix="/api/activity", tags=["Activity"])
 mapRouter = APIRouter(prefix="/api/map", tags=["Maps"])
 
-GUILDDBPATH = Path(__file__).resolve().parents[1] / "database" / "guild_activity.db"
-PLAYERDBPATH = Path(__file__).resolve().parents[1] / "database" / "player_activity.db"
+ACTIVITYDBPATH = Path(__file__).resolve().parents[1] / "database" / "activity.db"
 TERRITORIESDBPATH = Path(__file__).resolve().parents[1] / "database" / "territories.db"
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -108,7 +94,7 @@ def mapCreator():
     namePrefixMap = {}
 
     def coordToPixel(x, z):
-        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+        return x + 2558, z + 6638 # if only wynntils was ACCURATE!!!
 
     with open(TERRITORIESPATH, "r") as f:
         local_territories = json.load(f)
@@ -156,6 +142,8 @@ def mapCreator():
             prefix = info["guild"]["prefix"]
         except (KeyError, TypeError):
             continue
+        if not prefix:
+            prefix = "None"
 
         color_hex = color_map.get(prefix, "#FFFFFF")
         try:
@@ -201,9 +189,9 @@ def mapCreator():
 
     legendPadding = 20
     lineHeight = font.getbbox("Hg")[3] - font.getbbox("Hg")[1] + 10
-    # Bottom left
+    # Top left
     boxX = 50
-    boxY = map_img.height - (lineHeight * len(legendLines) + legendPadding * 2) - 50
+    boxY = 50
 
     for i, (prefix, count) in enumerate(leaderboardGuilds):
         color_hex = color_map.get(prefix, "#FFFFFF")
@@ -220,9 +208,9 @@ def mapCreator():
     new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
     mapImg = mapImg.resize(new_size, Image.LANCZOS)
     mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='PNG', optimize=True, compress_level=5)
+    mapImg.save(mapBytes, format='webp', optimize=True, compress_level=5)
     mapBytes.seek(0)
-    return Response(content=mapBytes.getvalue(), media_type="image/png")
+    return Response(content=mapBytes.getvalue(), media_type="image/webp")
 
 def heatmapCreator(timeframe):
     if timeframe == "Last 7 Days": # We handle it.
@@ -236,7 +224,7 @@ def heatmapCreator(timeframe):
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
     
     def coordToPixel(x, z):
-        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+        return x + 2558, z + 6638 # if only wynntils was ACCURATE!!!
 
 
     success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
@@ -298,10 +286,10 @@ def heatmapCreator(timeframe):
     return Response(content=mapBytes.getvalue(), media_type="image/png")
 
 async def searchMaster(field, value):
-    conn = connectDB("guild")
+    conn = connectDB()
     cursor = conn.cursor()
     cursor.execute(f"SELECT * FROM guilds WHERE {field} = ? COLLATE NOCASE", (value,))
-    
+
     guild = cursor.fetchone()
     if not guild:
         conn.close()
@@ -309,12 +297,12 @@ async def searchMaster(field, value):
 
     data = dict(guild)
     cursor.execute("""
-        SELECT level, xp_percent, territories, wars, online_members, total_members, timestamp
+        SELECT level, xp_percent, territories, wars, online_members, total_members, guild_raids, timestamp
         FROM guild_snapshots
         WHERE guild_uuid = ?
         ORDER BY timestamp DESC
         LIMIT 1
-    """, (data["uuid"],))
+    """, (data["guild_uuid"],))
     snapshot = cursor.fetchone()
     if snapshot:
         data["latest_snapshot"] = dict(snapshot)
@@ -324,19 +312,13 @@ async def searchMaster(field, value):
     conn.close()
     return data
 
-def connectDB(database):
-    if database == "guild":
-        conn = sqlite3.connect(GUILDDBPATH)
-        conn.row_factory = sqlite3.Row
-        return conn
-    if database == "player":
-        conn = sqlite3.connect(PLAYERDBPATH)
-        conn.row_factory = sqlite3.Row
-        return conn
+def connectDB():
+    conn = sqlite3.connect(ACTIVITYDBPATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def getTimeframe(timeframe, type="normal"):
-    if type == "normal":
-        # This is for leaderboard commands which use the database
+def getTimeframe(timeframe, type="leaderboard"):
+    if type == "leaderboard":
         endDate = datetime.now()
         if timeframe == "Last 14 Days":
             startDate = endDate - timedelta(days=14)
@@ -346,67 +328,12 @@ def getTimeframe(timeframe, type="normal"):
             startDate = endDate - timedelta(days=3)
         elif timeframe == "Last 24 Hours":
             startDate = endDate - timedelta(hours=24)
-        elif timeframe == "Everything":
-            startDate = None
-            endDate = None
-        else: # fallback area
+        elif timeframe == "Last 30 Days":
+            startDate = endDate - timedelta(days=30)
+        else:  # "All Time" and fallback
             startDate = None
             endDate = None
         return startDate, endDate
-    elif type == "special":
-        # guildLeaderboardOnlineButGuildSpecific uses this for the day calculation so we just run it like that
-        endDate = datetime.now()
-        if timeframe == "Last 14 Days":
-            startDate = endDate - timedelta(days=14)
-            days = 14.0
-        elif timeframe == "Last 7 Days":
-            startDate = endDate - timedelta(days=7)
-            days = 7.0
-        elif timeframe == "Last 3 Days":
-            startDate = endDate - timedelta(days=3)
-            days = 3.0
-        elif timeframe == "Last 24 Hours":
-            startDate = endDate - timedelta(hours=24)
-            days = 1.0
-        elif timeframe == "Everything":
-            startDate = endDate - timedelta(days=90) # Moreso so we get evetything
-            days = 30.0
-        return startDate, endDate, days
-    elif type == "graid": # Accounts for seasons
-        if timeframe == "Last 14 Days":
-            endDate = datetime.now()
-            startDate = endDate - timedelta(days=14)
-        elif timeframe == "Last 7 Days":
-            endDate = datetime.now()
-            startDate = endDate - timedelta(days=7)
-        elif timeframe == "Last 24 Hours":
-            endDate = datetime.now()
-            startDate = endDate - timedelta(hours=24)
-        elif timeframe == "Everything":
-            startDate = None
-            endDate = None
-        else:  # A season
-            startDay, endDay = timeframeMap2.get(timeframe, (None, None))
-            if startDay and endDay:
-                startDate = datetime.strptime(startDay, "%m/%d/%y")
-                endDate = datetime.strptime(endDay, "%m/%d/%y")
-            else:
-                # fallback
-                startDate = None
-                endDate = None
-        return startDate, endDate
-    elif type == "specialGraid": # Shitty ass 1 command uses this and Id rather get this done than rework it rn
-        if timeframe == "Last 14 Days":
-            cutoff = time.time() - (14*86400)
-        elif timeframe == "Last 7 Days":
-            cutoff = time.time() - (7*86400)
-        elif timeframe == "Last 24 Hours":
-            cutoff = time.time() - (1*86400)
-        elif timeframe == "Everything":
-            cutoff = 0
-        else:  # fallback to 14 days
-            cutoff = time.time() - (14*86400)
-        return cutoff
     elif type == "activity": # All activity commands will fit into this
         if timeframe == "Last 14 Days":
             days = 14
@@ -499,49 +426,49 @@ def findIngCoords(ingToMobs, mobCoords, ingRarity):
     mobCoords.clear()
     ingRarity.clear()
     try:
-        for i in range(50):
-            time.sleep(0.50)
-            url = f"https://api.wynncraft.com/v3/item/search?page={i}"
-            payload = {
-                "query": "",
-                "type": ["ingredient"],
-                "tier": [],
-                "attackSpeed": [],
-                "levelRange": [0, 110],
-                "professions": [],
-                "identifications": [],
-                "majorIds": []
-            }
-            r = requests.post(url, json=payload)
-            jsonData = r.json()
-            results = jsonData.get("results", {})
-            for ingredientName, info in results.items():
-                ingredientName = cleanText(ingredientName)
-                droppedBy = info.get("droppedBy", []) # Gets the droppedBy data if applicable, some dont have it because of WE and whatnot
-                ingToMobs.setdefault(ingredientName, [])
-                ingRarity[ingredientName] = int(info.get("tier", 0))
-                        
-                for entry in droppedBy:
-                    mobName = cleanText(entry.get("name"))
-                    coords = entry.get("coords")
-                    if mobName:
-                        ingToMobs[ingredientName].append(mobName)
+        time.sleep(0.50)
+        url = f"https://api.wynncraft.com/v3/item/search?fullResult"
+        payload = {
+            "type": ["ingredient"],
+            "levelRange": [0, 131]
+        }
+        r = requests.post(url, json=payload)
+        jsonData = r.json()
+        results = jsonData.get("results", {})
+        if isinstance(results, list):
+            result_items = [(item.get("displayName") or item.get("internalName", ""), item) for item in results]
+        elif isinstance(results, dict):
+            result_items = list(results.items())
+        for ingredientName, info in result_items:
+            ingredientName = cleanText(ingredientName)
+            droppedBy = info.get("droppedBy", []) # Gets the droppedBy data if applicable, some dont have it because of WE and whatnot
+            ingToMobs.setdefault(ingredientName, [])
+            raw_tier = info.get("tier", 0)
+            if isinstance(raw_tier, str):
+                raw_tier = int(raw_tier.split("_")[-1]) if "_" in raw_tier else 0
+            ingRarity[ingredientName] = int(raw_tier)
+                    
+            for entry in droppedBy:
+                mobName = cleanText(entry.get("name"))
+                coords = entry.get("coords")
+                if mobName:
+                    ingToMobs[ingredientName].append(mobName)
 
-                    if not coords:
-                        continue
+                if not coords:
+                    continue
 
-                    if isinstance(coords[0], list): # Account for multiple lists of coords
-                        processed = [[c[0], c[2], c[3]] for c in coords]
-                    else:
-                        processed = [[coords[0], coords[2], coords[3]]]
+                if isinstance(coords[0], list): # Account for multiple lists of coords
+                    processed = [[c[0], c[2], c[3]] for c in coords]
+                else:
+                    processed = [[coords[0], coords[2], coords[3]]]
 
-                    if mobName not in mobCoords:
-                        mobCoords[mobName] = []
-                        
-                    mobCoords.setdefault(mobName, [])
-                    mobCoords[mobName].extend(processed)
-    except: # we hit end of pages
-        useless = 1 # iam the king of creating the shittiest code.
+                if mobName not in mobCoords:
+                    mobCoords[mobName] = []
+                    
+                mobCoords.setdefault(mobName, [])
+                mobCoords[mobName].extend(processed)
+    except Exception as e: # we hit end of pages
+        logger.info(f"findIngCoords ran, hit end of pages. or errored. Potential error: {e}")
 
 def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePriceCache, tier):
     #font = ImageFont.truetype("lib/documents/arial.ttf", 30)
@@ -550,7 +477,7 @@ def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePric
         price = -1
 
     def coordToPixel(x, z):
-        return x + 2383, z + 6572 # if only wynntils was ACCURATE!!!
+        return x + 2558, z + 6638 # if only wynntils was ACCURATE!!!
 
     overlay = Image.new("RGBA", map_img.size)
     overlay_draw = ImageDraw.Draw(overlay)
@@ -570,6 +497,9 @@ def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePric
         else: # tier supplied search all ings with right tier
             targets = [ing for ing in ingToMobs if ingRarity.get(ing) == tier]
     #logger.info(f"Targets: {targets}")
+    drawn_min_x = drawn_min_y = float('inf')
+    drawn_max_x = drawn_max_y = float('-inf')
+
     for ing in targets:
         if not updatePriceCache and ing in priceCache:
             avgLowPrice = priceCache[ing]
@@ -608,13 +538,27 @@ def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePric
                     pr = radius if radius > 0 else 5
                     box = [px - pr, py - pr, px + pr, py + pr]
                     overlay_draw.ellipse(box, fill=fill_color)
-
                     draw.ellipse(box, outline=outline_color, width=2)
-        
+                    drawn_min_x = min(drawn_min_x, px - pr)
+                    drawn_min_y = min(drawn_min_y, py - pr)
+                    drawn_max_x = max(drawn_max_x, px + pr)
+                    drawn_max_y = max(drawn_max_y, py + pr)
+
     mapImg = Image.alpha_composite(map_img, overlay)
+
+    if drawn_min_x != float('inf'):
+        margin = 100
+        crop_box = (
+            max(0, drawn_min_x - margin),
+            max(0, drawn_min_y - margin),
+            min(mapImg.width, drawn_max_x + margin),
+            min(mapImg.height, drawn_max_y + margin),
+        )
+        mapImg = mapImg.crop(crop_box)
+
     #mapImg.save("ingredient_map.webp", format="webp")
     mapBytes = BytesIO()
-    mapImg.save(mapBytes, format='webp', optimize=True, compress_level=5)
+    mapImg.save(mapBytes, format='webp', quality=90)
     mapBytes.seek(0)
     return Response(content=mapBytes.getvalue(), media_type="image/webp")
 
@@ -647,7 +591,6 @@ def createPlot(
     # fillBetween: some line graphs (like territories) want fill between under the line so it looks better, so this is either True or None.
     # legendName: on the legend for line and pie chart graphs the legend needs a name
     # timeframeDays: number of days the timeframe is set to
-    
     fig, ax = plt.subplots(figsize=(12, 6))
 
     if graphType == "bar":
@@ -660,6 +603,9 @@ def createPlot(
         ax.set_ylabel(ylabel, fontsize=12)
         ax.grid(True, linestyle='-', alpha=0.5)
         ax.legend()
+        if timeframeDays:
+            now = datetime.utcnow()
+            ax.set_xlim(now - timedelta(days=timeframeDays), now)
 
     elif graphType == "line":
         ax.plot(x, y, '-', label=legendName, color=color, lw=1.5)
@@ -678,6 +624,9 @@ def createPlot(
         ax.grid(True, linestyle='-', alpha=0.5)
         ax.legend()
         ax.margins(x=0.01)
+        if timeframeDays:
+            now = datetime.utcnow()
+            ax.set_xlim(now - timedelta(days=timeframeDays), now)
 
     elif graphType == "pie":
         colorMap = plt.cm.get_cmap('tab20c')
@@ -712,7 +661,7 @@ def createPlot(
     )
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='webp', bbox_inches='tight', dpi=100)
+    fig.savefig(buf, format='webp', bbox_inches='tight', dpi=100, pil_kwargs={'quality': 85})
     plt.close(fig)
     buf.seek(0)
     img = base64.b64encode(buf.getvalue()).decode()
@@ -747,7 +696,7 @@ async def search_UUID(uuid: str):
     if not uuid:
         return JSONResponse(status_code=400, content={"error": "Please provide a valid UUID."})
     
-    return await searchMaster("uuid", uuid)
+    return await searchMaster("guild_uuid", uuid)
     
 @searchRouter.get("/name/{name}") 
 @cache_route(ttl=600) #10m cache
@@ -757,804 +706,827 @@ async def search_name(name: str):
     
     return await searchMaster("name", name)
 
-@searchRouter.get("/username/{username}") 
+@searchRouter.get("/username/{username}")
 @cache_route(ttl=600) #10m cache
 async def search_username(username: str):
     if not username:
         return JSONResponse(status_code=400, content={"error": "Please provide a valid username."})
-    
-    conn = connectDB("player")
+
+    conn = connectDB()
     cursor = conn.cursor()
-    cursor.execute("SELECT username, uuid, online, firstJoin, lastJoin, playtime, guildUUID, timestamp FROM users WHERE username = ? COLLATE NOCASE", (username,))
-    
-    player = cursor.fetchone()
-    if not player:
+
+    # Get player_uuid from latest run
+    cursor.execute("""
+        SELECT player_uuid, username
+        FROM user_history
+        WHERE username = ? COLLATE NOCASE
+        LIMIT 1
+    """, (username,))
+    user_row = cursor.fetchone()
+    if not user_row:
         conn.close()
         return JSONResponse(status_code=404, content={"error": "Player not found"})
 
-    data = dict(player)
+    player_uuid = user_row["player_uuid"]
 
     cursor.execute("""
-        SELECT wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests
-        FROM users_global
-        WHERE uuid = ?
+        SELECT online, last_join, playtime, guild_uuid, timestamp
+        FROM player_snapshots
+        WHERE player_uuid = ?
         ORDER BY timestamp DESC
         LIMIT 1
-    """, (data["uuid"],))
+    """, (player_uuid,))
     snapshot = cursor.fetchone()
+
+    data = {
+        "player_uuid": player_uuid,
+        "username": user_row["username"],
+    }
     if snapshot:
-        temp = dict(snapshot)
-        for key in ("dungeonsDict", "raidsDict"):
-            if temp.get(key):
-                try:
-                    temp[key] = ast.literal_eval(temp[key])
-                except (ValueError, SyntaxError):
+        data.update(dict(snapshot))
+
+    cursor.execute("""
+        SELECT wars, mobs_killed, total_dungeons, total_raids, total_graids
+        FROM player_snapshots
+        WHERE player_uuid = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """, (player_uuid,))
+    global_snap = cursor.fetchone()
+    if global_snap:
+        temp = dict(global_snap)
+        cursor.execute("""
+            SELECT dungeon_dict, raid_dict, graid_dict
+            FROM player_current_stats
+            WHERE player_uuid = ?
+        """, (player_uuid,))
+        stats_row = cursor.fetchone()
+        if stats_row:
+            for key in ("dungeon_dict", "raid_dict", "graid_dict"):
+                val = stats_row[key]
+                if val:
+                    try:
+                        temp[key] = ast.literal_eval(val)
+                    except (ValueError, SyntaxError):
+                        temp[key] = None
+                else:
                     temp[key] = None
         data["globalData"] = temp
     else:
         data["globalData"] = None
 
-    cursor.execute("""
-        SELECT wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, completedQuests
-        FROM users_global
-        WHERE uuid = ?
-        ORDER BY timestamp DESC
-        LIMIT 1
-    """, (data["uuid"],))
-    snapshot = cursor.fetchone()
-
     conn.close()
     return data
-    
+
+#TODO: Make sure leaderboard and activity does NOT rely on the 'users' table, and instead relies on 'user_history' as its never purged
+#TODO: Test every leaderboard command to make sure it works with new timeframes
+#TODO: Fix embeds having line wrap
 @leaderboardRouter.get("/{leaderboardType}")
 @cache_route(ttl=600) #10m cache
 async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: str | None = None):
     if not leaderboardType:
         return JSONResponse(status_code=400, content={"error": "Please provide a valid leaderboard type."})
-    guildConn = connectDB("guild")
-    playerConn = connectDB("player")
-    guildCursor = guildConn.cursor()
-    playerCursor = playerConn.cursor()
+    dbConn = connectDB()
+    dbCursor = dbConn.cursor()
     if timeframe: # For commands which use it
         startDate, endDate = getTimeframe(timeframe)
     match leaderboardType:
-        case "guildLeaderboardOnlineMembers":
+        case "guildLeaderboardOnlineMembers": #? WORKS BUT NOTE: AL TIME DEFAULTS TO 30D BECAUSE OF A BAD SYSTEM.
+            if timeframe == "All Time":
+                startDate, endDate = getTimeframe("Last 30 Days") # all time is useless and i dont want to make an error for this specific issue.
             query = """
-            WITH avg_online_members AS (
-                SELECT 
-                    g.name as guild_name,
-                    g.prefix as guild_prefix,
-                    g.uuid as guild_uuid,
-                    ROUND(AVG(gs.online_members), 2) as avg_online_members,
-                    COUNT(gs.id) as snapshot_count
+            WITH avg_online AS (
+                SELECT
+                    g.guild_uuid,
+                    g.name,
+                    g.prefix,
+                    ROUND(CAST(SUM(gs.online_members) AS REAL) / COUNT(*), 2) AS avg_online_members
                 FROM guilds g
-                JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
+                JOIN guild_snapshots gs ON g.guild_uuid = gs.guild_uuid
             """
             params = []
             if startDate and endDate:
                 query += " WHERE gs.timestamp BETWEEN ? AND ? "
                 params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
                 ])
-
             query += """
-                GROUP BY g.uuid, g.name, g.prefix
-                HAVING snapshot_count > 0
+                GROUP BY g.guild_uuid
+                HAVING COUNT(*) >= 1
             )
-            SELECT 
-                CASE 
-                    WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-                    ELSE guild_name 
-                END as guild_display_name,
-                avg_online_members,
-                snapshot_count
-            FROM avg_online_members
+            SELECT
+                name || ' (' || prefix || ')' AS guild_display_name,
+                avg_online_members
+            FROM avg_online
             ORDER BY avg_online_members DESC
             LIMIT 100;
             """
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
 
-            guildCursor.execute(query, params)
-            data = guildCursor.fetchall()
-        
-        case "guildLeaderboardTotalMembers":
-            guildCursor.execute("""
-            WITH recent_guild_stats AS (
-                SELECT 
-                    g.name as guild_name,
-                    g.prefix as guild_prefix,
-                    g.uuid as guild_uuid,
-                    gs.total_members,
-                    gs.online_members,
-                    gs.timestamp,
-                    ROW_NUMBER() OVER (PARTITION BY g.uuid ORDER BY gs.timestamp DESC) as rn
-                FROM guilds g
-                JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-                WHERE gs.timestamp >= datetime('now', '-3 hour')
-            )
-            SELECT 
-                CASE 
-                    WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-                    ELSE guild_name 
-                END as guild_display_name,
-                total_members,
-                datetime(timestamp) as last_updated
-            FROM recent_guild_stats
-            WHERE rn = 1
-            AND total_members > 0
-            ORDER BY total_members DESC
-            LIMIT 100;
-            """)
-            data = guildCursor.fetchall()
-
-        case "guildLeaderboardWars":
-            query = """
-                WITH war_gains AS (
-                    SELECT 
-                        g.name as guild_name,
-                        g.prefix as guild_prefix,
-                        g.uuid as guild_uuid,
-                        MAX(gs.wars) - MIN(gs.wars) as wars_gained,
-                        COUNT(gs.id) as snapshot_count
-                    FROM guilds g
-                    JOIN guild_snapshots gs ON g.uuid = gs.guild_uuid
-            """
-            params = []
+        case "guildLeaderboardWars": #? WORKS
             if startDate and endDate:
-                query += " WHERE gs.timestamp BETWEEN ? AND ? "
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
-
-            query += """
-                    GROUP BY g.uuid, g.name, g.prefix
-                    HAVING snapshot_count > 0
+                query = """
+                WITH war_gains AS (
+                    SELECT
+                        g.guild_uuid,
+                        g.name,
+                        g.prefix,
+                        MAX(gs.wars) - MIN(gs.wars) AS wars_gained
+                    FROM guilds g
+                    JOIN guild_snapshots gs ON g.guild_uuid = gs.guild_uuid
+                    WHERE gs.timestamp BETWEEN ? AND ?
+                    GROUP BY g.guild_uuid
+                    HAVING COUNT(*) >= 2
                 )
-                SELECT 
-                    CASE 
-                        WHEN guild_prefix IS NOT NULL THEN guild_name || ' (' || guild_prefix || ')'
-                        ELSE guild_name 
-                    END as guild_display_name,
+                SELECT
+                    name || ' (' || prefix || ')' AS guild_display_name,
                     wars_gained
                 FROM war_gains
+                WHERE wars_gained > 0
                 ORDER BY wars_gained DESC
                 LIMIT 100;
-            """
-
-            guildCursor.execute(query, params)
-            data = guildCursor.fetchall()
-        
-        case "guildLeaderboardXP":
-            if startDate and endDate:
-                # For specific timeframes, use the complex difference calculation
-                query = """
-                    WITH time_bounds AS (
-                        SELECT 
-                            guild_uuid,
-                            member_uuid,
-                            MIN(timestamp) as min_time,
-                            MAX(timestamp) as max_time
-                        FROM member_snapshots
-                        WHERE timestamp BETWEEN ? AND ?
-                        GROUP BY guild_uuid, member_uuid
-                    ),
-                    contribution_changes AS (
-                        SELECT 
-                            t.guild_uuid,
-                            t.member_uuid,
-                            COALESCE(
-                                (SELECT contribution 
-                                FROM member_snapshots 
-                                WHERE guild_uuid = t.guild_uuid 
-                                AND member_uuid = t.member_uuid 
-                                AND timestamp = t.max_time
-                                ) -
-                                (SELECT contribution 
-                                FROM member_snapshots 
-                                WHERE guild_uuid = t.guild_uuid 
-                                AND member_uuid = t.member_uuid 
-                                AND timestamp = t.min_time
-                                ), 0
-                            ) as xp_gained
-                        FROM time_bounds t
-                    ),
-                    guild_totals AS (
-                        SELECT 
-                            g.uuid as guild_uuid,
-                            g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                            SUM(c.xp_gained) as xp_gained
-                        FROM contribution_changes c
-                        JOIN guilds g ON g.uuid = c.guild_uuid
-                        GROUP BY g.uuid, g.name, g.prefix
-                        HAVING SUM(c.xp_gained) > 0
-                    )
-                    SELECT
-                        guild_name,
-                        xp_gained,
-                        RANK() OVER (ORDER BY xp_gained DESC) as rank
-                    FROM guild_totals
-                    ORDER BY xp_gained DESC
-                    LIMIT 100;
                 """
                 params = [
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
                 ]
             else:
-                # For "Everything", use a more efficient approach with window functions
                 query = """
-                    WITH latest_contributions AS (
-                        SELECT 
-                            guild_uuid,
-                            member_uuid,
-                            contribution,
-                            ROW_NUMBER() OVER (PARTITION BY guild_uuid, member_uuid ORDER BY timestamp DESC) as rn
-                        FROM member_snapshots
-                    ),
-                    filtered_contributions AS (
-                        SELECT 
-                            guild_uuid,
-                            member_uuid,
-                            contribution
-                        FROM latest_contributions
-                        WHERE rn = 1
-                    ),
-                    guild_totals AS (
-                        SELECT 
-                            g.uuid as guild_uuid,
-                            g.name || ' (' || COALESCE(g.prefix, '') || ')' as guild_name,
-                            SUM(fc.contribution) as total_contribution
-                        FROM filtered_contributions fc
-                        JOIN guilds g ON g.uuid = fc.guild_uuid
-                        GROUP BY g.uuid, g.name, g.prefix
-                        HAVING SUM(fc.contribution) > 0
-                    )
-                    SELECT
-                        guild_name,
-                        total_contribution as xp_gained,
-                        RANK() OVER (ORDER BY total_contribution DESC) as rank
-                    FROM guild_totals
-                    ORDER BY total_contribution DESC
-                    LIMIT 100;
+                SELECT
+                    g.name || ' (' || g.prefix || ')' AS guild_display_name,
+                    MAX(gs.wars) AS wars_gained
+                FROM guilds g
+                JOIN guild_snapshots gs ON g.guild_uuid = gs.guild_uuid
+                GROUP BY g.guild_uuid
+                HAVING MAX(gs.wars) > 0
+                ORDER BY wars_gained DESC
+                LIMIT 100;
                 """
                 params = []
-            guildCursor.execute(query, params)
-            data = guildCursor.fetchall()
-        
-        case "playerLeaderboardRaids":
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "guildLeaderboardXP": #! WORKS BUT INSANELY SLOW
             if startDate and endDate:
-                # For timeframes, we need to calculate the difference in raids
                 query = """
-                WITH time_bounds AS (
-                    SELECT 
-                        uuid,
-                        MIN(timestamp) as min_time,
-                        MAX(timestamp) as max_time
-                    FROM users_global
+                WITH member_bounds AS (
+                    SELECT
+                        guild_uuid,
+                        player_uuid,
+                        MIN(contribution) AS min_contribution,
+                        MAX(contribution) AS max_contribution
+                    FROM player_snapshots
                     WHERE timestamp BETWEEN ? AND ?
-                    GROUP BY uuid
+                    GROUP BY guild_uuid, player_uuid
+                    HAVING COUNT(*) >= 2
                 ),
-                raid_changes AS (
-                    SELECT 
-                        t.uuid,
-                        COALESCE(
-                            (SELECT totalRaids 
-                            FROM users_global 
-                            WHERE uuid = t.uuid 
-                            AND timestamp = t.max_time
-                            ) -
-                            (SELECT totalRaids 
-                            FROM users_global 
-                            WHERE uuid = t.uuid 
-                            AND timestamp = t.min_time
-                            ), 0
-                        ) as raids_gained
-                    FROM time_bounds t
-                ),
-                player_totals AS (
-                    SELECT 
-                        r.uuid,
-                        u.username,
-                        r.raids_gained
-                    FROM raid_changes r
-                    JOIN users_global u ON u.uuid = r.uuid
-                    WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = r.uuid)
-                    AND r.raids_gained > 0
+                guild_totals AS (
+                    SELECT
+                        guild_uuid,
+                        SUM(max_contribution - min_contribution) AS xp_gained
+                    FROM member_bounds
+                    GROUP BY guild_uuid
                 )
-                SELECT 
-                    username,
-                    raids_gained
-                FROM player_totals
+                SELECT
+                    g.name || ' (' || g.prefix || ')' AS guild_display_name,
+                    gt.xp_gained
+                FROM guild_totals gt
+                JOIN guilds g ON g.guild_uuid = gt.guild_uuid
+                WHERE gt.xp_gained > 0
+                ORDER BY gt.xp_gained DESC
+                LIMIT 100;
+                """
+                params = [
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
+                ]
+            else:
+                query = """
+                WITH latest_ts AS (
+                    SELECT player_uuid, MAX(timestamp) AS max_ts
+                    FROM player_snapshots
+                    WHERE timestamp >= datetime('now', '-3 days')
+                    GROUP BY player_uuid
+                ),
+                member_max AS (
+                    SELECT
+                        ps.guild_uuid,
+                        ps.player_uuid,
+                        ps.contribution AS max_contribution
+                    FROM player_snapshots ps
+                    JOIN latest_ts lt ON ps.player_uuid = lt.player_uuid AND ps.timestamp = lt.max_ts
+                    WHERE ps.contribution > 0
+                ),
+                guild_totals AS (
+                    SELECT
+                        guild_uuid,
+                        SUM(max_contribution) AS xp_gained
+                    FROM member_max
+                    GROUP BY guild_uuid
+                )
+                SELECT
+                    g.name || ' (' || g.prefix || ')' AS guild_display_name,
+                    gt.xp_gained
+                FROM guild_totals gt
+                JOIN guilds g ON g.guild_uuid = gt.guild_uuid
+                WHERE gt.xp_gained > 0
+                ORDER BY gt.xp_gained DESC
+                LIMIT 100;
+                """
+                params = []
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "playerLeaderboardRaids":  #! WORKS BUT INSANELY SLOW
+            if startDate and endDate:
+                query = """
+                WITH player_bounds AS (
+                    SELECT
+                        player_uuid,
+                        MIN(total_raids) AS min_raids,
+                        MAX(total_raids) AS max_raids
+                    FROM player_snapshots
+                    WHERE timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM player_bounds)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    (pb.max_raids - pb.min_raids) AS raids_gained
+                FROM player_bounds pb
+                JOIN latest_username lu ON lu.player_uuid = pb.player_uuid
+                WHERE (pb.max_raids - pb.min_raids) > 0
                 ORDER BY raids_gained DESC
                 LIMIT 100;
                 """
                 params = [
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
                 ]
             else:
-                # For "Everything" or fallback, use the original query
                 query = """
-                SELECT username, totalRaids
-                FROM (
-                    SELECT *
-                    FROM users_global
-                    WHERE (uuid, timestamp) IN (
-                        SELECT uuid, MAX(timestamp)
-                        FROM users_global
-                        GROUP BY uuid
-                    )
+                WITH active_players AS (
+                    SELECT DISTINCT player_uuid
+                    FROM player_snapshots
+                    WHERE timestamp >= datetime('now', '-3 days')
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM active_players)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                ORDER BY totalRaids DESC
+                SELECT
+                    lu.username,
+                    (SELECT ps.total_raids FROM player_snapshots ps
+                     WHERE ps.player_uuid = lu.player_uuid
+                     ORDER BY ps.timestamp DESC LIMIT 1) AS total_raids
+                FROM latest_username lu
+                WHERE total_raids > 0
+                ORDER BY total_raids DESC
                 LIMIT 100;
                 """
                 params = []
-            
-            playerCursor.execute(query, params)
-            data = playerCursor.fetchall()
-        
-        case "playerLeaderboardDungeons":
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "playerLeaderboardDungeons": #! WORKS BUT INSANELY SLOW
             if startDate and endDate:
-                # For timeframes, we need to calculate the difference in dungeons
                 query = """
-                WITH time_bounds AS (
-                    SELECT 
-                        uuid,
-                        MIN(timestamp) as min_time,
-                        MAX(timestamp) as max_time
-                    FROM users_global
+                WITH player_bounds AS (
+                    SELECT
+                        player_uuid,
+                        MIN(total_dungeons) AS min_dungeons,
+                        MAX(total_dungeons) AS max_dungeons
+                    FROM player_snapshots
                     WHERE timestamp BETWEEN ? AND ?
-                    GROUP BY uuid
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
                 ),
-                dungeon_changes AS (
-                    SELECT 
-                        t.uuid,
-                        COALESCE(
-                            (SELECT totalDungeons 
-                            FROM users_global 
-                            WHERE uuid = t.uuid 
-                            AND timestamp = t.max_time
-                            ) -
-                            (SELECT totalDungeons 
-                            FROM users_global 
-                            WHERE uuid = t.uuid 
-                            AND timestamp = t.min_time
-                            ), 0
-                        ) as dungeons_gained
-                    FROM time_bounds t
-                ),
-                player_totals AS (
-                    SELECT 
-                        d.uuid,
-                        u.username,
-                        d.dungeons_gained
-                    FROM dungeon_changes d
-                    JOIN users_global u ON u.uuid = d.uuid
-                    WHERE u.timestamp = (SELECT MAX(timestamp) FROM users_global WHERE uuid = d.uuid)
-                    AND d.dungeons_gained > 0
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM player_bounds)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                SELECT 
-                    username,
-                    dungeons_gained
-                FROM player_totals
+                SELECT
+                    lu.username,
+                    (pb.max_dungeons - pb.min_dungeons) AS dungeons_gained
+                FROM player_bounds pb
+                JOIN latest_username lu ON lu.player_uuid = pb.player_uuid
+                WHERE (pb.max_dungeons - pb.min_dungeons) > 0
                 ORDER BY dungeons_gained DESC
                 LIMIT 100;
                 """
                 params = [
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
                 ]
             else:
-                # For "Everything" or fallback, use the original query
                 query = """
-                SELECT username, totalDungeons
-                FROM (
-                    SELECT *
-                    FROM users_global
-                    WHERE (uuid, timestamp) IN (
-                        SELECT uuid, MAX(timestamp)
-                        FROM users_global
-                        GROUP BY uuid
-                    )
+                WITH active_players AS (
+                    SELECT DISTINCT player_uuid
+                    FROM player_snapshots
+                    WHERE timestamp >= datetime('now', '-3 days')
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM active_players)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                ORDER BY totalDungeons DESC
+                SELECT
+                    lu.username,
+                    (SELECT ps.total_dungeons FROM player_snapshots ps
+                     WHERE ps.player_uuid = lu.player_uuid
+                     ORDER BY ps.timestamp DESC LIMIT 1) AS total_dungeons
+                FROM latest_username lu
+                WHERE total_dungeons > 0
+                ORDER BY total_dungeons DESC
                 LIMIT 100;
                 """
                 params = []
-            playerCursor.execute(query, params)
-            data = playerCursor.fetchall()
-        
-        case "playerLeaderboardPVPKills":
-            playerCursor.execute("""
-            SELECT username, pvpKills
-            FROM (
-                SELECT *
-                FROM users_global
-                WHERE (uuid, timestamp) IN (
-                    SELECT uuid, MAX(timestamp)
-                    FROM users_global
-                    GROUP BY uuid
-                )
-            )
-            ORDER BY pvpKills DESC
-            LIMIT 100;
-            """)
-            data = playerCursor.fetchall()
-        
-        case "playerLeaderboardTotalLevel":
-            playerCursor.execute("""
-            SELECT username, totalLevel
-            FROM (
-                SELECT *
-                FROM users_global
-                WHERE (uuid, timestamp) IN (
-                    SELECT uuid, MAX(timestamp)
-                    FROM users_global
-                    GROUP BY uuid
-                )
-            )
-            ORDER BY totalLevel DESC
-            LIMIT 100;
-            """)
-            data = playerCursor.fetchall()
-        
-        case "playerLeaderboardPlaytime":
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "playerLeaderboardPlaytime":  #! WORKS BUT INSANELY SLOW, ALL TIME JUST TAKES WAYYY TOO LONG
             if startDate is None:
-                playerCursor.execute("""
-                    SELECT username, playtime
-                    FROM (
-                        SELECT *
-                        FROM users
-                        WHERE (uuid, timestamp) IN (
-                            SELECT uuid, MAX(timestamp)
-                            FROM users
-                            GROUP BY uuid
-                        )
-                    )
-                    ORDER BY playtime DESC
-                    LIMIT 100;
-                """)
-            else:
                 query = """
-                    WITH time_bounds AS (
-                        SELECT 
-                            uuid,
-                            MIN(timestamp) AS min_time,
-                            MAX(timestamp) AS max_time
-                        FROM users
-                        WHERE timestamp BETWEEN ? AND ?
-                        GROUP BY uuid
-                    ),
-                    playtime_diff AS (
-                        SELECT
-                            tb.uuid,
-                            (max_snap.playtime - min_snap.playtime) AS playtime_gained
-                        FROM time_bounds tb
-                        JOIN users min_snap ON min_snap.uuid = tb.uuid AND min_snap.timestamp = tb.min_time
-                        JOIN users max_snap ON max_snap.uuid = tb.uuid AND max_snap.timestamp = tb.max_time
-                        WHERE min_snap.playtime != -1
-                    ),
-                    latest_username AS (
-                        SELECT uuid, username
-                        FROM users
-                        WHERE (uuid, timestamp) IN (
-                            SELECT uuid, MAX(timestamp)
-                            FROM users
-                            GROUP BY uuid
-                        )
-                    )
-                    SELECT 
-                        lu.username,
-                        pd.playtime_gained,
-                        RANK() OVER (ORDER BY pd.playtime_gained DESC) AS rank
-                    FROM playtime_diff pd
-                    JOIN latest_username lu ON lu.uuid = pd.uuid
-                    WHERE pd.playtime_gained > 0
-                    ORDER BY pd.playtime_gained DESC
-                    LIMIT 100;
-                """
-                playerCursor.execute(query, [
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
-            data = playerCursor.fetchall()
-        
-        case "guildLeaderboardXPButGuildSpecific":
-            query = """
-                WITH time_bounds AS (
-                    SELECT 
-                        guild_uuid, 
-                        member_uuid, 
-                        MIN(timestamp) as min_time, 
-                        MAX(timestamp) as max_time
-                    FROM member_snapshots 
-                    WHERE guild_uuid = ?
-            """
-            params = [uuid]
-
-            if startDate and endDate:
-                query += " AND timestamp BETWEEN ? AND ? "
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
-
-            query += """
-                    GROUP BY guild_uuid, member_uuid
+                WITH active_players AS (
+                    SELECT DISTINCT player_uuid
+                    FROM player_snapshots
+                    WHERE timestamp >= datetime('now', '-3 days')
                 ),
-                contribution_changes AS (
-                    SELECT 
-                        t.guild_uuid,
-                        t.member_uuid,
-                        COALESCE(
-                            (SELECT contribution 
-                            FROM member_snapshots 
-                            WHERE guild_uuid = t.guild_uuid 
-                            AND member_uuid = t.member_uuid 
-                            AND timestamp = t.max_time
-                            ) - 
-                            (SELECT contribution 
-                            FROM member_snapshots 
-                            WHERE guild_uuid = t.guild_uuid 
-                            AND member_uuid = t.member_uuid 
-                            AND timestamp = t.min_time
-                            ), 0
-                        ) as xp_gained
-                    FROM time_bounds t
-                ),
-                player_totals AS (
-                    SELECT 
-                        c.member_uuid,
-                        m.name as player_name,
-                        c.xp_gained
-                    FROM contribution_changes c
-                    JOIN members m ON m.uuid = c.member_uuid
-                    WHERE c.xp_gained > 0
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM active_players)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                SELECT 
-                    player_name,
-                    xp_gained,
-                    RANK() OVER (ORDER BY xp_gained DESC) as rank
-                FROM player_totals
+                SELECT
+                    lu.username,
+                    (SELECT ps.playtime FROM player_snapshots ps
+                     WHERE ps.player_uuid = lu.player_uuid
+                     ORDER BY ps.timestamp DESC LIMIT 1) AS playtime
+                FROM latest_username lu
+                WHERE playtime > 0
+                ORDER BY playtime DESC
+                LIMIT 100;
+                """
+                dbCursor.execute(query)
+            else: #TODO: Make sure that playtime CANNOT take 0 because i think it is currently
+                query = """
+                WITH playtime_diff AS (
+                    SELECT player_uuid, (MAX(playtime) - MIN(playtime)) AS playtime_gained
+                    FROM player_snapshots
+                    WHERE timestamp BETWEEN ? AND ?
+                    AND playtime > 0
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM playtime_diff)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT lu.username, pd.playtime_gained
+                FROM playtime_diff pd
+                JOIN latest_username lu ON lu.player_uuid = pd.player_uuid
+                WHERE pd.playtime_gained > 0
+                ORDER BY pd.playtime_gained DESC
+                LIMIT 100;
+                """
+                dbCursor.execute(query, [
+                    startDate.strftime("%Y-%m-%d %H:%M:%S"),
+                    endDate.strftime("%Y-%m-%d %H:%M:%S")
+                ])
+            data = dbCursor.fetchall()
+
+        case "guildLeaderboardXPButGuildSpecific": #? WORKS 
+            if startDate and endDate:
+                query = """
+                WITH member_bounds AS (
+                    SELECT
+                        player_uuid,
+                        MIN(contribution) AS min_contribution,
+                        MAX(contribution) AS max_contribution
+                    FROM player_snapshots
+                    WHERE guild_uuid = ?
+                    AND timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM member_bounds)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    (mb.max_contribution - mb.min_contribution) AS xp_gained
+                FROM member_bounds mb
+                JOIN latest_username lu ON lu.player_uuid = mb.player_uuid
+                WHERE (mb.max_contribution - mb.min_contribution) > 0
                 ORDER BY xp_gained DESC
                 LIMIT 100;
-            """
-            guildCursor.execute(query, params)
-            data = guildCursor.fetchall()
-        
-        case "guildLeaderboardOnlineButGuildSpecific":
-            startDate, endDate, days, = getTimeframe(timeframe, "special")
-            query = f"""
-                WITH recent_users AS (
-                    SELECT DISTINCT uuid, username
-                    FROM users
-                    WHERE guildUUID = ?
-            """
-            params = [uuid]
-
-            if startDate and endDate:
-                query += " AND timestamp BETWEEN ? AND ?"
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
+                """
+                params = [uuid, startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
             else:
-                query += " AND timestamp >= datetime('now', '-7 day')"
-
-            query += f"""
-                ),
-                recent_playtime AS (
-                    SELECT uuid, timestamp, playtime
-                    FROM users
-            """
-
-            if startDate and endDate:
-                query += " WHERE timestamp BETWEEN ? AND ?"
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
-            else:
-                query += " WHERE timestamp >= datetime('now', '-7 day')"
-
-            query += """
-                ),
-                ranked_playtime AS (
-                    SELECT
-                        rp.uuid,
-                        rp.playtime,
-                        rp.timestamp,
-                        ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp ASC) AS rn_start,
-                        ROW_NUMBER() OVER (PARTITION BY rp.uuid ORDER BY rp.timestamp DESC) AS rn_end
-                    FROM recent_playtime rp
-                ),
-                playtime_start AS (
-                    SELECT uuid, playtime AS playtime_start
-                    FROM ranked_playtime
-                    WHERE rn_start = 1
-                ),
-                playtime_end AS (
-                    SELECT uuid, playtime AS playtime_end
-                    FROM ranked_playtime
-                    WHERE rn_end = 1
-                ),
-                playtime_diff AS (
-                    SELECT 
-                        ru.username,
-                        pe.uuid,
-                        ROUND((pe.playtime_end - ps.playtime_start) / ?, 2) AS avg_daily_hours
-                    FROM playtime_start ps
-                    JOIN playtime_end pe ON ps.uuid = pe.uuid
-                    JOIN recent_users ru ON ru.uuid = ps.uuid
-                    WHERE ps.playtime_start != -1
+                query = """
+                WITH latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (
+                            SELECT player_uuid FROM player_snapshots WHERE guild_uuid = ?
+                        )
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                SELECT 
-                    username,
-                    avg_daily_hours,
-                    RANK() OVER (ORDER BY avg_daily_hours DESC) AS rank
-                FROM playtime_diff
-                ORDER BY avg_daily_hours DESC
+                SELECT
+                    lu.username,
+                    MAX(ps.contribution) AS xp_gained
+                FROM player_snapshots ps
+                JOIN latest_username lu ON lu.player_uuid = ps.player_uuid
+                WHERE ps.guild_uuid = ?
+                GROUP BY ps.player_uuid
+                HAVING xp_gained > 0
+                ORDER BY xp_gained DESC
+                LIMIT 100;
+                """
+                params = [uuid, uuid]
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "guildLeaderboardOnlineButGuildSpecific": #? WORKS 
+            if startDate and endDate:
+                query = """
+                WITH playtime_diff AS (
+                    SELECT player_uuid, (MAX(playtime) - MIN(playtime)) AS playtime_gained
+                    FROM player_snapshots
+                    WHERE guild_uuid = ?
+                    AND playtime > 0
+                    AND timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM playtime_diff)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT lu.username, pd.playtime_gained
+                FROM playtime_diff pd
+                JOIN latest_username lu ON lu.player_uuid = pd.player_uuid
+                ORDER BY pd.playtime_gained DESC
                 LIMIT 150;
-            """
-
-            params.append(days)
-            playerCursor.execute(query, params)
-            data = playerCursor.fetchall()
-        
-        case "guildLeaderboardWarsButGuildSpecific":
-            query = """
-                WITH recent_snapshots AS (
-                    SELECT *
-                    FROM users_global
-                    WHERE uuid IN (
-                        SELECT DISTINCT uuid 
-                        FROM users 
-                        WHERE guildUUID = ?
-            """
-            params = [uuid]
-
-            if startDate and endDate:
-                query += " AND timestamp BETWEEN ? AND ? "
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
-                query += ") AND timestamp BETWEEN ? AND ? "
-                params.extend([
-                    startDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    endDate.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                ])
+                """
+                params = [uuid, startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
             else:
-                query += ") "
-
-            query += """
-                ),
-                ranked_snapshots AS (
-                    SELECT
-                        uuid,
-                        username,
-                        wars,
-                        timestamp,
-                        ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp ASC) AS rn_asc,
-                        ROW_NUMBER() OVER (PARTITION BY uuid ORDER BY timestamp DESC) AS rn_desc
-                    FROM recent_snapshots
-                ),
-                min_wars AS (
-                    SELECT uuid, wars AS wars_start
-                    FROM ranked_snapshots
-                    WHERE rn_asc = 1
-                ),
-                max_wars AS (
-                    SELECT uuid, username, wars AS wars_end
-                    FROM ranked_snapshots
-                    WHERE rn_desc = 1
-                ),
-                wars_changes AS (
-                    SELECT 
-                        max.uuid,
-                        max.username,
-                        max.wars_end - min.wars_start AS wars_gained
-                    FROM max_wars max
-                    JOIN min_wars min ON max.uuid = min.uuid
+                query = """
+                WITH latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (
+                            SELECT player_uuid FROM player_snapshots WHERE guild_uuid = ?
+                        )
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
                 )
-                SELECT 
-                    username,
-                    wars_gained,
-                    RANK() OVER (ORDER BY wars_gained DESC) AS rank
-                FROM wars_changes
+                SELECT lu.username, MAX(ps.playtime) AS playtime_gained
+                FROM player_snapshots ps
+                JOIN latest_username lu ON lu.player_uuid = ps.player_uuid
+                WHERE ps.guild_uuid = ?
+                AND ps.playtime > 0
+                GROUP BY ps.player_uuid
+                ORDER BY playtime_gained DESC
+                LIMIT 150;
+                """
+                params = [uuid, uuid]
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "guildLeaderboardWarsButGuildSpecific": #? WORKS  
+            if startDate and endDate:
+                query = """
+                WITH war_bounds AS (
+                    SELECT
+                        player_uuid,
+                        MIN(wars) AS min_wars,
+                        MAX(wars) AS max_wars
+                    FROM player_snapshots
+                    WHERE guild_uuid = ?
+                    AND timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM war_bounds)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    (wb.max_wars - wb.min_wars) AS wars_gained
+                FROM war_bounds wb
+                JOIN latest_username lu ON lu.player_uuid = wb.player_uuid
+                WHERE (wb.max_wars - wb.min_wars) > 0
                 ORDER BY wars_gained DESC
                 LIMIT 100;
-            """
-            playerCursor.execute(query, params)
-            data = playerCursor.fetchall()
-        
-        case "guildLeaderboardGraids":
-            startDate, endDate, days = getTimeframe(timeframe, "special")
-            guildCursor.execute("""
-            WITH player_deltas AS (
+                """
+                params = [uuid, startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
+            else:
+                query = """
+                WITH latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (
+                            SELECT player_uuid FROM player_snapshots WHERE guild_uuid = ?
+                        )
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
                 SELECT
-                    guild_uuid,
-                    member_uuid,
-                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
-                FROM member_snapshots
-                WHERE timestamp >= datetime('now', ?)
-                GROUP BY guild_uuid, member_uuid
-                HAVING MIN(totalGraid) >= 1
-            ),
-            guild_totals AS (
-                SELECT
-                    guild_uuid,
-                    SUM(graid_delta) AS total_graids
-                FROM player_deltas
-                GROUP BY guild_uuid
-            )
-            SELECT
-                g.prefix,
-                gt.total_graids
-            FROM guild_totals gt
-            JOIN guilds g
-            ON g.uuid = gt.guild_uuid
-            ORDER BY gt.total_graids DESC
-            LIMIT 100;
-            """, (f'-{days} days',))
-            data = guildCursor.fetchall()
+                    lu.username,
+                    MAX(ps.wars) AS wars_gained
+                FROM player_snapshots ps
+                JOIN latest_username lu ON lu.player_uuid = ps.player_uuid
+                WHERE ps.guild_uuid = ?
+                GROUP BY ps.player_uuid
+                HAVING wars_gained > 0
+                ORDER BY wars_gained DESC
+                LIMIT 100;
+                """
+                params = [uuid, uuid]
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
 
-        case "guildLeaderboardGraidsButGuildSpecific":
-            startDate, endDate, days = getTimeframe(timeframe, "special")
-            guildCursor.execute("""
-            WITH player_deltas AS (
+        case "guildLeaderboardGraids": #! JUST VERY WRONG BUT COULD BE API BUGS, LOOK INTO AFTER A WEEK OF API CHANGES, ALSO REALLY SLOW STILL
+            if startDate and endDate:
+                query = """
+                WITH guild_raid_gains AS (
+                    SELECT
+                        guild_uuid,
+                        MAX(guild_raids) - MIN(guild_raids) AS graid_delta
+                    FROM guild_snapshots
+                    WHERE guild_raids IS NOT NULL
+                    AND timestamp BETWEEN ? AND ?
+                    GROUP BY guild_uuid
+                    HAVING COUNT(*) >= 2
+                )
                 SELECT
-                    member_uuid,
-                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
-                FROM member_snapshots
-                WHERE guild_uuid = ?
-                AND timestamp >= datetime('now', ?)
-                GROUP BY member_uuid
-                HAVING MIN(totalGraid) >= 1
-            )
-            SELECT
-                m.name AS username,
-                pd.graid_delta AS total_graids
-            FROM player_deltas pd
-            JOIN members m
-            ON m.uuid = pd.member_uuid
-            ORDER BY total_graids DESC
-            LIMIT 100;
-            """, (uuid, f'-{days} days'),)
-            data = guildCursor.fetchall()
+                    g.name || ' (' || g.prefix || ')' AS guild_display_name,
+                    grg.graid_delta AS total_graids
+                FROM guild_raid_gains grg
+                JOIN guilds g ON g.guild_uuid = grg.guild_uuid
+                WHERE grg.graid_delta > 0
+                ORDER BY total_graids DESC
+                LIMIT 100;
+                """
+                params = [startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
+            else:
+                query = """
+                SELECT
+                    g.name || ' (' || g.prefix || ')' AS guild_display_name,
+                    MAX(gs.guild_raids) AS total_graids
+                FROM guild_snapshots gs
+                JOIN guilds g ON g.guild_uuid = gs.guild_uuid
+                WHERE gs.guild_raids IS NOT NULL
+                GROUP BY gs.guild_uuid
+                HAVING total_graids > 0
+                ORDER BY total_graids DESC
+                LIMIT 100;
+                """
+                params = []
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
 
-        case "playerLeaderboardGraids":
-            startDate, endDate, days = getTimeframe(timeframe, "special")
-            guildCursor.execute("""
-            WITH player_deltas AS (
+        case "guildLeaderboardGraidsButGuildSpecific": #! JUST VERY WRONG BUT COULD BE API BUGS, LOOK INTO AFTER A WEEK OF API CHANGES, ALSO REALLY SLOW STILL
+            if startDate and endDate:
+                query = """
+                WITH player_deltas AS (
+                    SELECT
+                        player_uuid,
+                        MAX(total_graids) - MIN(total_graids) AS graid_delta
+                    FROM player_snapshots
+                    WHERE guild_uuid = ?
+                    AND timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2 AND MIN(total_graids) >= 1
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM player_deltas)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
                 SELECT
-                    member_uuid,
-                    MAX(totalGraid) - MIN(totalGraid) AS graid_delta
-                FROM member_snapshots
-                WHERE timestamp >= datetime('now', ?)
-                GROUP BY member_uuid
-                HAVING MIN(totalGraid) >= 1
-            )
-            SELECT
-                m.name AS username,
-                pd.graid_delta AS total_graids
-            FROM player_deltas pd
-            JOIN members m
-            ON m.uuid = pd.member_uuid
-            ORDER BY total_graids DESC
-            LIMIT 100;
-            """, (f'-{days} days',))
-            data = guildCursor.fetchall()
-            
+                    lu.username,
+                    pd.graid_delta AS graids_done
+                FROM player_deltas pd
+                JOIN latest_username lu ON lu.player_uuid = pd.player_uuid
+                WHERE pd.graid_delta > 0
+                ORDER BY graids_done DESC
+                LIMIT 100;
+                """
+                params = [uuid, startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
+            else:
+                query = """
+                WITH guild_players AS (
+                    SELECT player_uuid, MAX(total_graids) AS graids_done
+                    FROM player_snapshots
+                    WHERE guild_uuid = ?
+                    GROUP BY player_uuid
+                    HAVING graids_done > 0
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM guild_players)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    gp.graids_done
+                FROM guild_players gp
+                JOIN latest_username lu ON lu.player_uuid = gp.player_uuid
+                ORDER BY graids_done DESC
+                LIMIT 100;
+                """
+                params = [uuid]
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
+        case "playerLeaderboardGraids":  #! JUST VERY WRONG BUT COULD BE API BUGS, LOOK INTO AFTER A WEEK OF API CHANGES, ALSO REALLY SLOW STILL
+            if startDate and endDate:
+                query = """
+                WITH player_deltas AS (
+                    SELECT
+                        player_uuid,
+                        MAX(total_graids) - MIN(total_graids) AS graid_delta
+                    FROM player_snapshots
+                    WHERE timestamp BETWEEN ? AND ?
+                    GROUP BY player_uuid
+                    HAVING COUNT(*) >= 2 AND MIN(total_graids) >= 1
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM player_deltas)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    pd.graid_delta AS graids_done
+                FROM player_deltas pd
+                JOIN latest_username lu ON lu.player_uuid = pd.player_uuid
+                WHERE pd.graid_delta > 0
+                ORDER BY graids_done DESC
+                LIMIT 100;
+                """
+                params = [startDate.strftime("%Y-%m-%d %H:%M:%S"), endDate.strftime("%Y-%m-%d %H:%M:%S")]
+            else:
+                query = """
+                WITH active_players AS (
+                    SELECT DISTINCT player_uuid
+                    FROM player_snapshots
+                    WHERE timestamp >= datetime('now', '-3 days')
+                ),
+                latest_username AS (
+                    SELECT uh.player_uuid, uh.username
+                    FROM user_history uh
+                    JOIN (
+                        SELECT player_uuid, MAX(timestamp) AS max_ts
+                        FROM user_history
+                        WHERE player_uuid IN (SELECT player_uuid FROM active_players)
+                        GROUP BY player_uuid
+                    ) mx ON uh.player_uuid = mx.player_uuid AND uh.timestamp = mx.max_ts
+                )
+                SELECT
+                    lu.username,
+                    (SELECT ps.total_graids FROM player_snapshots ps
+                     WHERE ps.player_uuid = lu.player_uuid
+                     ORDER BY ps.timestamp DESC LIMIT 1) AS graids_done
+                FROM latest_username lu
+                WHERE graids_done > 0
+                ORDER BY graids_done DESC
+                LIMIT 100;
+                """
+                params = []
+            dbCursor.execute(query, params)
+            data = dbCursor.fetchall()
+
         case _: # Default case
             return JSONResponse(status_code=400, content={"error": "Please provide a valid leaderboard type."})
 
 
-            
-    guildConn.close()
-    playerCursor.close()
+    dbCursor.close()
     return data
+
+@seasonRatingdRouter.get("/")
+@cache_route(ttl=600) #10m cache
+async def seasonLeaderboard(season: int | None = None, uuid: str | None = None):
+    if not season and not uuid:
+        return JSONResponse(status_code=400, content={"error": "Please provide a valid season or guild uuid."})
+    dbConn = connectDB()
+    dbCursor = dbConn.cursor()
+    if uuid: # Get the individual guild's data with rank per season
+        dbCursor.execute("""
+            WITH ranked AS (
+                SELECT guild_uuid, season, rating,
+                       RANK() OVER (PARTITION BY season ORDER BY rating DESC) AS rank
+                FROM guild_season_ratings
+            )
+            SELECT g.name || ' (' || g.prefix || ')' AS guild, r.season, r.rating, r.rank
+            FROM ranked r
+            JOIN guilds g ON g.guild_uuid = r.guild_uuid
+            WHERE r.guild_uuid = ?
+            ORDER BY r.season DESC
+        """, (uuid,))
+        snapshots = dbCursor.fetchall()
+        rows = [dict(r) for r in snapshots]
+    else: # Get a season's rankings
+        dbCursor.execute("""
+            SELECT g.name || ' (' || g.prefix || ')' AS guild, gsr.rating
+            FROM guild_season_ratings gsr
+            JOIN guilds g ON g.guild_uuid = gsr.guild_uuid
+            WHERE gsr.season = ?
+            ORDER BY gsr.rating DESC
+            LIMIT 100;
+        """, (season,))
+        snapshots = dbCursor.fetchall()
+        rows = [dict(r) for r in snapshots]
+
+    dbCursor.close()
+    return rows
 
 @activityRouter.get("/{activityType}")
 @cache_route(ttl=600) #10m cache
@@ -1614,15 +1586,15 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             blue, = sns.color_palette("muted", 1)
             color = "black" # color to use for the lil generated at text
     
-    guildConn = connectDB("guild")
-    playerConn = connectDB("player")
+    guildConn = connectDB()
+    playerConn = connectDB()
     guildCursor = guildConn.cursor()
     playerCursor = playerConn.cursor()
-    
+
     numDays = getTimeframe(timeframe, type="activity")
     
     match activityType:
-        case "guildActivityXP":
+        case "guildActivityXP": #? WORKS
             guildCursor.execute("""
             WITH RECURSIVE dates(date) AS (
                 SELECT date('now', printf('-%d days', ?))
@@ -1632,15 +1604,15 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 WHERE date < date('now')
             ),
             xp_data AS (
-                SELECT 
+                SELECT
                     date(timestamp) AS day,
                     MAX(contribution) - MIN(contribution) AS daily_xp
-                FROM member_snapshots
+                FROM player_snapshots
                 WHERE guild_uuid = ?
                 AND timestamp >= datetime('now', printf('-%d days', ?))
-                GROUP BY date(timestamp), member_uuid
+                GROUP BY date(timestamp), player_uuid
             )
-            SELECT 
+            SELECT
                 dates.date,
                 COALESCE(SUM(xp_data.daily_xp), 0) AS total_xp
             FROM dates
@@ -1667,7 +1639,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, xp_values, "bar", blue, f'Daily Guild XP Contribution - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = avg_daily_xp, ahxlineLabel = f'Daily Average: {avg_daily_xp:,.0f} XP', timeframeDays=numDays)
             return JSONResponse({"total_xp": total_xp, "daily_average": avg_daily_xp, "highest_day": max_daily_xp, "lowest_day": min_daily_xp, "image": img})
         
-        case "guildActivityTerritories":
+        case "guildActivityTerritories": #? WORKS
             guildCursor.execute("""
                 WITH RECURSIVE 
                 timepoints AS (
@@ -1731,7 +1703,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(times, territory_counts, "line", blue, f'Territory Count - {name}', 'Date (UTC)', 'Number of Territories', color, ahxlineY = avg_territories, ahxlineLabel = f'Average: {avg_territories:.1f}', fillBetween = True, legendName='Territory Count', timeframeDays=numDays)
             return JSONResponse({"current_territories": current_territories, "maximum_territories": max_territories, "minimum_territories": min_territories, "average_territories": avg_territories, "image": img})
             
-        case "guildActivityWars":
+        case "guildActivityWars": #? WORKS
             guildCursor.execute("""
                 WITH RECURSIVE 
                 timepoints AS (
@@ -1794,7 +1766,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(times, war_counts, "line", blue, f'War History - {name}', 'Date (UTC)', 'Number of Wars', color, legendName='War Count', timeframeDays=numDays)
             return JSONResponse({"current_war": current_war,  "image": img})
         
-        case "guildActivityOnlineMembers":
+        case "guildActivityOnlineMembers": #? WORKS
             guildCursor.execute("""
                 SELECT timestamp, online_members
                 FROM guild_snapshots
@@ -1814,7 +1786,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(times, raw_numbers, "line", blue, f'Online Members - {name}', 'Date (UTC)', 'Players Online', color, ahxlineY = overall_average, ahxlineLabel = f'Average: {overall_average:.1f} players', fillBetween = True, legendName='Average Online Member Count', timeframeDays=numDays)
             return JSONResponse({"max_players": max(raw_numbers), "min_players": min(raw_numbers), "average": overall_average, "image": img})
             
-        case "guildActivityTotalMembers":
+        case "guildActivityTotalMembers": #? WORKS
             guildCursor.execute("""
                 SELECT timestamp, total_members
                 FROM guild_snapshots
@@ -1832,7 +1804,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(times, total_numbers, "line", blue, f'Member Count - {name}', 'Date (UTC)', 'Members', color, ahxlineY = overall_total, ahxlineLabel = f'Average: {overall_total:.1f} members', fillBetween = True, legendName='Total Members', timeframeDays=numDays)
             return JSONResponse({"max_players": max(total_numbers), "min_players": min(total_numbers), "average": overall_total, "image": img})
         
-        case "playerActivityPlaytime":
+        case "playerActivityPlaytime": #? WORKS
             playerCursor.execute("""
             WITH RECURSIVE dates(day) AS (
                 SELECT DATE('now', printf('-%d days', ?))
@@ -1842,22 +1814,22 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 WHERE day < DATE('now')
             ),
             valid_playtime AS (
-                SELECT uuid, timestamp, 
-                    CASE WHEN playtime < 0 THEN NULL ELSE playtime END AS playtime
-                FROM users
+                SELECT player_uuid, timestamp,
+                    CASE WHEN playtime <= 0 THEN NULL ELSE playtime END AS playtime
+                FROM player_snapshots
             ),
             playtime_per_day AS (
                 SELECT DATE(timestamp) AS day,
                     ROUND((MAX(playtime) - MIN(playtime)) * 60.0) AS playtime_minutes
                 FROM valid_playtime
-                WHERE uuid = ?
+                WHERE player_uuid = ?
                 AND DATE(timestamp) >= DATE('now', printf('-%d days', ?))
                 GROUP BY DATE(timestamp)
+                HAVING playtime_minutes > 0
             )
-            SELECT d.day,
-                COALESCE(p.playtime_minutes, 0) AS playtime_minutes
+            SELECT d.day, p.playtime_minutes
             FROM dates d
-            LEFT JOIN playtime_per_day p ON d.day = p.day
+            INNER JOIN playtime_per_day p ON d.day = p.day
             ORDER BY d.day;
             """, (numDays - 1, uuid, numDays - 1))
             daily_data = playerCursor.fetchall()
@@ -1877,11 +1849,11 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, playtimeValues, "bar", blue, f'Daily Playtime - {name}', 'Date (UTC)', 'Minutes Played', color, ahxlineY = averageDailyPlaytime, ahxlineLabel = f'Daily Average: {averageDailyPlaytime:.0f} minutes', timeframeDays=numDays)
             return JSONResponse({"daily_average": averageDailyPlaytime, "max_day": max(playtimeValues) if playtimeValues else 0, "min_day": min(playtimeValues) if playtimeValues else 0, "image": img})
             
-        case "playerActivityContributions":
+        case "playerActivityContributions": #? WORKS
             guildCursor.execute("""
             SELECT timestamp, contribution
-            FROM member_snapshots
-            WHERE member_uuid = ?
+            FROM player_snapshots
+            WHERE player_uuid = ?
             AND timestamp >= datetime('now', printf('-%d days', ?))
             ORDER BY timestamp
             """, (uuid, numDays))
@@ -1890,7 +1862,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             if not snapshots:
                 return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
-            parsed_snapshots = [(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'), xp) for ts, xp in snapshots]
+            parsed_snapshots = [(datetime.fromisoformat(ts), xp) for ts, xp in snapshots]
 
             latest_snapshots_by_day = {}
             for ts, xp in parsed_snapshots:
@@ -1911,13 +1883,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(timestamps[1:], daily_gains, "bar", blue, f'Daily XP Gain - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = average, ahxlineLabel = f'Daily Average: {average:,.0f} XP', timeframeDays=numDays)
             return JSONResponse({"total_xp": totalGained, "max_xp": max(daily_gains) if daily_gains else 0, "min_xp": min(daily_gains) if daily_gains else 0,  "image": img})
         
-        case "playerActivityDungeons":
+        case "playerActivityDungeons": #? WORKS
             playerCursor.execute("""
-            SELECT u.timestamp, u.totalDungeons
-            FROM users_global u
-            WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
-            ORDER BY u.timestamp;
+            SELECT timestamp, total_dungeons
+            FROM player_snapshots
+            WHERE player_uuid = ?
+                AND timestamp >= DATETIME('now', printf('-%d days', ?))
+            ORDER BY timestamp;
             """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
@@ -1937,13 +1909,11 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, total_dungeons, "line", blue, f'Dungeon History - {name}', 'Date (UTC)', 'Number of Dungeon\'s completed', color, legendName='Dungeon Count', timeframeDays=numDays)
             return JSONResponse({"total_dungeons": highestTotal, "highest_gain": highestGain, "image": img})
             
-        case "playerActivityTotalDungeons":
+        case "playerActivityTotalDungeons": #? WORKS
             playerCursor.execute("""
-                SELECT dungeonsDict
-                FROM users_global
-                WHERE uuid = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
+                SELECT dungeon_dict
+                FROM player_current_stats
+                WHERE player_uuid = ?
             """, (uuid,))
             snapshots = playerCursor.fetchall()
 
@@ -1962,13 +1932,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(percent_labels, sizes, "pie", None, f"Dungeon Pie Chart - {name}", None, None, color, legendName="Dungeons")
             return JSONResponse({"image": img}) # Technically we could just ship this out like how it is on other endpoints, just straight image, but all activity commands should and will b64 images for consistenty
         
-        case "playerActivityRaids":
+        case "playerActivityRaids": #? WORKS
             playerCursor.execute("""
-                SELECT u.timestamp, u.totalRaids
-                FROM users_global u
-                WHERE u.uuid = ?
-                    AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
-                ORDER BY u.timestamp;
+                SELECT timestamp, total_raids
+                FROM player_snapshots
+                WHERE player_uuid = ?
+                    AND timestamp >= DATETIME('now', printf('-%d days', ?))
+                ORDER BY timestamp;
             """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
@@ -1989,13 +1959,11 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, totalRaids, "line", blue, f'Raid History - {name}', 'Date (UTC)', 'Number of Raid\'s completed', color, legendName='Raid Count', timeframeDays=numDays)
             return JSONResponse({"total": highestTotal, "highest_gain": highestGain, "image": img})
             
-        case "playerActivityTotalRaids":
+        case "playerActivityTotalRaids": #? WORKS
             playerCursor.execute("""
-                SELECT raidsDict
-                FROM users_global
-                WHERE uuid = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
+                SELECT raid_dict
+                FROM player_current_stats
+                WHERE player_uuid = ?
             """, (uuid,))
             snapshots = playerCursor.fetchall()
 
@@ -2015,13 +1983,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             return JSONResponse({"image": img})
         
-        case "playerActivityMobsKilled":
+        case "playerActivityMobsKilled": #? WORKS
             playerCursor.execute("""
-            SELECT u.timestamp, u.killedMobs
-            FROM users_global u
-            WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
-            ORDER BY u.timestamp;
+            SELECT timestamp, mobs_killed
+            FROM player_snapshots
+            WHERE player_uuid = ?
+                AND timestamp >= DATETIME('now', printf('-%d days', ?))
+            ORDER BY timestamp;
             """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
@@ -2040,13 +2008,13 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, totalKills, "line", blue, f'Mob Kill History - {name}', 'Date (UTC)', 'Number of Kill\'s', color, legendName='Mob Kill Count', timeframeDays=numDays)
             return JSONResponse({"total_kills": highestTotal, "highest_gain": highestGain, "image": img})
             
-        case "playerActivityWars":
+        case "playerActivityWars": #? WORKS
             playerCursor.execute("""
-            SELECT u.timestamp, u.wars
-            FROM users_global u
-            WHERE u.uuid = ?
-                AND u.timestamp >= DATETIME('now', printf('-%d days', ?))
-            ORDER BY u.timestamp;
+            SELECT timestamp, wars
+            FROM player_snapshots
+            WHERE player_uuid = ?
+                AND timestamp >= DATETIME('now', printf('-%d days', ?))
+            ORDER BY timestamp;
             """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
 
@@ -2065,105 +2033,72 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             img = createPlot(dates, totalWars, "line", blue, f'War Count History - {name}', 'Date (UTC)', 'Number of War\'s', color, legendName='War Count', timeframeDays=numDays)
             return JSONResponse({"total_wars": highestTotal, "highest_gain": highestGain, "image": img})
         
-        case "guildActivityGraids":
+        case "guildActivityGraids": #? WORKS
             guildCursor.execute("""
-            WITH member_deltas AS (
-                SELECT
-                    timestamp,
-                    totalGraid - LAG(totalGraid) OVER (
-                        PARTITION BY member_uuid
-                        ORDER BY timestamp
-                    ) AS raid_delta
-                FROM member_snapshots
-                WHERE guild_uuid = ?
-                AND timestamp >= datetime('now', printf('-%d days', ?))
-            )
-            SELECT timestamp
-            FROM member_deltas
-            WHERE raid_delta > 0
+            SELECT timestamp, guild_raids
+            FROM guild_snapshots
+            WHERE guild_uuid = ?
+            AND timestamp >= datetime('now', printf('-%d days', ?))
+            AND guild_raids IS NOT NULL
             ORDER BY timestamp
-            """, (uuid, numDays - 1))
+            """, (uuid, numDays))
 
             snapshots = guildCursor.fetchall()
             if not snapshots:
                 return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
 
-            timestamps = []
-            for (ts,) in snapshots:
-                timestamps.append(datetime.strptime(ts, '%Y-%m-%d %H:%M:%S'))
-
-            timestamps.sort()
-
-            cumulative_counts = list(range(1, len(timestamps) + 1))
-            day_counts = Counter(t.date() for t in timestamps)
-            max_day = max(day_counts.values())
-            avg_day = sum(day_counts.values()) / len(day_counts)
-            total_raids = len(timestamps)
-            
-            guildCursor.execute("""
-                SELECT prefix
-                FROM guilds
-                WHERE uuid = ?
-                LIMIT 1
-            """, (uuid,))
-            prefix = guildCursor.fetchone()[0]
-
-            img = createPlot(timestamps,cumulative_counts,"line",blue,f'Guild Raid Activity - {prefix}','Date (UTC)','Total Guild Raids',color,fillBetween=True,legendName='Guild Raids',timeframeDays=numDays)
-            return JSONResponse({"total_graid": total_raids,"max_graid": max_day,"average_graid": avg_day,"image": img})
-        
-        case "playerActivityGraids":
-            startDate, endDate, days = getTimeframe(timeframe, "special")
-            playerCursor.execute("""
-            WITH player_snapshots AS (
-                SELECT
-                    timestamp,
-                    totalGraid,
-                    LAG(totalGraid) OVER (PARTITION BY username ORDER BY timestamp) AS prev_graids
-                FROM users_global
-                WHERE username = ?
-                AND timestamp >= datetime('now', ?)
-            )
-            SELECT
-                timestamp,
-                totalGraid
-            FROM player_snapshots
-            WHERE prev_graids IS NOT NULL
-            AND totalGraid > prev_graids
-            ORDER BY timestamp;
-            """, (name, f'-{days - 1} days'))
-
-            snapshots = playerCursor.fetchall()
-            if not snapshots:
-                logger.info(snapshots)
-                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
-
             dates = [datetime.fromisoformat(row[0]) for row in snapshots]
             totalGraids = [row[1] for row in snapshots]
-
             highestTotal = totalGraids[-1] if totalGraids else 0
             graids_by_day = defaultdict(list)
             for dt, count in zip(dates, totalGraids):
                 graids_by_day[dt.date()].append(count)
-            dailyGain = [max(counts) - min(counts) for counts in graids_by_day.values() if len(counts) > 1]
-            highestGain = max(dailyGain) if dailyGain else 0
-            avgGain = round(sum(dailyGain) / len(dailyGain), 2) if dailyGain else 0
+            daily_gains = [max(counts) - min(counts) for counts in graids_by_day.values() if len(counts) > 1]
+            highestGain = max(daily_gains) if daily_gains else 0
+            avg_day = round(sum(daily_gains) / len(daily_gains), 2) if daily_gains else 0
+
             img = createPlot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', timeframeDays=numDays)
-            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain,"average_graid": avgGain, "image": img})
+            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avg_day, "image": img})
         
-        case "playerActivityGraidPie":
+        case "playerActivityGraids":  #? WORKS
+            days = getTimeframe(timeframe, "activity")
             playerCursor.execute("""
-                SELECT graidDict
-                FROM users_global
-                WHERE username = ?
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """, (name,))
-            snapshots = playerCursor.fetchone() # It should just be the list but lil ol me fucked it and i wont refix it.
+                SELECT timestamp, total_graids
+                FROM player_snapshots
+                WHERE player_uuid = ?
+                    AND timestamp >= DATETIME('now', printf('-%d days', ?))
+                ORDER BY timestamp;
+            """, (uuid, days))
+            snapshots = playerCursor.fetchall()
 
             if not snapshots:
                 return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
-            
-            raids = ast.literal_eval(snapshots[0])["list"]
+
+            dates = [datetime.fromisoformat(row[0]) for row in snapshots]
+            totalGraids = [row[1] for row in snapshots]
+            highestTotal = max(totalGraids)
+            raids_by_day = defaultdict(list)
+            for dt, count in zip(dates, totalGraids):
+                raids_by_day[dt.date()].append(count)
+            dailyGain = [max(counts) - min(counts) for counts in raids_by_day.values() if len(counts) > 1]
+            highestGain = max(dailyGain) if dailyGain else 0
+
+            avgGain = round(sum(dailyGain) / len(dailyGain), 2) if dailyGain else 0
+            img = createPlot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', timeframeDays=numDays)
+            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avgGain, "image": img})
+        
+        case "playerActivityGraidPie": #? WORKS
+            playerCursor.execute("""
+                SELECT graid_dict
+                FROM player_current_stats
+                WHERE player_uuid = ?
+            """, (uuid,))
+            snapshots = playerCursor.fetchone()
+
+            if not snapshots:
+                return JSONResponse(status_code=500, content={"error": "An error occured while achieving this request."})
+
+            raids = ast.literal_eval(snapshots[0])
 
             sortedGraids = dict(sorted(raids.items(), key=lambda item: item[1], reverse=True))
             labels = list(sortedGraids.keys())
@@ -2175,21 +2110,16 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             return JSONResponse({"image": img})
         
-        case "guildActivityGraidPie":
-
+        case "guildActivityGraidPie": #NOTE: Not exactly right, i think something is wrong but not sure yet, could be an issue of old data + raids // 4 its hard to tell
             guildCursor.execute("""
-                SELECT ms.graidDict
-                FROM member_snapshots ms
-                JOIN (
-                    SELECT member_uuid, MAX(timestamp) AS max_ts
-                    FROM member_snapshots
+                SELECT pcs.graid_dict
+                FROM player_current_stats pcs
+                WHERE pcs.player_uuid IN (
+                    SELECT DISTINCT player_uuid
+                    FROM player_snapshots
                     WHERE guild_uuid = ?
-                    GROUP BY member_uuid
-                ) latest
-                ON ms.member_uuid = latest.member_uuid
-                AND ms.timestamp = latest.max_ts
-                WHERE ms.guild_uuid = ?
-            """, (uuid, uuid))
+                )
+            """, (uuid,))
 
             rows = guildCursor.fetchall()
 
@@ -2202,11 +2132,15 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 if not row[0]:
                     continue
 
-                raid_data = ast.literal_eval(row[0])["list"]
+                try:
+                    raid_data = ast.literal_eval(row[0])
+                except (ValueError, SyntaxError):
+                    continue
 
                 for raid, count in raid_data.items():
                     combined_raids[raid] = combined_raids.get(raid, 0) + count
 
+            combined_raids = {raid: count // 4 for raid, count in combined_raids.items()}
             sortedGraids = dict(sorted(combined_raids.items(), key=lambda item: item[1], reverse=True))
             labels = list(sortedGraids.keys())
             sizes = list(sortedGraids.values())
@@ -2219,9 +2153,9 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
         
         case _: # Default case
             return JSONResponse(status_code=400, content={"error": "Please provide a correct activity type."})
-     
+
     guildConn.close()
-    playerCursor.close()
+    playerConn.close()
     return Response(content=buf.getvalue(), media_type="image/webp") # im actually quite confident that i fucked this up and none of this gets hit anytime.
   
 @mapRouter.get("/current") # Not a great name but its the current map
@@ -2246,7 +2180,7 @@ async def ingredient_map(ingredient: str | None = None, price: int | None = None
     if ingRandomSeed == 6:
         updateIngCache = True
     if priceRandomSeed == 6:
-     updatePriceCache = True
+        updatePriceCache = True
      
     cacheLoaded = loadCache()
     if updateIngCache or not cacheLoaded:
@@ -2259,3 +2193,4 @@ app.include_router(searchRouter)
 app.include_router(leaderboardRouter)
 app.include_router(activityRouter)
 app.include_router(mapRouter)
+app.include_router(seasonRatingdRouter)

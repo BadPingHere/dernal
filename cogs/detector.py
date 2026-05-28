@@ -36,7 +36,7 @@ class Detector(commands.GroupCog, name="detector"):
 
             
 
-    @tasks.loop(seconds=10)
+    @tasks.loop(seconds=10) #TODO: Make detector use new database rather than making the request.
     async def backgroundDetector(self):
         try:
             if not self.guildsBeingTracked:

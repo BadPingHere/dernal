@@ -26,29 +26,44 @@ rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 path = Path(__file__).resolve().parents[1] / '.env'
 CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
+API_URL = os.getenv("API_BASE_URL")
+
 sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
-timeframeMap1 = { # Used for heatmap data
+heatmapMap = { # Used for heatmap data
     "Season 24": ("04/18/25", "06/01/25"),
     "Season 25": ("06/06/25", "07/20/25"),
     "Season 26": ("07/25/25", "09/14/25"),
     "Season 27": ("09/19/25", "11/02/25"), 
     "Season 28": ("11/07/25", "12/20/25"), 
     "Season 29": ("01/02/26", "02/28/26"), 
+    "Season 29": ("03/26/26", "05/24/26"), 
     "Last 7 Days": None, # gotta handle ts outta dict
     "Everything": None
 }
+activityTimeframeMap = [ # Used for activity commands
+    "Last 14 Days", 
+    "Last 7 Days", 
+    "Last 3 Days", 
+    "Last 24 Hours", 
+    "Last 30 Days"] 
 
+leaderboardTimeframeMap = [ # Used for leaderboard data
+    "Last 14 Days",
+    "Last 7 Days",
+    "Last 3 Days",
+    "Last 24 Hours",
+    "Last 30 Days",
+    "All Time",
+]
 
-timeframeMap3 = { # Used for database data
-    "Last 14 Days": None, # gotta handle ts outta dict
-    "Last 7 Days": None, # gotta handle ts outta dict
-    "Last 3 Days": None, # gotta handle ts outta dict
-    "Last 24 Hours": None, # gotta handle ts outta dict
-    "Everything": None # all data
-}
+themeMap = [ # All activity themes
+    "Light",
+    "Dark",
+    "Discord",
+]
 
     
 def human_time_duration(seconds): # thanks guy from github https://gist.github.com/borgstrom/936ca741e885a1438c374824efb038b3
@@ -68,21 +83,7 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
             parts.append('{} {}{}'.format(amount, unit, "" if amount == 1 else "s"))
     return ' '.join(parts)
 
-def checkCooldown(userOrGuildID, cooldownSeconds): # We could theoretically save cooldowns to disk, but uh, we wont!
-    now = time.time()
-    #logger.info(cooldownHolder)
-    if userOrGuildID == 736028271153512489: # the owner (the lion) does not get a cooldown.
-        return True
-    lastUsed = cooldownHolder.get(userOrGuildID, 0)
-    elapsed = now - lastUsed
-    if elapsed < cooldownSeconds:
-        remaining = round(cooldownSeconds - elapsed, 1)
-        return remaining
-    cooldownHolder[userOrGuildID] = now
-    #logger.info(cooldownHolder)
-    return True
-
-def findAttackingMembers(attacker):
+def findAttackingMembers(attacker): #TODO: I want to utilize the database more. For guilds in database, qualify players that have warred in the past hour.
     if str(attacker) == "None":
         logger.error("Attacker None in findAttackingMembers.")
         return [["Unknown", "Unknown", 1738]] # ay
@@ -103,46 +104,51 @@ def findAttackingMembers(attacker):
                     onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart[member['uuid']] = member['server']
                     
     # Check if they are in database
-    conn = sqlite3.connect('database/guild_activity.db')
+    conn = sqlite3.connect('database/activity.db')
     cursor = conn.cursor()
-    cursor.execute("SELECT uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (str(attacker),))
+    cursor.execute("SELECT guild_uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (str(attacker),))
     result = cursor.fetchone()
     conn.close()
-    if not result: # Not in databse, manually check warcounts
+    if not result: # Not in database, manually check warcounts
         for i in onlineMembers:
             success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
             if not success:
                 logger.error("Unsuccessful request in findAttackingMembers - 2.")
                 return [["Unknown", "Unknown", 1738]]
             json = r.json()
-            #logger.info(f"json: {json}")
             if int(json.get("globalData", {}).get("wars", 0)) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer. also defaults to 0 for hidden stats
                 warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
     else: # In database, we can save resources
-        conn = sqlite3.connect('database/player_activity.db')
+        conn = sqlite3.connect('database/activity.db')
         cursor = conn.cursor()
         placeholders = ','.join(['?' for _ in onlineMembers])
         query = f"""
-        SELECT 
+        SELECT
             u.username,
-            u.uuid,
-            u.wars
-        FROM users_global u
+            ps.player_uuid,
+            ps.wars
+        FROM player_snapshots ps
+        JOIN users u ON u.player_uuid = ps.player_uuid
         INNER JOIN (
-            SELECT 
-                uuid,
-                MAX(timestamp) as latest_timestamp
-            FROM users_global
-            WHERE uuid IN ({placeholders})
-            GROUP BY uuid
-        ) latest ON u.uuid = latest.uuid AND u.timestamp = latest.latest_timestamp
-        WHERE u.wars > 20;
+            SELECT
+                player_uuid,
+                MAX(timestamp) AS latest_timestamp
+            FROM player_snapshots
+            WHERE player_uuid IN ({placeholders})
+            GROUP BY player_uuid
+        ) latest ON ps.player_uuid = latest.player_uuid AND ps.timestamp = latest.latest_timestamp
+        INNER JOIN (
+            SELECT player_uuid, MAX(run_id) AS max_run_id
+            FROM users WHERE player_uuid IN ({placeholders})
+            GROUP BY player_uuid
+        ) latest_user ON u.player_uuid = latest_user.player_uuid AND u.run_id = latest_user.max_run_id
+        WHERE ps.wars > 20;
         """
 
-        cursor.execute(query, onlineMembers)
+        cursor.execute(query, onlineMembers + onlineMembers)
         result = cursor.fetchall()
-        for username, uuid, wars in result:
-            server = onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart.get(uuid, 'Unknown')
+        for username, player_uuid, wars in result:
+            server = onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart.get(player_uuid, 'Unknown')
             warringMembers.append([username, server, wars])
 
     if not warringMembers: # if for some reason this comes back with no one (offline or sum)
@@ -225,9 +231,11 @@ def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, e
         for territory, data in untainteddata.items():
             oldGuild = untainteddataOLD[str(territory)]['guild']['prefix']
             newGuild = data['guild']['prefix']
-            if oldGuild != newGuild and newGuild and str(newGuild).lower() != "none": # This line has fucked me up 3-4
-                reworkedDate = datetime.fromisoformat(untainteddataOLD[territory]['acquired'].replace("Z", "+00:00"))
-                reworkedDateNew = datetime.fromisoformat(data['acquired'].replace("Z", "+00:00"))
+            acquiredOld = untainteddataOLD[territory]['acquired']
+            acquiredNew = data['acquired']
+            if oldGuild != newGuild and newGuild and str(newGuild).lower() != "none" and acquiredOld and acquiredNew: # This line has fucked me up 3-4
+                reworkedDate = datetime.fromisoformat(acquiredOld.replace("Z", "+00:00"))
+                reworkedDateNew = datetime.fromisoformat(acquiredNew.replace("Z", "+00:00"))
                 elapsed_time = int(reworkedDateNew.timestamp() - reworkedDate.timestamp())
 
                 attackerOldCount = sum(1 for d in untainteddataOLD.values() if d["guild"]["prefix"] == newGuild)
@@ -424,84 +432,60 @@ def getTerritoryNames(untainteddata, guildPrefix):
     logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
     return listy
 
-def lookupUser(memberList, progressCallback=None):
+def inactivityCheck(r):
     inactivityDict = {
         "Four Week Inactive Users": [],
         "Three Week Inactive Users": [],
         "Two Week Inactive Users": [],
         "One Week Inactive Users": [],
         "Three Day Inactive Users": [],
+        "1 Day Inactive Users": [],
         "Active Users": [],
     }
-    totalMembers = len(memberList)
-
-
-    for i, member in enumerate(memberList):
-        if progressCallback:
-            progressCallback(i + 1, totalMembers)
-
-        time.sleep(0.25) # Slow down inactivity because we need to preserve our ratelimits
-        success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(member))
-        #logger.info(f"username: {member}")
-        if not success:
-            logger.error("Unsuccessful request in lookupUser.")
-            continue # i think thisll work
-        jsonData = r.json()
-        lastJoinDate = jsonData["lastJoin"]
-        if not jsonData or jsonData.get("lastJoin") is None:
-            joinTime = datetime(1960, 1, 1, tzinfo=timezone.utc) #pricks have their shit turned off
-        else:
-            lastJoinDate = jsonData["lastJoin"]
-            try:
-                joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
-            except ValueError:
-                joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%SZ")
-            joinTime = joinTime.replace(tzinfo=timezone.utc)
-        currentTime = datetime.now(timezone.utc)
-        timeDifference = int((currentTime - joinTime).total_seconds())
-
-        epochTime = joinTime.timestamp()
-
-        if timeDifference >= 86400 * 28:  # 28 days or more
-            inactivityDict["Four Week Inactive Users"].append((jsonData["username"], int(epochTime)))
-        elif timeDifference >= 86400 * 21:  # Between 21 and 27 days
-            inactivityDict["Three Week Inactive Users"].append((jsonData["username"], int(epochTime)))
-        elif timeDifference >= 86400 * 14:  # Between 14 and 20 days
-            inactivityDict["Two Week Inactive Users"].append((jsonData["username"], int(epochTime)))
-        elif timeDifference >= 86400 * 7:  # Between 7 and 13 days
-            inactivityDict["One Week Inactive Users"].append((jsonData["username"], int(epochTime)))
-        elif timeDifference >= 86400 * 3:  # Between 3 and 7 days
-            inactivityDict["Three Day Inactive Users"].append((jsonData["username"], int(epochTime)))
-        else:  # Less than 3 days
-            inactivityDict["Active Users"].append((jsonData["username"], int(epochTime)))
+    jsonData = r.json()
     
+    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
+        if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
+            for member, value in jsonData["members"][rank].items():
+                lastJoinDate = value.get("lastJoin")
+                username = member
+                if not jsonData or lastJoinDate is None:
+                    joinTime = datetime(1960, 1, 1, tzinfo=timezone.utc) #pricks have their shit turned off
+                else:
+                    lastJoinDate = lastJoinDate
+                    try:
+                        joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%S.%fZ")
+                    except ValueError:
+                        joinTime = datetime.strptime(lastJoinDate, "%Y-%m-%dT%H:%M:%SZ")
+                    joinTime = joinTime.replace(tzinfo=timezone.utc)
+                currentTime = datetime.now(timezone.utc)
+                timeDifference = int((currentTime - joinTime).total_seconds())
+                epochTime = joinTime.timestamp()
+
+                if timeDifference >= 86400 * 28:  # 28 days or more
+                    inactivityDict["Four Week Inactive Users"].append((username, int(epochTime)))
+                elif timeDifference >= 86400 * 21:  # Between 21 and 27 days
+                    inactivityDict["Three Week Inactive Users"].append((username, int(epochTime)))
+                elif timeDifference >= 86400 * 14:  # Between 14 and 20 days
+                    inactivityDict["Two Week Inactive Users"].append((username, int(epochTime)))
+                elif timeDifference >= 86400 * 7:  # Between 7 and 13 days
+                    inactivityDict["One Week Inactive Users"].append((username, int(epochTime)))
+                elif timeDifference >= 86400 * 3:  # Between 3 and 7 days
+                    inactivityDict["Three Day Inactive Users"].append((username, int(epochTime)))
+                elif timeDifference >= 86400 * 1:  # Between 1 and 3 days
+                    inactivityDict["1 Day Inactive Users"].append((username, int(epochTime)))
+                else:  # Less than 1 day
+                    inactivityDict["Active Users"].append((username, int(epochTime)))
+
     for key in inactivityDict:
         inactivityDict[key].sort(key=lambda x: x[1])  # Sort by timestamp, so we can go from oldest to newest
     return inactivityDict
 
-def lookupGuild(r, progressCallback=None):
-    jsonData = r.json()
-    memberList = []
-    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
-        if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
-            for member, value in jsonData["members"][rank].items(): 
-                memberList.append(value['uuid']) # we use uuid because name changes fuck up username lookups
-    #logger.info(f"memberlist-2: {memberList}")
-    return lookupUser(memberList, progressCallback)
-
-def leaderboardBuilder(commandType, uuid = None, timeframe = None, prefix = None):
-    if commandType == "guildLeaderboardGraidsButGuildSpecific": # too odd of design
-        # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
-        success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
-        if not success:
-            logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {r.json()}")  
-            return []
-        searchJson = r.json()
-        uuid = searchJson["uuid"]
+def leaderboardBuilder(commandType, uuid = None, timeframe = None):
         
     logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", timeframe: {timeframe}" if timeframe else ""))
     # complicated code to create the url given the present parameters
-    url = (f"http://127.0.0.1:8080/api/leaderboard/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("timeframe", timeframe)) if v)if any((uuid, timeframe)) else ""))
+    url = (f"{API_URL}/api/leaderboard/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("timeframe", timeframe)) if v)if any((uuid, timeframe)) else ""))
     success, r = internalMakeRequest(url)
     jsonData = r.json()
     if not success:
@@ -514,19 +498,9 @@ def leaderboardBuilder(commandType, uuid = None, timeframe = None, prefix = None
 
     return listy
 
-def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix = None, timeframe = None):
-    if commandType == "guildActivityGraids": # too odd of design
-        # Because of bad design choices, we need to convert our prefix into uuid, but we have a search tool now!
-        success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/search/prefix/{prefix}")
-        
-        if not success:
-            logger.error(f"Error in guildLeaderboardGraidsButGuildSpecific search function, success is {success}, jsonData is {r.json()}")  
-            return None, None
-        searchJson = r.json()
-        uuid = searchJson["uuid"]
-
+def activityBuilder(commandType, uuid = None, name = None, theme = None, timeframe = None):
     logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", name: {name}" if name else "") + (f", theme: {theme}" if theme else ""))
-    url = (f"http://127.0.0.1:8080/api/activity/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("name", name), ("theme", theme), ("timeframe", timeframe),) if v)if any((uuid, name, theme, timeframe)) else ""))
+    url = (f"{API_URL}/api/activity/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("name", name), ("theme", theme), ("timeframe", timeframe),) if v)if any((uuid, name, theme, timeframe)) else ""))
     success, r = internalMakeRequest(url)
     if not success:
         logger.error(f"Error for {commandType} in leaderboardBuilder, success is {success}, jsonData is {r.json()}")
@@ -616,7 +590,7 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix 
             )
         
         case "guildActivityGraids":
-            title=f"Guild Raid Completion for {prefix}"
+            title=f"Guild Raid Completion for {name}"
             description=f"Total Guild Raids: {jsonData['total_graid']}\nMost Guild Raids in One Day: {jsonData['max_graid']}\nAverage Guild Raids per Day: {jsonData['average_graid']:.2f}"
             
         case "playerActivityGraids":
@@ -644,64 +618,71 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, prefix 
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
     
-    conn = sqlite3.connect('database/guild_activity.db')
+    conn = sqlite3.connect('database/activity.db')
     cursor = conn.cursor()
     weeklyNames = list(weeklyNames)
 
+    # Look up player_uuid for each name using latest run_id
     placeholders = ','.join(['?' for _ in weeklyNames])
     cursor.execute(f"""
-        SELECT name, uuid 
-        FROM members 
-        WHERE name IN ({placeholders})
-    """, weeklyNames)
-    uuid_map = dict(cursor.fetchall())
+        SELECT u.username, u.player_uuid
+        FROM users u
+        JOIN (
+            SELECT player_uuid, MAX(run_id) AS max_run_id
+            FROM users
+            WHERE username IN ({placeholders})
+            GROUP BY player_uuid
+        ) latest ON u.player_uuid = latest.player_uuid AND u.run_id = latest.max_run_id
+        WHERE u.username IN ({placeholders})
+    """, weeklyNames + weeklyNames)
+    uuid_map = {row[0]: row[1] for row in cursor.fetchall()}
 
     uuid_list = list(uuid_map.values())
     if not uuid_list:
         logger.warning("No valid UUIDs found for the provided player names")
         conn.close()
         return {}, []
-        
+
     placeholders = ','.join(['?' for _ in uuid_list])
     cursor.execute(f"""
-        SELECT member_uuid, timestamp, online, contribution
-        FROM member_snapshots
-        WHERE member_uuid IN ({placeholders})
+        SELECT player_uuid, timestamp, playtime, contribution
+        FROM player_snapshots
+        WHERE player_uuid IN ({placeholders})
         AND timestamp >= datetime('now', '-7 days')
-        ORDER BY member_uuid, timestamp
+        ORDER BY player_uuid, timestamp
     """, uuid_list)
 
     player_snapshots = defaultdict(list)
     for row in cursor.fetchall():
         player_snapshots[row[0]].append(row)
-    
+
     chances = {}
     tickets = {}
     total_tickets = 0
-    
+
     for player_name in weeklyNames:
         if player_name not in uuid_map:
             logger.warning(f"Player {player_name} not found in database") # shouldnt happen but whatnot
             continue
-            
+
         player_uuid = uuid_map[player_name]
         snapshots = player_snapshots[player_uuid]
-        
+
         if not snapshots:
             logger.warning(f"No snapshots found for player {player_name}")
-            tickets[player_name] = 1 # they still get their completition tickets
-            # TODO: Fix this code to get their chances
+            tickets[player_name] = 1 # they still get their completion tickets
             continue
-            
-        # Calculate playtime
+
+        # Calculate playtime from direct playtime field (hours → minutes per day)
         playtimeMinutes = defaultdict(float)
         for i in range(1, len(snapshots)):
-            if snapshots[i][2] == 1:  # online status
-                curr_time = datetime.strptime(snapshots[i][1], '%Y-%m-%d %H:%M:%S')
-                prev_time = datetime.strptime(snapshots[i-1][1], '%Y-%m-%d %H:%M:%S')
-                minutes = (curr_time - prev_time).total_seconds() / 60
-                playtimeMinutes[curr_time.date()] += minutes
-        
+            curr_time = datetime.strptime(snapshots[i][1], '%Y-%m-%d %H:%M:%S')
+            prev_playtime = snapshots[i-1][2]
+            curr_playtime = snapshots[i][2]
+            if prev_playtime is not None and curr_playtime is not None and curr_playtime > prev_playtime:
+                gained_hours = curr_playtime - prev_playtime
+                playtimeMinutes[curr_time.date()] += gained_hours * 60
+
         avgDailyPlaytime = sum(playtimeMinutes.values()) / 7 if playtimeMinutes else 0
 
         playtime_thresholds = [ # Tickets per minute ex. 300 mins playtime per day is 1, 60 is 0.5
@@ -791,7 +772,7 @@ def rollGiveaway(weeklyNames, rollcount):
     return chances, winners
 
 def mapCreator():
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/current")
+    success, r = internalMakeRequest(f"{API_URL}/api/map/current")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_map.webp")
@@ -804,7 +785,7 @@ def mapCreator():
     return file, embed
 
 def ingredientMapCreator(ingredient, price, tier):
-    url = (f"http://127.0.0.1:8080/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
+    url = (f"{API_URL}/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
     success, r = internalMakeRequest(url)
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
@@ -812,7 +793,6 @@ def ingredientMapCreator(ingredient, price, tier):
     embed = discord.Embed(
         title=f"Ingredient Map",
         description = (
-            f"Currently, WynnAPI is not showing drop locations for some ingredients. Ask nepmia to fix that.\n"
             f"Ingredient: {ingredient if ingredient else 'None'}\n"
             f"Price: {(str(price) + 'EB') if price else 'None'}\n"
             f"Tier: {tier if tier else 'None'}\n"
@@ -824,7 +804,7 @@ def ingredientMapCreator(ingredient, price, tier):
     return file, embed
 
 def heatmapCreator(timeframe):
-    success, r = internalMakeRequest(f"http://127.0.0.1:8080/api/map/heatmap?timeframe={timeframe}")
+    success, r = internalMakeRequest(f"{API_URL}/api/map/heatmap?timeframe={timeframe}")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_heatmap.webp")
@@ -1201,17 +1181,17 @@ def getHelp(arg):
             return message, False
 
 def playerGuildHistory(playerUUID, username):
-    conn = sqlite3.connect('database/guild_activity.db')
+    conn = sqlite3.connect('database/activity.db')
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT 
-            gm.guild_uuid,
-            g.name AS guild_name,
-            g.prefix AS guild_prefix,
-            gm.joined
-        FROM guild_members gm
-        JOIN guilds g ON gm.guild_uuid = g.uuid
-        WHERE gm.member_uuid = ?;
+        SELECT
+            guild_uuid,
+            guild_name,
+            guild_prefix,
+            timestamp AS joined
+        FROM user_history
+        WHERE player_uuid = ?
+        ORDER BY timestamp ASC;
     """, (playerUUID,))
     rows = cursor.fetchall()
     
@@ -1305,3 +1285,67 @@ def extractValues(row): # we use this for our internal api so we dont have to kn
     elif isinstance(row, (list, tuple)) and len(row) >= 2:
         return [row[0], row[1]]
     return None
+
+def checkNameValidity(name, type):
+    # Valid types:
+    # Guild - check prefix then name, i would search uuid but i refuse to accept uuid.
+    # user - Check username
+    try:
+        if type.lower() == "guild":
+            success, r = internalMakeRequest(f"{API_URL}/api/search/prefix/{name}")
+            if success:
+                return success, r.json()
+            
+            success, r = internalMakeRequest(f"{API_URL}/api/search/name/{name}")
+            if success:
+                return success, r.json()
+            
+            return False, None # Failed both prefix and name
+        
+        if type.lower() == "user":
+            success, r = internalMakeRequest(f"{API_URL}/api/search/username/{name}")
+            if success:
+                return success, r.json()
+            
+            return False, None # Failed username
+
+    except Exception:
+        logger.exception(f"An error occured in checkNameValidity with name {name} and type {type}.")
+
+def SRleaderboardBuilder(season = None, uuid = None, name = None):
+    if season:
+        url = f"{API_URL}/api/seasonRating/?season={season}"
+    elif uuid:
+        url = f"{API_URL}/api/seasonRating/?uuid={uuid}"
+
+    success, r = internalMakeRequest(url)
+    jsonData = r.json()
+    if not success:
+        logger.error(f"Error for {url} in SRleaderboardBuilder, success is {success}, jsonData is {jsonData}")
+        return []
+
+
+    if season:
+        listy = []
+        for row in jsonData:
+            extracted = extractValues(row)
+            listy.append(extracted)
+        return listy
+    elif uuid:
+        desc = "Final Rankings can be inaccurate if guilds above you are not tracked guilds.\n```\n"
+
+        max_rating = max(len(f"{entry['rating']:,}") for entry in jsonData)
+        for entry in jsonData:
+            guild = entry["guild"]
+            season = str(entry["season"]).ljust(2)
+            rating = f"{entry['rating']:,}".rjust(max_rating)
+            rank = str(entry["rank"])
+            
+            desc += f"\n Season {season} {rating} SR (#{rank})"
+        desc += "```"
+        embed = discord.Embed(
+            title=f"{guild} Season Rankings",
+            description=desc,
+            color=discord.Color.orange()
+        )
+        return embed

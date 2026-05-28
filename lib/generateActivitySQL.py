@@ -9,18 +9,17 @@ import zipfile
 import platform
 import logging
 import logging.handlers
-import math
 import sys
+import json
 from dateutil.relativedelta import relativedelta
 from pathlib import Path
+import threading
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from lib.makeRequest import makeRequest
 def get_utc_now():
     if platform.system() == "Windows":
         return datetime.utcnow()
     return datetime.now(pytz.UTC)
-
-#TODO: Eventuall rewrite this entire script, as to fix shit, make it easier to understand, and whatnot
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATABASE_DIR = os.path.join(BASE_DIR, "database")
@@ -39,13 +38,12 @@ formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', 
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-def connectGuildDB():
-    logger.info("Connecting to guild database...")
+def connectDB():
+    logger.info("Connecting to activity database...")
     os.makedirs(DATABASE_DIR, exist_ok=True)
-    db_path = os.path.join(DATABASE_DIR, "guild_activity.db")
+    db_path = os.path.join(DATABASE_DIR, "activity.db")
     conn = sqlite3.connect(db_path, isolation_level=None)
 
-    # Optimized database configuration
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.execute("PRAGMA wal_autocheckpoint=2000")
@@ -54,179 +52,244 @@ def connectGuildDB():
     conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
     conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
-    #conn.execute("ALTER TABLE member_snapshots ADD COLUMN totalGraid INTEGER;")
-    #conn.execute("ALTER TABLE member_snapshots ADD COLUMN graidDict TEXT;")
 
-    if not checkTablesExist(conn):
+    if not conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='guilds'").fetchone():
         createTables(conn)
 
     return conn
 
-def connectPlayerDB():
-    logger.info("Connecting to player database...")
-    os.makedirs(DATABASE_DIR, exist_ok=True)
-    db_path = os.path.join(DATABASE_DIR, "player_activity.db")
-    conn = sqlite3.connect(db_path, isolation_level=None)
+def createTables(conn):
+    logger.info("Creating database tables...")
+    schema_path = os.path.join(DATABASE_DIR, "schema.sql")
+    with open(schema_path, "r") as schema_file:
+        schema_script = schema_file.read()
+        conn.executescript(schema_script)
+    logger.info("Tables created successfully")
 
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
-    conn.execute("PRAGMA wal_autocheckpoint=2000")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
-    conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
-    conn.execute("PRAGMA temp_store=MEMORY")
+def storeGuildData(conn, jsonData, run_id):
+    # Get necessary data for all inserts
+    guild_uuid = jsonData.get("uuid")
+    guild_name = jsonData.get("name")
+    guild_prefix = jsonData.get("prefix")
+    guild_xp = jsonData.get("xpPercent")
+    guild_level = jsonData.get("level")
+    guild_territories = jsonData.get("territories")
+    guild_wars = jsonData.get("wars") or 0
+    guild_onlineMembers = jsonData.get("online")
+    guild_totalMembers = jsonData.get("members").get("total")
+    guild_guildRaids = jsonData.get("raids") or 0
     
-    # We are too lazy to create a schema.
-    conn.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        username TEXT NOT NULL,
-        uuid TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        online INTEGER NOT NULL,
-        server TEXT,
-        firstJoin TEXT,
-        lastJoin TEXT,
-        playtime INTEGER,
-        guildUUID TEXT,
-        publicprofile INTEGER,
-        forumLink TEXT,
-        PRIMARY KEY (uuid, timestamp)
-    );
-    ''')
+    # Store guild table info
+    conn.execute(
+    """
+    INSERT INTO guilds(guild_uuid, name, prefix, timestamp)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(guild_uuid) DO UPDATE SET name=excluded.name, prefix=excluded.prefix, timestamp=excluded.timestamp
+    """,
+        (guild_uuid, guild_name, guild_prefix, get_utc_now().isoformat())
+    )
+    
+    # Store guild_snapshots table info
+    conn.execute(
+    """
+    INSERT INTO guild_snapshots(guild_uuid, timestamp, level, xp_percent, territories, wars, online_members, total_members, guild_raids)
+    VALUES (?, ?, ?, ?, ? ,?, ?, ?, ?)
+    """,
+        (guild_uuid, get_utc_now().isoformat(), guild_level, guild_xp, guild_territories, guild_wars, guild_onlineMembers, guild_totalMembers, guild_guildRaids)
+    )
+    
+    # Store guild_season_ratings table info
+    season_ranks = jsonData.get("seasonRanks") or {}
+    season_params = [
+        (guild_uuid, int(season), int(info["rating"]))
+        for season, info in season_ranks.items()
+        if int(info.get("rating") or 0) > 0
+    ]
+    if season_params:
+        conn.executemany("""
+        INSERT INTO guild_season_ratings(guild_uuid, season, rating)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_uuid, season) DO UPDATE SET rating = excluded.rating
+        """, season_params)
 
-    conn.execute('''
-    CREATE TABLE IF NOT EXISTS users_global (
-        username TEXT NOT NULL,
-        uuid TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        wars INTEGER,
-        totalLevel INTEGER,
-        killedMobs INTEGER,
-        chestsFound INTEGER,
-        totalDungeons INTEGER,
-        dungeonsDict TEXT,
-        totalRaids INTEGER,
-        raidsDict TEXT,
-        completedQuests INTEGER,
-        pvpKills INTEGER,
-        pvpDeaths INTEGER,
-        PRIMARY KEY (uuid, timestamp)
-    );
-    ''')
+    # Store users table info
+    for role, members in jsonData["members"].items():
+        if role != "total":
+            for name, member in members.items():
+                player_uuid = member.get("uuid")
+                username = name
+                
+                conn.execute(
+                """
+                INSERT OR IGNORE INTO users(player_uuid, username, run_id)
+                VALUES (?, ?, ?)
+                """,
+                    (player_uuid, username, run_id)
+                )
 
-    conn.execute('''
-    CREATE TABLE IF NOT EXISTS users_characters (
-        username TEXT NOT NULL,
-        uuid TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        characterUUID TEXT NOT NULL,
-        characterDict TEXT,
-        PRIMARY KEY (uuid, timestamp, characterUUID)
-    );
-    ''')
-
-    conn.execute('''
-    CREATE TABLE IF NOT EXISTS users_guilds (
-        username TEXT NOT NULL,
-        uuid TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        guildUUID TEXT,
-        guildName TEXT,
-        guildPrefix TEXT,
-        PRIMARY KEY (uuid, timestamp)
-    );
-    ''')
-
-    #conn.execute("ALTER TABLE users_global ADD COLUMN totalGraid INTEGER;")
-    #conn.execute("ALTER TABLE users_global ADD COLUMN graidDict TEXT;")
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_users_uuid_timestamp ON users(uuid, timestamp);')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_usersglobal_uuid_timestamp ON users_global(uuid, timestamp);')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_userscharacters_uuid_timestamp ON users_characters(uuid, timestamp);')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_usersguilds_uuid_timestamp ON users_guilds(uuid, timestamp DESC);')
-
-    return conn
-
-def storePlayerData(player_db_conn, username):
-    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
-    if not success:
-        logger.error(f"Unsuccessful request! Success is {success}, r is {r}")
+def storePlayerData(conn, jsonData, location):
+    #! Things missing in player endpoint vs guild endpoint: player contribution
+    rows = []
     try:
-        jsonData = r.json()
-        restrictionsDict = jsonData["restrictions"]
-        # if restrictionsDict.get("characterBuildAccess") is True: # sp will be "skillPoints":{"error":"This player limits their skill points visibility."} 
+        if location == "guild":  # Get necessary data for all inserts via guild endpoint
+            for role, members in jsonData["members"].items():
+                if role != "total":
+                    for name, member in members.items():
+                        # First, we check restrictions
+                        restrictions = member.get("restrictions", {})
+                        if restrictions.get("mainAccess") is True: # globalData gone, firstJoin gone, playtime gone, so we dont do those
+                            playtime = mobs_killed = wars = total_dungeons = dungeon_dict = total_raids = raid_dict = total_graids = graid_dict = online = None
+                        else:
+                            globalData = member.get("globalData") or {}
+                            playtime = globalData.get("playtime")
+                            wars = globalData.get("wars")
+                            mobs_killed = globalData.get("mobsKilled")
+                            total_dungeons = (globalData.get("dungeons") or {}).get("total") # this should, if no dungeons done at all, default to None
+                            dungeon_dict = (globalData.get("dungeons") or {}).get("list") # this should, if no dungeons done at all, default to None
+                            total_raids = (globalData.get("raids") or {}).get("total") # this should, if no raids done at all, default to None
+                            raid_dict = (globalData.get("raids") or {}).get("list") # this should, if no raids done at all, default to None
+                            total_graids = (globalData.get("guildRaids") or {}).get("total") # this should, if no graids done at all, default to None
+                            graid_dict = (globalData.get("guildRaids") or {}).get("list") # this should, if no graids done at all, default to None
+                            online = member.get("online")
+                            
+                        guild_uuid = jsonData.get("uuid")
+                        guild_name = jsonData.get("name")
+                        guild_prefix = jsonData.get("prefix")
+                        player_uuid = member.get("uuid")
+                        last_join = member.get("lastJoin")
+                        contribution = member.get("contributed")
+                        username = name
+                        
+                        rows.append({
+                            "guild_uuid": guild_uuid,
+                            "guild_name": guild_name,
+                            "guild_prefix": guild_prefix,
+                            "player_uuid": player_uuid,
+                            "online": online,
+                            "last_join": last_join,
+                            "playtime": playtime,
+                            "contribution": contribution,
+                            "wars": wars,
+                            "mobs_killed": mobs_killed,
+                            "total_dungeons": total_dungeons,
+                            "dungeon_dict": dungeon_dict,
+                            "total_raids": total_raids,
+                            "raid_dict": raid_dict,
+                            "total_graids": total_graids,
+                            "graid_dict": graid_dict,
+                            "restrictions": restrictions,
+                            "username": username,
+                        })
 
-        if restrictionsDict.get("mainAccess") is True: # globalData gone, firstJoin gone, playtime gone, so we dont do those
-            firstJoin = None
-            playtime = -1 # I could None this too... but i dont want to.
-        else: # we have global data and whatnot, so we can get this shit done
-            firstJoin = jsonData["firstJoin"]
-            playtime = jsonData["playtime"]
-            dungeonsDict = str(jsonData["globalData"]["dungeons"]["list"])
-            raidsDict = str(jsonData["globalData"]["raids"]["list"])
-            totalGraid = jsonData["globalData"]["guildRaids"].get("total", 0)
-            graidDict = str(jsonData["globalData"]["guildRaids"])
-            player_db_conn.execute(
-            """
-            INSERT INTO users_global (username, uuid, timestamp, wars, totalLevel, killedMobs, chestsFound, totalDungeons, dungeonsDict, totalRaids, raidsDict, totalGraid, graidDict, completedQuests, pvpKills, pvpDeaths)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), jsonData["globalData"]["wars"], jsonData["globalData"]["totalLevel"], jsonData["globalData"]["mobsKilled"], jsonData["globalData"]["chestsFound"], jsonData["globalData"]["dungeons"]["total"], dungeonsDict, jsonData["globalData"]["raids"]["total"], raidsDict, totalGraid, graidDict, jsonData["globalData"]["completedQuests"], jsonData["globalData"]["pvp"]["kills"], jsonData["globalData"]["pvp"]["deaths"] )
+        elif location == "player":  # Get necessary data for all inserts via player endpoint
+            # First, we check restrictions
+            restrictions = jsonData.get("restrictions", {})
+            if restrictions.get("mainAccess") is True: # globalData gone, firstJoin gone, playtime gone, so we dont do those
+                playtime = mobs_killed = wars = total_dungeons = dungeon_dict = total_raids = raid_dict = total_graids = graid_dict = None
+            else:
+                playtime = jsonData.get("playtime")
+                wars = jsonData["globalData"].get("wars")
+                mobs_killed = jsonData["globalData"].get("mobsKilled")
+                total_dungeons = (jsonData["globalData"].get("dungeons") or {}).get("total") # this should, if no dungeons done at all, default to None
+                dungeon_dict = (jsonData["globalData"].get("dungeons") or {}).get("list") # this should, if no dungeons done at all, default to None
+                total_raids = (jsonData["globalData"].get("raids") or {}).get("total") # this should, if no raids done at all, default to None
+                raid_dict = (jsonData["globalData"].get("raids") or {}).get("list") # this should, if no raids done at all, default to None
+                total_graids = (jsonData["globalData"].get("guildRaids") or {}).get("total") # this should, if no graids done at all, default to None
+                graid_dict = (jsonData["globalData"].get("guildRaids") or {}).get("list") # this should, if no graids done at all, default to None
+
+            if restrictions.get("mainAccess") is True: # i lowk forgot this was a thing, i think hides only online? maybe lastjoin too?
+                online = None
+            else:
+                online = jsonData.get("online")
+                
+            guild_uuid = (jsonData.get("guild") or {}).get("uuid")
+            guild_name = (jsonData.get("guild") or {}).get("name")
+            guild_prefix = (jsonData.get("guild") or {}).get("prefix")
+            username = jsonData.get("username")
+            player_uuid = jsonData.get("uuid")
+            last_join = jsonData.get("lastJoin")
+            contribution = None # contribution not avaible for non-tracked guilds
+
+            rows.append({
+                "guild_uuid": guild_uuid,
+                "guild_name": guild_name,
+                "guild_prefix": guild_prefix,
+                "player_uuid": player_uuid,
+                "online": online,
+                "last_join": last_join,
+                "playtime": playtime,
+                "contribution": contribution,
+                "wars": wars,
+                "mobs_killed": mobs_killed,
+                "total_dungeons": total_dungeons,
+                "dungeon_dict": dungeon_dict,
+                "total_raids": total_raids,
+                "raid_dict": raid_dict,
+                "total_graids": total_graids,
+                "graid_dict": graid_dict,
+                "restrictions": restrictions,
+                "username": username,
+            })
+        # Insert all rows of players
+
+        snapshotParams = [
+            (
+                row["guild_uuid"], row["player_uuid"], get_utc_now().isoformat(),
+                row["online"], row["last_join"], row["playtime"], row["contribution"],
+                row["wars"], row["mobs_killed"], row["total_dungeons"],
+                row["total_raids"], row["total_graids"]
             )
+            for row in rows
+        ]
+
+        conn.executemany("""
+        INSERT INTO player_snapshots(guild_uuid, player_uuid, timestamp, online, last_join, playtime, contribution, wars, mobs_killed, total_dungeons, total_raids, total_graids)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, snapshotParams)
+
+        currentStatsParams = [
+            (
+                row["player_uuid"], json.dumps(row["dungeon_dict"]), json.dumps(row["raid_dict"]),
+                json.dumps(row["graid_dict"]), json.dumps(row["restrictions"]), get_utc_now().isoformat()
+            )
+            for row in rows
+        ]
+
+        conn.executemany("""
+        INSERT INTO player_current_stats(player_uuid, dungeon_dict, raid_dict, graid_dict, restrictions, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(player_uuid) DO UPDATE SET
+            dungeon_dict = excluded.dungeon_dict,
+            raid_dict    = excluded.raid_dict,
+            graid_dict   = excluded.graid_dict,
+            restrictions = excluded.restrictions,
+            updated_at   = excluded.updated_at
+        """, currentStatsParams)
+
+        historyParams = []
+        
+        for row in rows: # We use this to see if they need a update in history
+            last = conn.execute(
+                "SELECT guild_uuid FROM user_history WHERE player_uuid = ? ORDER BY timestamp DESC LIMIT 1",
+                (row["player_uuid"],)
+            ).fetchone()
             
-        if restrictionsDict.get("characterDataAccess") is False: # if true no character data, no reason to input
-            if 1 == 0: # uh just turning this off because we dont need this as it stands, more for future-proofing
-                for character in jsonData["characters"]:
-                    characterUUID =  character
-                    characterDict = str(jsonData["characters"][character])
-                    player_db_conn.execute(
-                        """
-                        INSERT INTO users_characters (username, uuid, timestamp, characterUUID, characterDict)
-                        VALUES (?, ?, ?, ?, ?)
-                    """,
-                        (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), characterUUID, characterDict)
-                            )
-        if str(jsonData["online"]) == "True":
-            online = 1
-        else:
-            online = 0
-        if online == 1:
-            server = jsonData["server"]
-        else:
-            server = None
+            if last is None or last[0] != row["guild_uuid"]:
+                historyParams.append((
+                    row["player_uuid"], row["username"], row["guild_uuid"],
+                    row["guild_name"], row["guild_prefix"], get_utc_now().isoformat()
+                ))
 
-        if jsonData["guild"] is None:
-            guildUUID = guildName = guildPrefix = "None"
-        else:
-            guildUUID = jsonData["guild"]["uuid"]
-            guildName = jsonData["guild"]["name"]
-            guildPrefix = jsonData["guild"]["prefix"]
-
-        player_db_conn.execute(
-            """
-            INSERT INTO users (username, uuid, timestamp, online, server, firstJoin, lastJoin, playtime, guildUUID, restrictions)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), online, server, firstJoin, jsonData["lastJoin"], playtime, guildUUID, str(jsonData["restrictions"]))
-        )
-
-        player_db_conn.execute( # Only inserts if the most recent timestamp entry is different uuid
-            """
-            INSERT INTO users_guilds (username, uuid, timestamp, guildUUID, guildName, guildPrefix)
-            SELECT ?, ?, ?, ?, ?, ?
-            WHERE ? != COALESCE(
-                (SELECT guildUUID FROM users_guilds WHERE uuid = ? ORDER BY timestamp DESC LIMIT 1),
-                ''
-            )
-            """,
-            (jsonData["username"], jsonData["uuid"], get_utc_now().isoformat(), guildUUID, guildName, guildPrefix,guildUUID, jsonData["uuid"])
-        )
-
+        if historyParams:
+            conn.executemany("""
+                INSERT INTO user_history(player_uuid, username, guild_uuid, guild_name, guild_prefix, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, historyParams)
     except Exception as e:
-        logger.error(f"Unsuccessful request2! Success is {success}")
-        logger.error(f"Failed to fetch/store username {username}: {e}")
+        logger.error(f"Failed to fetch/store via {location}: {e}")
+        logger.error(f"JsonData If applicable: {jsonData}")
 
-def cleanguildDatabase(conn):
+def cleanDatabase(conn):
     try:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.close()
@@ -234,31 +297,10 @@ def cleanguildDatabase(conn):
     except Exception:
         logger.exception("Error during database cleanup:")
 
-def cleanupOldData(conn, batchSize=1000):
-    cutoffDate = get_utc_now() - timedelta(days=30) # Cleanup all data older than 30d
+def cleanupOldData(conn, run_id, batchSize=1000):
+    cutoffDate = (get_utc_now() - timedelta(days=30)).isoformat() # Cleanup all data older than 30d
     logger.info(f"Starting data cleanup for records older than {cutoffDate}")
-    guildCur = conn.cursor()
-    playerConn = connectPlayerDB()
-    playerCur = playerConn.cursor()
-    
-    def index(cursor, indexStatements, database):
-        logger.info(f"Ensuring indexes exist for {database}...")
-        for stmt in indexStatements:
-            cursor.execute(stmt)
-
-    index(
-        guildCur, 
-        ["CREATE INDEX IF NOT EXISTS idx_guild_snapshots_timestamp ON guild_snapshots(timestamp)",
-        "CREATE INDEX IF NOT EXISTS idx_member_snapshots_timestamp ON member_snapshots(timestamp)"], 
-        "guild_activity.db"
-    )
-    index(
-        playerCur, 
-        ["CREATE INDEX IF NOT EXISTS idx_users_timestamp ON users(timestamp)",
-        "CREATE INDEX IF NOT EXISTS idx_usersglobal_timestamp ON users_global(timestamp)",
-        "CREATE INDEX IF NOT EXISTS idx_userscharacters_timestamp ON users_characters(timestamp)"], 
-        "player_activity.db"
-    )
+    activityCur = conn.cursor()
 
     def batchDelete(cursor, tableName, cutoff, batchSize, conn):
         total_deleted = 0
@@ -281,24 +323,33 @@ def cleanupOldData(conn, batchSize=1000):
             if deleted < batchSize:
                 break
         return total_deleted
+    
+    def deleteUsers(cursor, run_id):
+        logger.info(f"Starting cleanup for users...")
+        cursor.execute(f"""
+            DELETE FROM users
+            WHERE run_id != ?
+        """, (run_id,))
+        deleted = cursor.rowcount
+        return deleted
+    
+    guildSnapshotCount = memberSnapshotCount = guildCount = userCount = -1 #incase anything breaks
     try:
-        guildSnapshotCount = batchDelete(guildCur, "guild_snapshots", cutoffDate, batchSize, conn)
-        memberSnapshotCount = batchDelete(guildCur, "member_snapshots", cutoffDate, batchSize, conn)
-
-        userCount = batchDelete(playerCur, "users", cutoffDate, batchSize, playerConn)
-        userGlobalCount = batchDelete(playerCur, "users_global", cutoffDate, batchSize, playerConn)
-        characterCount = batchDelete(playerCur, "users_characters", cutoffDate, batchSize, playerConn)
+        guildSnapshotCount = batchDelete(activityCur, "guild_snapshots", cutoffDate, batchSize, conn)
+        memberSnapshotCount = batchDelete(activityCur, "player_snapshots", cutoffDate, batchSize, conn)
+        guildCount = batchDelete(activityCur, "guilds", cutoffDate, batchSize, conn)
+        userCount = deleteUsers(activityCur, run_id)
+        
     except Exception as e:
         logger.exception(f"There was an error while cleaning up old data:")
     finally:
-        playerConn.close()
+        activityCur.close()
         logger.info(
             f"Cleanup Stats:\n"
             f"  Guild Snapshots: {guildSnapshotCount}\n"
             f"  Member Snapshots: {memberSnapshotCount}\n"
-            f"  Users: {userCount}\n"
-            f"  Users Global: {userGlobalCount}\n"
-            f"  Users Characters: {characterCount}"
+            f"  Guilds: {guildCount}\n"
+            f"  Users: {userCount}"
         )       
 
 def createBackup():
@@ -320,119 +371,46 @@ def createBackup():
 
     logger.info("Starting monthly backup creation...")
     os.makedirs(BACKUP_DIR, exist_ok=True)
-    guildPath = os.path.join(DATABASE_DIR, "guild_activity.db")
-    guildZipPath = os.path.join(BACKUP_DIR, f"guild_activity_backup_{lastMonth}.zip")
-    playerPath = os.path.join(DATABASE_DIR, "player_activity.db")
-    playerZipPath = os.path.join(BACKUP_DIR, f"player_activity_backup_{lastMonth}.zip")
+    activityPath = os.path.join(DATABASE_DIR, "activity.db")
+    activityZipPath = os.path.join(BACKUP_DIR, f"activity_backup_{lastMonth}.zip")
 
     try: # create backups
-        logger.info("Creating guild backup...")
-        with zipfile.ZipFile(guildZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(guildPath, os.path.basename(guildPath))
+        logger.info("Creating activityPath backup...")
+        with zipfile.ZipFile(activityZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(activityPath, os.path.basename(activityPath))
 
         with open(backup_flag_file, "w") as f:
             f.write(current_month)
 
-        backup_size = os.path.getsize(guildZipPath) / (1024 * 1024)
-        logger.info(f"Guild backup created: {guildZipPath} (Size: {backup_size:.2f} MB)")
-
-        logger.info("Creating player backup...")
-        with zipfile.ZipFile(playerZipPath, "w", zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(playerPath, os.path.basename(playerPath))
-
-        with open(backup_flag_file, "w") as f:
-            f.write(current_month)
-
-        backup_size = os.path.getsize(playerZipPath) / (1024 * 1024)
-        logger.info(f"Player backup created: {playerZipPath} (Size: {backup_size:.2f} MB)")
+        backup_size = os.path.getsize(activityZipPath) / (1024 * 1024)
+        logger.info(f"Guild backup created: {activityZipPath} (Size: {backup_size:.2f} MB)")
     except Exception as e:
         logger.info(f"Error creating monthly backup: {e}")
 
-def checkTablesExist(conn): 
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='guilds'")
-    return cursor.fetchone() is not None
-
-def createTables(conn):
-    logger.info("Creating database tables...")
-    schema_path = os.path.join(DATABASE_DIR, "schema.sql")
-    with open(schema_path, "r") as schema_file:
-        schema_script = schema_file.read()
-        conn.executescript(schema_script)
-    logger.info("Tables created successfully")
-
-def updateGuildList(conn, guild_data):
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT OR REPLACE INTO guilds (uuid, name, prefix, created)
-        VALUES (?, ?, ?, ?)
-    """,
-        (
-            guild_data["uuid"],
-            guild_data["name"],
-            guild_data["prefix"],
-            guild_data["created"],
-        ),
+def getUntrackedPlayers(conn, players_dict): # gets who isnt in the users table
+    #start = time.perf_counter()
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS incoming_players(username TEXT PRIMARY KEY)")
+    conn.execute("DELETE FROM incoming_players")
+    
+    conn.executemany(
+        "INSERT OR IGNORE INTO incoming_players(username) VALUES (?)",
+        [(username,) for username in players_dict.keys()]
     )
-
-def insertGuildSnapshot(conn, guild_data):
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO guild_snapshots (guild_uuid, level, xp_percent, territories, wars, online_members, total_members)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """,
-        (
-            guild_data["uuid"],
-            guild_data["level"],
-            guild_data["xpPercent"],
-            guild_data["territories"],
-            guild_data.get("wars", 0),
-            guild_data["online"],
-            guild_data["members"]["total"],
-        ),
-    )
-
-def insertMemberSnapshot(conn, guild_uuid, members_data):
-    cur = conn.cursor()
-    for role, members in members_data.items():
-        if role != "total":
-            for name, member in members.items():
-                totalGraid = member["guildRaids"].get("total", 0)
-                graidDict = str(member["guildRaids"])
-                cur.execute(
-                    """
-                    INSERT OR REPLACE INTO members (uuid, name)
-                    VALUES (?, ?)
-                """,
-                    (member["uuid"], name),
-                )
-                cur.execute(
-                    """
-                    INSERT OR REPLACE INTO guild_members (guild_uuid, member_uuid, joined)
-                    VALUES (?, ?, ?)
-                """,
-                    (guild_uuid, member["uuid"], member["joined"]),
-                )
-                cur.execute(
-                    """
-                    INSERT INTO member_snapshots (guild_uuid, member_uuid, contribution, contribution_rank, totalGraid, graidDict, online, server)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        guild_uuid,
-                        member["uuid"],
-                        member["contributed"],
-                        member["contributionRank"],
-                        totalGraid,
-                        graidDict,
-                        1 if member["online"] else 0,
-                        member["server"],
-                    ),
-                )
+    
+    rows = conn.execute("""
+        SELECT i.username
+        FROM incoming_players i
+        LEFT JOIN users u ON i.username = u.username
+        WHERE u.player_uuid IS NULL
+    """).fetchall()
+    
+    conn.execute("DROP TABLE incoming_players")
+    #end = time.perf_counter()
+    #logger.info(f"getUntrackedPlayers time elapsed: {end - start:.6f} seconds.")
+    return [row[0] for row in rows]
 
 def main():
+    run_id = int(time.time())
     logger.info("Starting main data collection...")
     guildlist_path = os.path.join(DATABASE_DIR, "guildlist.csv")
 
@@ -442,8 +420,7 @@ def main():
 
     logger.info(f"Found {len(uuids)} guilds to process")
 
-    conn = connectGuildDB()
-    player_db_conn = connectPlayerDB()
+    conn = connectDB()
     try:
         # we do all this ratio bullshit to alleviate pressure on api endpoints, make them do 100/m for 20m rather than 200/m for 10m then 0/m for 10m.
         success, r = makeRequest(f"https://api.wynncraft.com/v3/player")
@@ -451,8 +428,8 @@ def main():
             logger.info("Player list unavailable, giving up.") # this for sure wont happen but we gotta rock with it
             players = []
         else:
-            players_dict = r.json().get("players", {})
-            players = list(players_dict.keys()) 
+            playerDict = r.json().get("players", {})
+            players = getUntrackedPlayers(conn, playerDict)
 
         num_guilds = len(uuids)
         num_players = len(players)
@@ -463,43 +440,72 @@ def main():
             ratio = num_players / num_guilds
         guild_index = 0
         player_index = 0
+        accumulator = 0.0
         logger.info(f"Processing {num_guilds} guilds and {num_players} players (ratio ≈ {ratio:.2f})")
         while guild_index < num_guilds or player_index < num_players:
             if guild_index < num_guilds:
                 uuid = uuids[guild_index]
-                if guild_index % 25 == 0: # so we dont spam log...
+                if guild_index % 100 == 0: # so we dont spam log...
                     logger.info(f"Processing guild {guild_index+1}/{num_guilds} (UUID: {uuid})")
                 success, r = makeRequest(f"https://api.wynncraft.com/v3/guild/uuid/{uuid}")
                 if not success:
                     logger.info(f"Skipping guild {uuid} as it no longer exists")
+                    logger.info(f"r: {r}")
                 else:
                     guild_data = r.json()
-                    updateGuildList(conn, guild_data)
-                    insertGuildSnapshot(conn, guild_data)
-                    insertMemberSnapshot(conn, guild_data["uuid"], guild_data["members"])
+                    storeGuildData(conn, guild_data, run_id)
+                    storePlayerData(conn, guild_data, "guild")
                     conn.commit()
-                    time.sleep(0.3) # Sleep every guild so we can stretch this out to 20m ish
+                    time.sleep(0.05) # Sleep every guild so we can stretch this out to 20m ish
                 guild_index += 1
+                accumulator += ratio
 
-            num_players_to_do = math.ceil(ratio)
-            for _ in range(num_players_to_do):
-                if player_index >= num_players:
-                    break
+            # process as many players as the accumulator says are due
+            while accumulator >= 1.0 and player_index < num_players:
                 username = players[player_index]
-                #logger.info(f"USERNAME: {username}")
-                storePlayerData(player_db_conn, username)
+                success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
+                if not success:
+                    logger.error(f"Unsuccessful request! Success is {success}, r is {r}")
+                    player_index += 1
+                    accumulator -= 1.0
+                    continue
+                try:
+                    jsonData = r.json()
+                    storePlayerData(conn, jsonData, "player")
+                    conn.commit()
+                except Exception as e:
+                    logger.error(f"Unsuccessful request! Success is {success}")
+                    logger.error(f"Failed to fetch username {username}: {e}")
+                
                 player_index += 1
+                accumulator -= 1.0
+
+            # if guilds are exhausted, drain remaining players
+            if guild_index >= num_guilds and player_index < num_players:
+                while player_index < num_players:
+                    username = players[player_index]
+                    success, r = makeRequest(f"https://api.wynncraft.com/v3/player/{username}?fullResult")
+                    if not success:
+                        logger.error(f"Unsuccessful request! Success is {success}, r is {r}")
+                        player_index += 1
+                        continue
+                    try:
+                        jsonData = r.json()
+                        storePlayerData(conn, jsonData, "player")
+                        conn.commit()
+                    except Exception as e:
+                        logger.error(f"Unsuccessful request! Success is {success}")
+                        logger.error(f"Failed to fetch username {username}: {e}")
+                    
+                    player_index += 1
 
     except Exception:
         logger.exception("Error in main data collection:")
     finally:
-        logger.info("Final WAL checkpoint for guild_activity.db...")
+        logger.info("Final WAL checkpoint for activity.db...")
         conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-
-        logger.info("Final WAL checkpoint for player_activity.db...")
-        player_db_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        cleanguildDatabase(conn)
-        cleanguildDatabase(player_db_conn)
+        cleanDatabase(conn)
+        return run_id
 
 def vacuumDatabase(conn):
     try:
@@ -509,6 +515,43 @@ def vacuumDatabase(conn):
     except Exception as e:
         logger.exception(f"Error during VACUUM: {e}")
 
+def storeTerritories(stop_event=None):
+    conn = connectDB()
+    while True:
+        if stop_event and stop_event.is_set():
+            logger.info("storeTerritories: stop event received, exiting.")
+            break
+        
+        success, r = makeRequest("https://api.wynncraft.com/v3/guild/list/territory")
+        if not success:
+            logger.error("Error getting territory data from Wynncraft API.")
+        else:
+            try:
+                jsonData = r.json()
+                rows = []
+                for territory, data in jsonData.items():
+                    guild = data.get("guild") or {}
+                    guild_uuid   = guild.get("uuid")
+                    guild_name   = guild.get("name")
+                    guild_prefix = guild.get("prefix")
+                    acquired     = data.get("acquired")
+                    rows.append((territory, guild_uuid, guild_name, guild_prefix, acquired, territory, acquired))
+
+                conn.executemany("""
+                    INSERT INTO territory_changes (territory, guild_uuid, guild_name, guild_prefix, acquired)
+                    SELECT ?, ?, ?, ?, ?
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM territory_changes
+                        WHERE territory = ?
+                        AND acquired = ?
+                    )
+                """, rows)
+                conn.commit()
+            except Exception:
+                logger.exception("storeTerritories: failed to process territory data.")
+
+        time.sleep(15)
+
 async def scheduledMainScript():
     vacuum = False
     while True:
@@ -516,17 +559,16 @@ async def scheduledMainScript():
         logger.info("Starting scheduled run...")
 
         try:
-            main() # This is for putting all data in db
-            guildConn = connectGuildDB()
-            cleanupOldData(guildConn)
+            run_id = main() # This is for putting all data in db
+            conn = connectDB()
+            cleanupOldData(conn, run_id)
             createBackup()
- 
-            if datetime.now().day != 1:
-                vacuum = False
-            if datetime.now().day == 1 and not vacuum:
-                vacuumDatabase(guildConn) #TODO: this is only for guild database atm
+            if datetime.now().day == 1 and not vacuum: # Vacuum once a month
+                vacuumDatabase(conn)
                 vacuum = True
-            cleanguildDatabase(guildConn) #TODO: this is only for guild database atm
+            elif datetime.now().day != 1:
+                vacuum = False
+            cleanDatabase(conn)
             logger.info("Scheduled run completed successfully")
         except Exception as e:
             logger.error(f"Error during scheduled run: {e}")
@@ -539,7 +581,19 @@ async def scheduledMainScript():
 
 if __name__ == "__main__":
     logger.info("Starting production collector...")
+
+    stop_event = threading.Event()
+    
+    territory_thread = threading.Thread(
+        target=storeTerritories,
+        args=(stop_event,),
+        daemon=True,
+        name="TerritoryThread"
+    )
+    territory_thread.start()
     try:
         asyncio.run(scheduledMainScript())
     except KeyboardInterrupt:
+        stop_event.set()
+        territory_thread.join(timeout=20)
         logger.info("Scheduled data collection stopped by user")
