@@ -28,6 +28,7 @@ ratelimitDict = {
         "/guild/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
         "/leaderboard/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
         "/item/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
+        "/map/": {"remaining": 120 if key != "unauthenticated" else 50, "limit": 120 if key != "unauthenticated" else 50, "reset": 0},
     } for key in KEYS
 }
 
@@ -65,6 +66,8 @@ def getRoute(url):
         return "/leaderboard/"
     elif "/item" in url:
         return "/item/"
+    elif "/map" in url:
+        return "/map/"
     return "/unknown/"  # fallback
 
 def refreshRatelimit(route):
@@ -166,7 +169,7 @@ def makeRequest(url): # For wynnAPI use only
                         else:
                             raise Exception(f"Unsucessful request: {r.text}")
                     except Exception as e: # backup route, pick randomly!!
-                        print(f"An error occured while trying to find a user's UUID via mojang API. {e}")
+                        logger.error(f"An error occured while trying to find a user's UUID via mojang API. {e}")
                         objects = jsonData.get("objects", {})
 
                         firstUUID = next(reversed(objects))

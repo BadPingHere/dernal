@@ -2,7 +2,7 @@
 
 alive-progress==3.1.5
 cachetools==5.5.1
-discord.py==2.5.2
+discord.py==2.7.1
 fastapi==0.115.7
 matplotlib==3.9.2
 pillow==11.2.1
@@ -14,4 +14,3 @@ python-dotenv==1.0.1
 pytz==2024.2
 requests==2.32.4
 seaborn==0.13.2
-uvicorn==0.34.2

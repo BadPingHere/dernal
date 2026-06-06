@@ -163,10 +163,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=guildUUID[0], name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=guildUUID[0], name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
     
@@ -184,10 +184,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
 
@@ -197,8 +197,6 @@ class Guild(commands.GroupCog, name="guild"):
     async def activityWars(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
         logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
         
-
-        
         await interaction.response.defer()
             
         success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
@@ -207,10 +205,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
 
@@ -228,10 +226,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
     
@@ -249,10 +247,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
 
@@ -270,10 +268,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraids", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityGraids", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send(f"No data available for the {timeframe}")
 
@@ -291,10 +289,10 @@ class Guild(commands.GroupCog, name="guild"):
             return
         guildUUID = jsonData["guild_uuid"]
 
-        file, embed = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=guildUUID, name=name, theme=theme or "light")
+        file, view = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=guildUUID, name=name, theme=theme or "light")
         
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send("No data available.")
     

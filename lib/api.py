@@ -14,6 +14,7 @@ from collections import Counter, defaultdict
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from lib.makeRequest import makeRequest, internalMakeRequest
+from lib.utils import timeframeMap
 import os
 import matplotlib.cm as cm
 import seaborn as sns
@@ -57,19 +58,6 @@ ingToMobs: Dict[str, List[str]] = {}
 ingRarity: Dict[str, int] = {}
 mobCoords: Dict[str, List[List[int]]] = {}
 priceCache: Dict[str, float] = {}
-    
-    
-timeframeMap1 = { # Used for heatmap data
-    "Season 24": ("04/18/25", "06/01/25"),
-    "Season 25": ("06/06/25", "07/20/25"),
-    "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/02/26", "02/28/26"), 
-    "Last 7 Days": None, # gotta handle ts outta dict
-    "Everything": None
-}
-
 
 app = FastAPI(title="Dernal API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -80,15 +68,19 @@ leaderboardRouter = APIRouter(prefix="/api/leaderboard", tags=["Leaderboard"])
 seasonRatingdRouter = APIRouter(prefix="/api/seasonRating", tags=["Leaderboard"])
 activityRouter = APIRouter(prefix="/api/activity", tags=["Activity"])
 mapRouter = APIRouter(prefix="/api/map", tags=["Maps"])
+seasonRouter = APIRouter(prefix="/api", tags=["Seasons"])
 
 ACTIVITYDBPATH = Path(__file__).resolve().parents[1] / "database" / "activity.db"
 TERRITORIESDBPATH = Path(__file__).resolve().parents[1] / "database" / "territories.db"
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+#TODO: Consider having internal API be a wrapper first-choice for wynncraft api, should save requests maybe.
 
-def mapCreator():
+def mapCreator(type, focusTerritory = None):
+    FOCUS_CROP_RADIUS = 200  # half-width/height of the crop box for type="test"
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
+    hq_img = Image.open("lib/documents/guild_headquarters.png").convert("RGBA")
     font = ImageFont.truetype("lib/documents/arial.ttf", 40)
     territoryCounts = defaultdict(int)
     namePrefixMap = {}
@@ -111,8 +103,8 @@ def mapCreator():
     overlay = Image.new("RGBA", map_img.size)
     overlay_draw = ImageDraw.Draw(overlay)
     draw = ImageDraw.Draw(map_img)
+    hq_pastes = []
 
-    # Loops through all territories, 
     for name, data in local_territories.items():
         if "Trading Routes" not in data: #shouldnt happen but 
             continue
@@ -135,6 +127,7 @@ def mapCreator():
                 continue
 
             draw.line([(px1, py1), (px2, py2)], fill=(10, 10, 10), width=5) # lines are not fully black
+
     for name, info in territory_data.items():
         try:
             startX, startZ = info["location"]["start"]
@@ -144,13 +137,36 @@ def mapCreator():
             continue
         if not prefix:
             prefix = "None"
+            
+        if type == "defense":
+            defenseMap = {
+                "very_low": "#006400",
+                "low": "#90EE90",
+                "medium": "#FFFF00",
+                "high": "#FF0000",
+                "very_high": "#00FFFF",
+            }
+            color_hex = defenseMap.get(info["defences"].lower(), "#FFFFFF")
+            #logger.info(f"{name}: defences is {info["defences"]}")
 
-        color_hex = color_map.get(prefix, "#FFFFFF")
+        elif type == "treasury":
+            treasuryMap = {
+                "very_low": "#006400",
+                "low": "#90EE90",
+                "medium": "#FFFF00",
+                "high": "#FF0000",
+                "very_high": "#00FFFF",
+            }
+            color_hex = treasuryMap.get(info["treasury"].lower(), "#FFFFFF")
+            #logger.info(f"{name}: treasury is {info["treasury"]}")
+        
+        elif type in ("map", "test"):
+            color_hex = color_map.get(prefix, "#FFFFFF")
+        
         try:
             color_rgb = tuple(int(color_hex[i:i+2], 16) for i in (1, 3, 5))
         except:
             color_rgb = (255, 255, 255)
-
         x1, y1 = coordToPixel(startX, startZ)
         x2, y2 = coordToPixel(endX, endZ)
         xMin, xMax = sorted([x1, x2])
@@ -164,14 +180,25 @@ def mapCreator():
         text_h = bbox[3] - bbox[1]
         text_x = (xMin + xMax) // 2 - text_w // 2
         text_y = (yMin + yMax) // 2 - text_h // 2
-
-        # Adds the black outline to the text
-        for dx in (-2, 0, 2):
-            for dy in (-2, 0, 2):
-                if dx or dy:
-                    draw.text((text_x + dx, text_y + dy), prefix, font=font, fill="black")
-
-        draw.text((text_x, text_y), prefix, font=font, fill=color_rgb)
+        isHQ = info["hq"]
+        
+        if isHQ:
+            territory_w = xMax - xMin
+            territory_h = yMax - yMin
+            crown_size = int(min(territory_w, territory_h, 80) / 1.5)
+            orig_w, orig_h = hq_img.size
+            crown_w = crown_size
+            crown_h = int(crown_size * orig_h / orig_w)
+            crown_resized = hq_img.resize((crown_w, crown_h), Image.LANCZOS)
+            crown_x = (xMin + xMax) // 2 - crown_w // 2
+            crown_y = (yMin + yMax) // 2 - crown_h // 2
+            hq_pastes.append((crown_resized, crown_x, crown_y))
+        else:
+            for dx in (-2, 0, 2):
+                for dy in (-2, 0, 2):
+                    if dx or dy:
+                        draw.text((text_x + dx, text_y + dy), prefix, font=font, fill="black")
+            draw.text((text_x, text_y), prefix, font=font, fill=color_rgb)
 
     for info in territory_data.values():
         try: 
@@ -204,9 +231,30 @@ def mapCreator():
         draw.text((boxX + legendPadding, boxY + legendPadding + i * lineHeight), text, font=font, fill=text_color)
     
     mapImg = Image.alpha_composite(map_img, overlay)
-    scale_factor = 0.4
-    new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
-    mapImg = mapImg.resize(new_size, Image.LANCZOS)
+    for crown_resized, crown_x, crown_y in hq_pastes:
+        mapImg.paste(crown_resized, (crown_x, crown_y), crown_resized)
+
+    if type == "test" and focusTerritory and focusTerritory in territory_data:
+        focus_info = territory_data[focusTerritory]
+        startX, startZ = focus_info["location"]["start"]
+        endX, endZ = focus_info["location"]["end"]
+        px1, py1 = coordToPixel(startX, startZ)
+        px2, py2 = coordToPixel(endX, endZ)
+        center_x = (px1 + px2) // 2
+        center_y = (py1 + py2) // 2
+        r = FOCUS_CROP_RADIUS
+        crop_box = (
+            max(0, center_x - r),
+            max(0, center_y - r),
+            min(mapImg.width, center_x + r),
+            min(mapImg.height, center_y + r),
+        )
+        mapImg = mapImg.crop(crop_box)
+    else:
+        scale_factor = 0.4
+        new_size = (int(mapImg.width * scale_factor), int(mapImg.height * scale_factor))
+        mapImg = mapImg.resize(new_size, Image.LANCZOS)
+
     mapBytes = BytesIO()
     mapImg.save(mapBytes, format='webp', optimize=True, compress_level=5)
     mapBytes.seek(0)
@@ -217,7 +265,7 @@ def heatmapCreator(timeframe):
         endDate = datetime.now()
         startDate = endDate - timedelta(days=7)
     elif timeframe != "Everything": # we deal with everything later on
-        startDay, endDay = timeframeMap1.get(timeframe, (None, None))
+        startDay, endDay = timeframeMap().get(timeframe, (None, None))
         startDate = datetime.strptime(startDay, "%m/%d/%y")
         endDate = datetime.strptime(endDay, "%m/%d/%y")
     
@@ -2014,6 +2062,7 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             FROM player_snapshots
             WHERE player_uuid = ?
                 AND timestamp >= DATETIME('now', printf('-%d days', ?))
+                AND wars IS NOT NULL
             ORDER BY timestamp;
             """, (uuid, numDays))
             snapshots = playerCursor.fetchall()
@@ -2159,9 +2208,9 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
     return Response(content=buf.getvalue(), media_type="image/webp") # im actually quite confident that i fucked this up and none of this gets hit anytime.
   
 @mapRouter.get("/current") # Not a great name but its the current map
-@cache_route(ttl=120) #2m cache
-async def current_map():
-    return mapCreator()
+@cache_route(ttl=30) #30s cache
+async def current_map(type: str, focusTerritory: str | None = None):
+    return mapCreator(type, focusTerritory)
 
 @mapRouter.get("/heatmap")
 @cache_route(ttl=600) #10m cache
@@ -2189,8 +2238,19 @@ async def ingredient_map(ingredient: str | None = None, price: int | None = None
 
     return ingredientMap(ingToMobs, mobCoords, ingredient, price, priceCache, updatePriceCache, tier)
 
+
+@seasonRouter.get("/season")
+@cache_route(ttl=86400) #24hr cache
+async def getAllSeasons():
+    success, r = makeRequest("https://api.wynncraft.com/v3/guild/seasons")
+    if not success:
+        return JSONResponse(status_code=400, content={"error": "A error occured while contacting the Wynn API. Please try again later."})
+    jsonData = r.json()
+    return jsonData
+
 app.include_router(searchRouter)
 app.include_router(leaderboardRouter)
 app.include_router(activityRouter)
 app.include_router(mapRouter)
 app.include_router(seasonRatingdRouter)
+app.include_router(seasonRouter)

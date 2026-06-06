@@ -22,7 +22,7 @@
 To use this discord bot, please refer to the [wiki](https://github.com/BadPingHere/dernal/wiki) for help with running the bot, configuring it, and running the commands.
 
 > [!NOTE]  
-> For self-hosting, you will need to run dernal with the activitySQL script to use database related commands. You will also need to be running the internal API.
+> For self-hosting, you will need to run Dernal with the activitySQL script to use database related commands. You will also need to be running the internal API.
 
 ## Download
 
@@ -38,6 +38,7 @@ This software was inspired or uses assets from:
 - [Wynntils](https://wynntils.com/)
 - [discord-ext-prometheus](https://github.com/Apollo-Roboto/discord.py-ext-prometheus)
 - [Wynnventory](https://www.wynnventory.com/)
+- Magbot
 
 ## Bug Reporting
 

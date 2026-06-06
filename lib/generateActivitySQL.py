@@ -579,6 +579,7 @@ async def scheduledMainScript():
         logger.info(f"Waiting {wait_time:.2f} seconds until next run")
         await asyncio.sleep(wait_time)
 
+#TODO: Add "isHQ" to territory takes
 if __name__ == "__main__":
     logger.info("Starting production collector...")
 

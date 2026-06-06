@@ -1,5 +1,5 @@
 import discord
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from collections import Counter
 import logging
@@ -16,6 +16,7 @@ import difflib
 from pathlib import Path
 from lib.makeRequest import makeRequest, internalMakeRequest
 import base64
+import pytz
   
 logger = logging.getLogger('discord')
 
@@ -32,17 +33,6 @@ sns.set_style("whitegrid")
 mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
-heatmapMap = { # Used for heatmap data
-    "Season 24": ("04/18/25", "06/01/25"),
-    "Season 25": ("06/06/25", "07/20/25"),
-    "Season 26": ("07/25/25", "09/14/25"),
-    "Season 27": ("09/19/25", "11/02/25"), 
-    "Season 28": ("11/07/25", "12/20/25"), 
-    "Season 29": ("01/02/26", "02/28/26"), 
-    "Season 29": ("03/26/26", "05/24/26"), 
-    "Last 7 Days": None, # gotta handle ts outta dict
-    "Everything": None
-}
 activityTimeframeMap = [ # Used for activity commands
     "Last 14 Days", 
     "Last 7 Days", 
@@ -83,250 +73,53 @@ def human_time_duration(seconds): # thanks guy from github https://gist.github.c
             parts.append('{} {}{}'.format(amount, unit, "" if amount == 1 else "s"))
     return ' '.join(parts)
 
-def findAttackingMembers(attacker): #TODO: I want to utilize the database more. For guilds in database, qualify players that have warred in the past hour.
-    if str(attacker) == "None":
-        logger.error("Attacker None in findAttackingMembers.")
-        return [["Unknown", "Unknown", 1738]] # ay
-    success, r = makeRequest("https://api.wynncraft.com/v3/guild/prefix/"+str(attacker)) # Using nori api as main for less api usage + it shows online members easier
-    if not success:
-        logger.error("Unsuccessful request in findAttackingMembers - 1.")
-        return [["Unknown", "Unknown", 1738]]
-    jsonData = r.json()
-    onlineMembers = []
-    warringMembers = []
-    onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart = {}
+def warComponentBuilder(territoryName, warData, targetPrefix):
+    Attacker =  warData["Attacker"]
+    Defender =  warData["Defender"]
+    AttackerBefore =  warData["AttackerBefore"]
+    AttackerAfter =  warData["AttackerAfter"]
+    DefenderBefore =  warData["DefenderBefore"]
+    DefenderAfter =  warData["DefenderAfter"]
+    TimeLasted =  warData["TimeLasted"]
+    isAttacker = False
 
-    for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
-        if isinstance(jsonData["members"][rank], dict):
-            for member in jsonData["members"][rank].values(): 
-                if member['online']: # checks if online is set to true or false
-                    onlineMembers.append(member['uuid'])
-                    onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart[member['uuid']] = member['server']
-                    
-    # Check if they are in database
-    conn = sqlite3.connect('database/activity.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT guild_uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (str(attacker),))
-    result = cursor.fetchone()
-    conn.close()
-    if not result: # Not in database, manually check warcounts
-        for i in onlineMembers:
-            success, r = makeRequest("https://api.wynncraft.com/v3/player/"+str(i))
-            if not success:
-                logger.error("Unsuccessful request in findAttackingMembers - 2.")
-                return [["Unknown", "Unknown", 1738]]
-            json = r.json()
-            if int(json.get("globalData", {}).get("wars", 0)) > 20: # arbitrary number, imo 20 or more means youre prolly a full-time warrer. also defaults to 0 for hidden stats
-                warringMembers.append([json["username"], json['server'], int(json["globalData"]["wars"])])
-    else: # In database, we can save resources
-        conn = sqlite3.connect('database/activity.db')
-        cursor = conn.cursor()
-        placeholders = ','.join(['?' for _ in onlineMembers])
-        query = f"""
-        SELECT
-            u.username,
-            ps.player_uuid,
-            ps.wars
-        FROM player_snapshots ps
-        JOIN users u ON u.player_uuid = ps.player_uuid
-        INNER JOIN (
-            SELECT
-                player_uuid,
-                MAX(timestamp) AS latest_timestamp
-            FROM player_snapshots
-            WHERE player_uuid IN ({placeholders})
-            GROUP BY player_uuid
-        ) latest ON ps.player_uuid = latest.player_uuid AND ps.timestamp = latest.latest_timestamp
-        INNER JOIN (
-            SELECT player_uuid, MAX(run_id) AS max_run_id
-            FROM users WHERE player_uuid IN ({placeholders})
-            GROUP BY player_uuid
-        ) latest_user ON u.player_uuid = latest_user.player_uuid AND u.run_id = latest_user.max_run_id
-        WHERE ps.wars > 20;
-        """
+    if targetPrefix == warData["AttackerPrefix"]: # The target is attacker
+        titleText = "🟢 **Gained Territory!**"
+        containerColor = discord.Color.green()
+        isAttacker = True
+    if targetPrefix in warData["DefenderPrefix"]: # The target is defender
+        titleText = "🔴 **Lost Territory!**"
+        containerColor = discord.Color.red()
+    if targetPrefix == "Global": # who knows man
+        titleText = "⚪ **Territory Change**"
+        containerColor = discord.Color.from_rgb(225, 255, 255)
 
-        cursor.execute(query, onlineMembers + onlineMembers)
-        result = cursor.fetchall()
-        for username, player_uuid, wars in result:
-            server = onlineMembersButServersTooBecauseIDontWantToRewriteThisPartOfTheCodeToAccomdateTheNewDatabaseLookupPart.get(player_uuid, 'Unknown')
-            warringMembers.append([username, server, wars])
+    success, r = internalMakeRequest(f"{API_URL}/api/map/current?type=test&focusTerritory={territoryName}")
+    mapBytes = BytesIO(r.content)
+    mapBytes.seek(0)
+    file = discord.File(mapBytes, filename="war_icon.webp")
 
-    if not warringMembers: # if for some reason this comes back with no one (offline or sum)
-        attackingMembers = [["Unknown", "Unknown", 1738]] # ay
-        #(f"Attacking Members: {attackingMembers}")
-        return attackingMembers
-    
-    worldStrings = [sublist[1] for sublist in warringMembers]
-    mostCommonWorld = Counter(worldStrings).most_common(1) # finds the most common world between all warring members
-
-    if len(mostCommonWorld) == 0 or mostCommonWorld[0][1] == 1:
-        # no majority world, so we just send who has the most amount of wars
-        highestWars = max(warringMembers, key=lambda x: x[2])
-        attackingMembers = [highestWars]
-    else:
-        # majority world, just chop shit up and whatnot
-        string = mostCommonWorld[0][0]
-        attackingMembers = [sublist for sublist in warringMembers if sublist[1] == string]
-    #logger.info(f"Attacking Members: {attackingMembers}")
-    return attackingMembers
-        
-def sendEmbed(attacker, defender, terrInQuestion, timeLasted, attackerTerrBefore, attackerTerrAfter, defenderTerrBefore, defenderTerrAfter, guildPrefix, pingRoleID, intervalForPing, timesinceping, guildID):
-    key = (guildID, guildPrefix)
-    if key not in timesinceping:
-        timesinceping[key] = 0  # setup 0 first, never again
-        
-    shouldPing = False
-    if attacker != guildPrefix:
-        attackingMembers = findAttackingMembers(attacker) # y6eah i give a shit.
-        world = attackingMembers[0][1]
-        username = [item[0] for item in attackingMembers]
-
-    description = "### 🟢 **Gained Territory!**" if attacker == guildPrefix else "### 🔴 **Lost Territory!**"
-    description += f"\n\n**{terrInQuestion}**\nAttacker: **{attacker}** ({attackerTerrBefore} -> {attackerTerrAfter})\nDefender: **{defender}** ({defenderTerrBefore} -> {defenderTerrAfter})\n\nThe territory lasted {timeLasted}." + ("" if attacker == guildPrefix else f"\n{world}: **{'**, **'.join(username)}**")
-    embed = discord.Embed(
-        description=description,
-        color=0x00FF00 if attacker == guildPrefix else 0xFF0000  # Green for gain, red for loss
+    container = discord.ui.Container(
+        discord.ui.Section(
+            discord.ui.TextDisplay(
+                f"## {titleText}\n\n"
+                f"**{territoryName}**\n"
+                f"Attacker: **{Attacker}**   ({AttackerBefore} -> {AttackerAfter})\n"
+                f"Defender: **{Defender}**   ({DefenderBefore} -> {DefenderAfter})\n"
+                f"This territory lasted for {TimeLasted}.\n"
+            ),
+            accessory=discord.ui.Thumbnail(media="attachment://war_icon.webp")
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+        ),
+        accent_color=containerColor
     )
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    
-    # Check if we should ping
-    if pingRoleID and intervalForPing and attacker != guildPrefix:
-        current_time = time.time()
-        if current_time - int(timesinceping[key]) >= intervalForPing*60:
-            timesinceping[key] = current_time
-            shouldPing = True
-    #logger.info(f"Sending Embed - {'Gained Territory' if attacker == guildPrefix else 'Lost Territory'}, {terrInQuestion}, Attacker: {attacker} ({attackerTerrBefore} -> {attackerTerrAfter}), Defender: {defender} ({defenderTerrBefore} -> {defenderTerrAfter}), lasted {timeLasted}. {'{}: **{}**'.format(world, ', '.join(username)) if attacker != guildPrefix else ''}") # linux FUCKING SUCKS i hate the bird
-    return {
-        "embed": embed,
-        "shouldPing": shouldPing,
-        "roleID": pingRoleID if shouldPing  else None
-    }
 
-def checkterritories(untainteddata, untainteddataOLD, guildPrefix, pingRoleID, expectedterrcount, intervalForPing, timesinceping, guildID):
-    gainedTerritories = {}
-    lostTerritories = {}
-    terrcount = {}
-    messagesToSend = []
-    key = (guildID, guildPrefix)
-    
-    if guildPrefix.lower() != 'global' and key not in expectedterrcount:
-        expectedterrcount[key] = sum(
-            1 for d in untainteddata.values() if d['guild']['prefix'] == guildPrefix
-        )
-
-    current = expectedterrcount.get(key, 0)
-    
-    for territory, data in untainteddata.items():
-        old_guild = untainteddataOLD[str(territory)]['guild']['prefix']
-        new_guild = data['guild']['prefix']
-        if old_guild == guildPrefix and new_guild != guildPrefix:
-            lostTerritories[territory] = data
-        elif old_guild != guildPrefix and new_guild == guildPrefix:
-            gainedTerritories[territory] = data
-    #logger.info(f"Gained Territories: {gainedTerritories}")
-    #logger.info(f"Lost Territories: {lostTerritories}")
-    #logger.info(f"historicalTerritories: {historicalTerritories}")
-    if guildPrefix.lower() == 'global': # We check and then enter, never to leave again
-        messagesToSend = []
-        for territory, data in untainteddata.items():
-            oldGuild = untainteddataOLD[str(territory)]['guild']['prefix']
-            newGuild = data['guild']['prefix']
-            acquiredOld = untainteddataOLD[territory]['acquired']
-            acquiredNew = data['acquired']
-            if oldGuild != newGuild and newGuild and str(newGuild).lower() != "none" and acquiredOld and acquiredNew: # This line has fucked me up 3-4
-                reworkedDate = datetime.fromisoformat(acquiredOld.replace("Z", "+00:00"))
-                reworkedDateNew = datetime.fromisoformat(acquiredNew.replace("Z", "+00:00"))
-                elapsed_time = int(reworkedDateNew.timestamp() - reworkedDate.timestamp())
-
-                attackerOldCount = sum(1 for d in untainteddataOLD.values() if d["guild"]["prefix"] == newGuild)
-                attackerNewCount = sum(1 for d in untainteddata.values() if d["guild"]["prefix"] == newGuild)
-                defenderOldCount = sum(1 for d in untainteddataOLD.values() if d["guild"]["prefix"] == oldGuild)
-                defenderNewCount = sum(1 for d in untainteddata.values() if d["guild"]["prefix"] == oldGuild)
-
-                embed = discord.Embed(
-                    description=f"### ⚪ **Territory Change**\n\n**{territory}**\nAttacker: **{newGuild}** ({attackerOldCount} -> {attackerNewCount})\nDefender: **{oldGuild}** ({defenderOldCount} -> {defenderNewCount})\n\nThe territory lasted {human_time_duration(elapsed_time)}.",
-                    color=0xffffff
-                )
-                embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-
-                shouldPing = False
-                if pingRoleID and intervalForPing:
-                    if key not in timesinceping:
-                        timesinceping[key] = 0
-                    current_time = time.time()
-                    if current_time - int(timesinceping[key]) >= intervalForPing*60:
-                        timesinceping[key] = current_time
-                        shouldPing = True
-                messagesToSend.append({
-                    "embed": embed,
-                    "shouldPing": shouldPing,
-                    "roleID": pingRoleID if shouldPing  else None
-                })
-        return messagesToSend
-    terrcount[key] = expectedterrcount[key] # this is what will fix (40 -> 38)
-    for t, data in lostTerritories.items():
-        old_ts = datetime.fromisoformat(untainteddataOLD[t]['acquired'].replace('Z', '+00:00'))
-        new_ts = datetime.fromisoformat(data['acquired'].replace('Z', '+00:00'))
-        elapsed_time = int(new_ts.timestamp() - old_ts.timestamp())
-
-        current -= 1
-
-        opponent_before = sum(1 for d in untainteddataOLD.values() if d['guild']['prefix'] == data['guild']['prefix'])
-        opponent_after = sum(1 for d in untainteddata.values() if d['guild']['prefix'] == data['guild']['prefix'])
-
-        messagesToSend.append(sendEmbed(
-                data['guild']['prefix'],
-                guildPrefix,
-                t,
-                human_time_duration(elapsed_time),
-                str(opponent_before),
-                str(opponent_after),
-                str(current + 1),
-                str(current),
-                guildPrefix,
-                pingRoleID,
-                intervalForPing,
-                timesinceping,
-                guildID,
-            )
-        )
-
-    # GAINED territories
-    for t, data in gainedTerritories.items():
-        old_ts = datetime.fromisoformat(untainteddataOLD[t]['acquired'].replace('Z', '+00:00'))
-        new_ts = datetime.fromisoformat(data['acquired'].replace('Z', '+00:00'))
-        elapsed_time = int(new_ts.timestamp() - old_ts.timestamp())
-
-        current += 1
-        prev_owner = untainteddataOLD[t]['guild']['prefix']
-
-        opponent_before = sum(1 for d in untainteddataOLD.values() if d['guild']['prefix'] == prev_owner)
-        opponent_after = sum(1 for d in untainteddata.values() if d['guild']['prefix'] == prev_owner)
-
-        messagesToSend.append(
-            sendEmbed(
-                guildPrefix,
-                prev_owner,
-                t,
-                human_time_duration(elapsed_time),
-                str(current - 1),
-                str(current),
-                str(opponent_before),
-                str(opponent_after),
-                guildPrefix,
-                pingRoleID,
-                intervalForPing,
-                timesinceping,
-                guildID,
-            )
-        )
-
-    # update the shared counter for next tick
-    if guildPrefix.lower() != 'global':
-        expectedterrcount[key] = current
-
-
-    return messagesToSend
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+    return view, file, isAttacker
 
 def printTop3(list, word, word2):
     output = ""
@@ -606,14 +399,24 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, timefra
             description= None
         
     file = discord.File(buf, filename=f'{commandType}.webp')
-    embed = discord.Embed(
-        title=title + f" - {timeframe}" if timeframe else title,
-        description=description,
-        color=discord.Color.blue()
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(f"## {title + f' - {timeframe}' if timeframe else title}\n{description}"),
+        discord.ui.MediaGallery(
+            discord.components.MediaGalleryItem(
+                media=f"attachment://{commandType}.webp",
+                spoiler=False
+                )
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+        ),
+        accent_color=discord.Color.blue()
     )
-    embed.set_image(url=f"attachment://{commandType}.webp")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+    return file, view
 
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
@@ -771,18 +574,30 @@ def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Winners: {winners}")
     return chances, winners
 
-def mapCreator():
-    success, r = internalMakeRequest(f"{API_URL}/api/map/current")
+def mapCreator(mapType):
+    success, r = internalMakeRequest(f"{API_URL}/api/map/current?type={mapType}")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
+    
     file = discord.File(mapBytes, filename="wynn_map.webp")
-    embed = discord.Embed(
-        title=f"Current Territory Map",
-        color=discord.Color.green()
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(f"Current Territory Map - {mapType}"),
+        discord.ui.MediaGallery(
+            discord.components.MediaGalleryItem(
+                media=f"attachment://wynn_map.webp",
+                spoiler=False
+                )
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+        ),
+        accent_color=discord.Color.green()
     )
-    embed.set_image(url="attachment://wynn_map.webp")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+    return file, view
 
 def ingredientMapCreator(ingredient, price, tier):
     url = (f"{API_URL}/api/map/ingmap"+ ("?" + "&".join(f"{k}={v}" for k, v in (("ingredient", ingredient), ("price", price), ("tier", tier),) if v)if any((ingredient, price, tier)) else ""))
@@ -790,31 +605,56 @@ def ingredientMapCreator(ingredient, price, tier):
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="ingredient_map.webp")
-    embed = discord.Embed(
-        title=f"Ingredient Map",
-        description = (
+
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(f"Ingredient Map"),
+        discord.ui.TextDisplay(
             f"Ingredient: {ingredient if ingredient else 'None'}\n"
             f"Price: {(str(price) + 'EB') if price else 'None'}\n"
             f"Tier: {tier if tier else 'None'}\n"
         ),
-        color=discord.Color.green()
+        discord.ui.MediaGallery(
+            discord.components.MediaGalleryItem(
+                media=f"attachment://ingredient_map.webp",
+                spoiler=False
+                )
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+        ),
+        accent_color=discord.Color.green()
     )
-    embed.set_image(url="attachment://ingredient_map.webp")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+
+    return file, view
 
 def heatmapCreator(timeframe):
     success, r = internalMakeRequest(f"{API_URL}/api/map/heatmap?timeframe={timeframe}")
     mapBytes = BytesIO(r.content)
     mapBytes.seek(0)
     file = discord.File(mapBytes, filename="wynn_heatmap.webp")
-    embed = discord.Embed(
-        title=f"Heatmap for {timeframe}",
-        color=discord.Color.green()
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(f"Heatmap for {timeframe}"),
+        discord.ui.MediaGallery(
+            discord.components.MediaGalleryItem(
+                media=f"attachment://wynn_heatmap.webp",
+                spoiler=False
+                )
+        ),
+        discord.ui.Separator(),
+        discord.ui.TextDisplay(
+            f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+        ),
+        accent_color=discord.Color.green()
     )
-    embed.set_image(url="attachment://wynn_heatmap.webp")
-    embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-    return file, embed
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+
+    return file, view
 
 def getHelp(arg):
     if not arg: # No arg, we can send out some basic shit
@@ -1349,3 +1189,295 @@ def SRleaderboardBuilder(season = None, uuid = None, name = None):
             color=discord.Color.orange()
         )
         return embed
+    
+def timeframeMap(): # used for heatmap data
+    success, r = internalMakeRequest(f"https://{API_URL}/api/season")
+    if not success:
+        return {}
+    
+    timeframeMap = {}
+    seasons = r.json()
+    for num, info in sorted(seasons.items(), key=lambda x: int(x[0])):
+        if int(num) < 24: # We start at 24 because thats what heatmap data goes back to.
+            continue
+        
+        start = datetime.fromisoformat(info["startDate"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(info["endDate"].replace("Z", "+00:00"))
+        
+        label = f"Season {num}"
+        timeframeMap[label] = (
+            start.strftime("%m/%d/%y"),
+            end.strftime("%m/%d/%y")
+        )
+    
+    timeframeMap["Last 7 Days"] = None
+    timeframeMap["Everything"] = None
+    return timeframeMap
+
+def checkWorldEventDiff(oldData, newData):
+    oldMap = {e['name']: e for e in oldData}
+    newMap = {e['name']: e for e in newData}
+    newWorldEvents = []
+
+    for name, newEvent in newMap.items():
+        oldEvent = oldMap.get(name)
+        if not oldEvent:
+            continue
+        if oldEvent.get('schedule') is None and newEvent.get('schedule') is not None: # went from null to timestamp
+            newWorldEvents.append(newEvent['name'])
+
+    return newWorldEvents
+
+def sendWorldEventMessage(dbEventName, worldEventJSON):
+    for eventJSON in worldEventJSON:
+        if dbEventName == eventJSON["name"]: # this was the one our code said was starting
+            dt = datetime.fromisoformat(eventJSON["schedule"])
+            epochTimestamp = int(dt.timestamp())
+            eventName = eventJSON["name"]
+            eventLore = eventJSON["lore"]
+            reqQuest = []
+            reqCombat = None
+            for requirment in eventJSON["requirements"]:
+                if requirment["type"] == "COMBAT_LEVEL":
+                    reqCombat = requirment["value"]
+                if requirment["type"] == "QUEST" or requirment["type"] == "GLOBAL_QUEST":
+                    reqQuest.append(requirment["value"])
+            #logger.info(f"For event {dbEventName} the reqQuest is {reqQuest}")
+        
+            files = [
+                discord.File(f"lib/documents/world events/{dbEventName}.jpg", filename=f"{dbEventName}.jpg"),
+                discord.File("lib/documents/CBWorldEventIcon.png", filename="CBWorldEventIcon.png")
+            ]
+            container = discord.ui.Container(
+                discord.ui.Section(
+                    discord.ui.TextDisplay(f"# {eventName}\n\n"),
+                    discord.ui.TextDisplay(
+                        f"*{eventLore}*\n\n"
+                        + (f"**Combat Requirement**: Combat Level {reqCombat}\n" if reqCombat else "")
+                        + (f"**Quest Requirement**: {', '.join(reqQuest)}\n" if reqQuest else "")
+                        + f"\nThis world event starts at <t:{epochTimestamp}:s> (<t:{epochTimestamp}:R>)"
+                    ),
+                    accessory=discord.ui.Thumbnail(media="attachment://CBWorldEventIcon.png")
+                ),
+                discord.ui.MediaGallery(
+                    discord.components.MediaGalleryItem(
+                        media=f"attachment://{dbEventName}.jpg",
+                        spoiler=False
+                        )
+                ),
+                discord.ui.Separator(),
+                discord.ui.TextDisplay(
+                    f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+                ),
+                accent_color=discord.Color.blue()
+            )
+
+            view = discord.ui.LayoutView()
+            view.add_item(container)
+            return files, view
+        
+def getLootrunComponent(camp=None):
+    success, r = makeRequest("https://api.wynncraft.com/v3/map/loot-pools")
+    if not success:
+        return None
+    
+    jsonData = r.json()
+    
+    now = datetime.now(pytz.timezone("America/New_York"))
+    weekday = now.weekday()
+    daysSinceFriday = (weekday - 4) % 7
+    mostRecent = now - timedelta(days=daysSinceFriday)
+
+    if weekday == 4 and now.hour < 14: # before 2pm est
+        nextFriday = mostRecent
+        lastFriday = nextFriday - timedelta(days=7)
+    else:
+        lastFriday = mostRecent
+        nextFriday = lastFriday + timedelta(days=7)
+
+    if camp:
+        mythic = []
+        tome = []
+        fabled = []
+        legendary = []
+        rare = []
+        unique = []
+
+        for jsonCamp in jsonData:
+            if jsonCamp.get("name") == camp:
+                for itemData in jsonCamp["rewards"]:
+                    amount = itemData.get("amount", 1)
+                    itemName = itemData["name"]
+                    
+                    if itemData.get("tier") == "MYTHIC":
+                        if itemData.get("shiny"):
+                            mythic.extend([f"Shiny {itemName} (Unknown Tracker)"] * amount)
+                        else:
+                            mythic.extend([itemName] * amount)
+                    elif itemData.get("type") == "WARD":
+                        mythic.extend([itemName] * amount)
+                    elif itemData.get("type") == "TOME":
+                        tome.extend([itemName] * amount)
+                    elif itemData.get("tier") == "FABLED":
+                        fabled.extend([itemName] * amount)
+                    elif itemData.get("tier") == "LEGENDARY":
+                        legendary.extend([itemName] * amount)
+                    elif itemData.get("tier") == "RARE":
+                        rare.extend([itemName] * amount)
+                    elif itemData.get("tier") == "UNIQUE":
+                        unique.extend([itemName] * amount)
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## Current lootpool for week {lastFriday.strftime('%m/%d')}-{nextFriday.strftime('%m/%d')} for {camp}.\n\n"),
+            discord.ui.TextDisplay(
+                f"**Mythics**: {', '.join(mythic)}\n\n"
+                f"**Tomes**: {', '.join(tome)}\n\n"
+                f"**Fabled**: {', '.join(fabled)}\n\n"
+                f"**Legendary**: {', '.join(legendary)}\n\n"
+                f"**Rare**: {', '.join(rare)}\n\n"
+                f"**Unique**: {', '.join(unique)}\n\n"
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+            ),
+            accent_color=discord.Color.green()
+        )
+    else:
+        mythic = {}
+        
+        for jsonCamp in jsonData:
+            if jsonCamp.get("type") == "CAMP":
+                campName = jsonCamp.get("name")
+                mythic[campName] = []
+
+                for itemData in jsonCamp["rewards"]:
+                    amount = itemData.get("amount", 1)
+                    itemName = itemData["name"]
+                    
+                    if itemData.get("tier") == "MYTHIC":
+                        if itemData.get("shiny"):
+                            mythic[campName].extend([f"Shiny {itemName} (Unknown Tracker)"] * amount)
+                        else:
+                            mythic[campName].extend([itemName] * amount)
+                    elif itemData.get("type") == "WARD":
+                        mythic[campName].extend([itemName] * amount)
+
+        lootpool = "\n\n".join(
+            f"**{campName}** Lootpool:\n{', '.join(mythic[campName])}"
+            for campName in mythic
+        )
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## Current lootpool for week {lastFriday.strftime('%m/%d')}-{nextFriday.strftime('%m/%d')}\n\n"),
+            discord.ui.TextDisplay(lootpool),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+            ),
+            accent_color=discord.Color.green()
+        )
+
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+    return view
+
+def getRaidComponent(camp=None):
+    success, r = makeRequest("https://api.wynncraft.com/v3/map/loot-pools")
+    if not success:
+        return None
+    
+    jsonData = r.json()
+    
+    now = datetime.now(pytz.timezone("America/New_York"))
+    weekday = now.weekday()
+    daysSinceFriday = (weekday - 4) % 7
+    mostRecent = now - timedelta(days=daysSinceFriday)
+
+    if weekday == 4 and now.hour < 13: # before 1pm est
+        nextFriday = mostRecent
+        lastFriday = nextFriday - timedelta(days=7)
+    else:
+        lastFriday = mostRecent
+        nextFriday = lastFriday + timedelta(days=7)
+
+    if camp:
+        aspect = {}
+        wardAndTome = []
+        fabled = []
+        #miscItem = []
+
+        for jsonCamp in jsonData:
+            if jsonCamp.get("name") == camp:
+                for itemData in jsonCamp["rewards"]:
+                    amount = itemData.get("amount", 1)
+                    itemName = itemData["name"]
+                    
+                    if itemData.get("type") == "ASPECT":
+                        if itemData["tier"] not in aspect:
+                            aspect[itemData["tier"]] = []
+                        aspect[itemData["tier"]].extend([itemName] * amount)
+                    elif itemData.get("type") == "WARD" or itemData.get("type") == "TOME":
+                        wardAndTome.extend([itemName] * amount)
+                    elif itemData.get("tier") == "FABLED":
+                        fabled.extend([itemName] * amount)
+                    #elif itemData.get("type") == "ITEM": # rest of items like bags, trinket, powders, etc etc
+                        #miscItem.extend([itemName] * amount)
+
+        aspectList = "\n".join(
+            f"**{tier}**: {', '.join(aspect[tier])}"
+            for tier in aspect
+        )
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## Current lootpool for week {lastFriday.strftime('%m/%d')}-{nextFriday.strftime('%m/%d')} for {camp}.\n\n"),
+            discord.ui.TextDisplay(
+                f"**Aspects**:\n{aspectList}\n\n"
+                f"**Wards/Tome**: {', '.join(wardAndTome)}\n\n"
+                f"**Fabled**: {', '.join(fabled)}\n\n"
+                #f"**Misc**: {', '.join(miscItem)}\n\n"
+            ),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+            ),
+            accent_color=discord.Color.green()
+        )
+    else:
+        aspect = {}
+        
+        for jsonCamp in jsonData:
+            if jsonCamp.get("type") == "RAID":
+                campName = jsonCamp.get("name")
+                aspect[campName] = {}
+
+                for itemData in jsonCamp["rewards"]:
+                    amount = itemData.get("amount", 1)
+                    itemName = itemData["name"]
+                    
+                    if itemData.get("type") == "ASPECT":
+                        if itemData["tier"] not in aspect[campName]:
+                            aspect[campName][itemData["tier"]] = []
+                        aspect[campName][itemData["tier"]].extend([itemName] * amount)
+        # We build component here
+
+        lootpool = "\n\n".join(
+            f"**{campName}** Lootpool:\n" + "\n".join(
+                f"**{tier}**: {', '.join(aspect[campName][tier])}"
+                for tier in aspect[campName]
+            )
+            for campName in aspect
+        )
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(f"## Current lootpool for week {lastFriday.strftime('%m/%d')}-{nextFriday.strftime('%m/%d')}\n\n"),
+            discord.ui.TextDisplay(lootpool),
+            discord.ui.Separator(),
+            discord.ui.TextDisplay(
+                f"-# https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}"
+            ),
+            accent_color=discord.Color.green()
+        )
+    view = discord.ui.LayoutView()
+    view.add_item(container)
+    return view
