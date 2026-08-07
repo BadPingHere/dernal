@@ -25,9 +25,9 @@ class Territory(commands.GroupCog, name="ingredient"):
 
         await interaction.response.defer()
 
-        file, embed = await asyncio.to_thread(ingredientMapCreator, ingredient, price, tier)
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        file, view = await asyncio.to_thread(ingredientMapCreator, ingredient, price, tier)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send("An error occured while getting the ingredient map.")
             

@@ -15,7 +15,7 @@ DATABASE_DIR = PROJECT_ROOT / "database"
 CSVFILE = DATABASE_DIR / "guildlist.csv" # all of this just to get autowrite to database folder
 JSONFILE = DATABASE_DIR / "allguilds.json" # all of this just to get autowrite to database folder
 
-SLEEP = 1
+SLEEP = 2
 
 def main(collect=False, write=False):
     #? Collect mode: Writes allGuilds to json, to easily parse through data.
@@ -74,7 +74,7 @@ def search(): # helper function to figure out who to collect from
     count_3 = {"suitable": 0, "totalPlayers": 0}
     count_4 = {"suitable": 0, "totalPlayers": 0}
     for uuid, guildData in allGuilds.items():
-        if guildData["level"] >= 30 and int(guildData["totalMembers"]) >= 1: # Current
+        if guildData["level"] >= 1 and int(guildData["totalMembers"]) >= 7: # Current
             count_1["suitable"] += 1
             count_1["totalPlayers"] += int(guildData["totalMembers"])
         
@@ -86,7 +86,7 @@ def search(): # helper function to figure out who to collect from
             count_3["suitable"] += 1
             count_3["totalPlayers"] += int(guildData["totalMembers"])
 
-        if guildData["level"] >= 1 and int(guildData["totalMembers"]) >= 3: # Lower Current
+        if guildData["level"] >= 1 and int(guildData["totalMembers"]) >= 1: # All guilds
             count_4["suitable"] += 1
             count_4["totalPlayers"] += int(guildData["totalMembers"])
             
@@ -98,5 +98,5 @@ def search(): # helper function to figure out who to collect from
             Suitable guilds - 4: {count_4["suitable"]} | Average Players: {round(count_4["totalPlayers"] / count_4["suitable"], 2)} | Total Players: {count_4["totalPlayers"]}
     """)
     
-#main(collect=False, write=True)
-search()
+main(collect=True, write=True)
+#search()

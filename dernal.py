@@ -8,6 +8,9 @@ import platform
 import requests
 import json
 from discord.ext.prometheus import PrometheusLoggingHandler
+from dotenv import load_dotenv
+
+load_dotenv()
 
 #TODO 1: Update /help. help me god i hate that system already
 
@@ -90,7 +93,7 @@ async def on_ready():
         await bot.tree.sync(guild=guild)
         logger.info(f"Command Tree is synced to your server with id {os.getenv('SERVER_ID')}!")
     logger.info('------')
-    update_info = checkUpdates()
+    update_info = await asyncio.to_thread(checkUpdates)
     if update_info.get('update_available', False):
         logger.info(f"Update available! Current version: {update_info['current_version']}, "
               f"Latest version: {update_info['latest_version']}")
@@ -115,8 +118,7 @@ async def load_cogs():
                 await bot.load_extension(f'cogs.{filename[:-3]}')
                 logger.info(f'Loaded Cog: {filename[:-3]}')
             except Exception as e:
-                logger.error(f'Failed to load Cog {filename[:-3]}')
-                logger.error(f'Error: {str(e)}')
+                logger.exception(f'Failed to load Cog {filename[:-3]}')
 
 async def main(): # idk why i couldnt explain it? maybe it was my past code but like this is not unexplainable
     async with bot:

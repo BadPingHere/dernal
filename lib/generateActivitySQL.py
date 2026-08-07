@@ -48,7 +48,7 @@ def connectDB():
     conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
     conn.execute("PRAGMA wal_autocheckpoint=2000")
     conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA synchronous=FULL")
     conn.execute("PRAGMA mmap_size=536870912;")  # 512MB  mmap
     conn.execute("PRAGMA cache_size=-40000")  # 40MB cache
     conn.execute("PRAGMA temp_store=MEMORY")
@@ -456,7 +456,7 @@ def main():
                     storeGuildData(conn, guild_data, run_id)
                     storePlayerData(conn, guild_data, "guild")
                     conn.commit()
-                    time.sleep(0.05) # Sleep every guild so we can stretch this out to 20m ish
+                    time.sleep(0.02) # Sleep every guild so we can stretch this out to 20m ish
                 guild_index += 1
                 accumulator += ratio
 

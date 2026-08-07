@@ -32,6 +32,7 @@ class Detector(commands.GroupCog, name="detector"):
         # World Event data
         self.weOldData = None
         self.weBeingTracked = {}
+        self.weConfigDirty = True
         self.anniePings = set()
 
         self.serverID = int(os.getenv("SERVER_ID") or 0)
@@ -41,8 +42,7 @@ class Detector(commands.GroupCog, name="detector"):
         self.initDetectorDB()
         self.loadTrackedGuilds()
         try:
-            conn = sqlite3.connect(self.ACTIVITYDBPATH)
-            conn.row_factory = sqlite3.Row
+            conn = connectDB()
             cur = conn.cursor()
             cur.execute("SELECT acquired FROM territory_changes ORDER BY acquired DESC LIMIT 1")
             row = cur.fetchone()
@@ -59,7 +59,7 @@ class Detector(commands.GroupCog, name="detector"):
         conn = sqlite3.connect(self.detectorDBPath, isolation_level=None)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA synchronous=FULL")
         return conn
 
     def initDetectorDB(self):
@@ -88,6 +88,25 @@ class Detector(commands.GroupCog, name="detector"):
                 'lastPing': lastPing if lastPing else ""
             })
 
+    def shouldPing(self, data, currentEpochTime):
+        # backgroundDetector no longer reloads tracked guilds every tick, so the interval
+        # is gated on data['lastPing'], which recordPing keeps in sync with the DB.
+        if not data.get("pingRoleID") or not data.get("intervalForPing"):
+            return False
+        lastPing = data.get("lastPing")
+        if not lastPing:
+            return True
+        return (currentEpochTime - int(lastPing)) > (int(data["intervalForPing"]) * 60)
+
+    def recordPing(self, serverID, data, currentEpochTime):
+        data["lastPing"] = currentEpochTime
+        conn = self.connectDetectorDB()
+        conn.execute(
+            "UPDATE wars SET lastPing = ? WHERE serverID = ? AND guildPrefix = ?",
+            (currentEpochTime, int(serverID), data["guildPrefix"])
+        )
+        conn.close()
+
     def loadTrackedWorldEvents(self):
         conn = self.connectDetectorDB()
         cur = conn.cursor()
@@ -103,20 +122,17 @@ class Detector(commands.GroupCog, name="detector"):
                 'channelForMessages': channelForMessages,
                 'event': event,
                 'pingRoleID': str(pingRoleID) if pingRoleID else "",
-                'anniePingTimer': anniePingTimer if anniePingTimer else ""
+                'anniePingTimer': anniePingTimer if anniePingTimer else None
             })
 
     @tasks.loop(seconds=5)
-    async def backgroundDetector(self): #TODO: Try idea of setting war thumbnail to a image of territory, try getting a like 1 territory radius so 3x3 could show.
+    async def backgroundDetector(self):
         latestRow = None
         try:
             if not self.guildsBeingTracked:
                 return
 
-            self.loadTrackedGuilds()
-
-            conn = sqlite3.connect(self.ACTIVITYDBPATH)
-            conn.row_factory = sqlite3.Row
+            conn = connectDB()
             cur = conn.cursor()
             cur.execute("SELECT acquired FROM territory_changes ORDER BY acquired DESC LIMIT 1")
             latestRow = cur.fetchone()
@@ -216,21 +232,13 @@ class Detector(commands.GroupCog, name="detector"):
                                     await channel.send(view=view, file=file)
 
                                     if not isAttacker: # i honestly didnt think about it needing to be defender, it should be isDefender
-                                        if data["pingRoleID"] and data["intervalForPing"]:
-                                            lastPing = data["lastPing"]
-                                            intervalForPing = data["intervalForPing"]
-
-                                            currentEpochTime = int(time.time())
-                                            if not lastPing or (currentEpochTime - int(lastPing)) > (int(intervalForPing) * 60):
-                                                await channel.send(f"<@&{data['pingRoleID']}>")
-                                                update_conn = self.connectDetectorDB()
-                                                update_conn.execute(
-                                                    "UPDATE wars SET lastPing = ? WHERE serverID = ? AND guildPrefix = ?",
-                                                    (currentEpochTime, serverID, data["guildPrefix"])
-                                                )
-                                                update_conn.close()
+                                        currentEpochTime = int(time.time())
+                                        if self.shouldPing(data, currentEpochTime):
+                                            await channel.send(f"<@&{data['pingRoleID']}>")
+                                            self.recordPing(serverID, data, currentEpochTime)
                                 except Exception:
-                                    logger.exception(f"Failed to send war notification to server {serverID}, channel {data['channelForMessages']}.")
+                                    #logger.exception(f"Failed to send war notification to server {serverID}, channel {data['channelForMessages']}.")
+                                    wcode=1 # we could log but like genuinely ts spams my shit because im too lazy to remove inactive channels
 
             else:
                 conn.close()
@@ -241,6 +249,7 @@ class Detector(commands.GroupCog, name="detector"):
             if latestRow:
                 self.lastAcquiredTime = latestRow["acquired"]
         
+        weNewData = None
         try: # World Event tracking; THIS LOOKS LIKE NESTED DOGSHIT.
             success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/map/world-events")
             if not success:
@@ -252,37 +261,41 @@ class Detector(commands.GroupCog, name="detector"):
             if self.weOldData:
                 #newWorldEvents = await asyncio.to_thread(checkWorldEventDiff, weNewData, self.weOldData) we will do this once we get reliable data
                 newWorldEvents = await asyncio.to_thread(checkWorldEventDiff, self.weOldData, weNewData)
-                self.loadTrackedWorldEvents()
+                if self.weConfigDirty:
+                    self.loadTrackedWorldEvents()
+                    self.weConfigDirty = False
 
                 if newWorldEvents:
                     #logger.info(f"Events found: {newWorldEvents}")
+                    # Match tracked entries against the live API names tolerantly (trailing spaces/casing drift on the API).
+                    apiByNorm = {str(name).strip().casefold(): name for name in newWorldEvents}
                     for serverID, entries in self.weBeingTracked.items(): # Loop through every entry, see if its one of the new world events
                         for entry in entries:
                             dbEvent = entry["event"]
                             channelForMessages = entry["channelForMessages"]
+                            normEvent = str(dbEvent).strip().casefold()
 
-                            if str(dbEvent) in newWorldEvents or str(dbEvent) == "Global":
-                                #logger.info(f"DETECTION: World Event {entry['event']} is starting!")
-                                if str(dbEvent) == "Global":
-                                    for newEvent in newWorldEvents:
-                                        files, view = await asyncio.to_thread(sendWorldEventMessage, newEvent, weNewData)
+                            if normEvent == "global":
+                                matchedEvents = list(newWorldEvents)
+                            elif normEvent in apiByNorm:
+                                matchedEvents = [apiByNorm[normEvent]]
+                            else:
+                                #logger.info(f"World events {newWorldEvents} started but tracked entry '{dbEvent}' (server {serverID}) did not match.")
+                                continue
 
-                                        guild = await self.bot.fetch_guild(serverID)
-                                        channel = await guild.fetch_channel(channelForMessages)
-                                        
-                                        await channel.send(view=view, files=files)
-                                        if entry["pingRoleID"]:
-                                            await channel.send(f"<@&{entry['pingRoleID']}>")
-                                else:
-                                    files, view = await asyncio.to_thread(sendWorldEventMessage, dbEvent, weNewData)
+                            for apiName in matchedEvents: # apiName is the real, current API name so the file/schedule lookup lines up
+                                try:
+                                    files, view = await asyncio.to_thread(sendWorldEventMessage, apiName, weNewData)
 
                                     guild = await self.bot.fetch_guild(serverID)
                                     channel = await guild.fetch_channel(channelForMessages)
-                                    
+
                                     await channel.send(view=view, files=files)
                                     if entry["pingRoleID"]:
                                         await channel.send(f"<@&{entry['pingRoleID']}>")
-                
+                                except Exception:
+                                    logger.exception(f"Failed to send world event '{apiName}' to server {serverID}, channel {channelForMessages}.")
+
                 # Now we need to check for annie ping timers
                 for eventJSON in weNewData:
                     if eventJSON["name"] == "Prelude to Annihilation" and eventJSON["schedule"] is not None:
@@ -299,8 +312,12 @@ class Detector(commands.GroupCog, name="detector"):
                                 anniePingTimer = entry["anniePingTimer"]
                                 channelForMessages = entry["channelForMessages"]
 
-                                if str(dbEvent) == "Prelude to Annihilation" and anniePingTimer is not None: # Checking for all annie's with a ping timer
-                                    if 0 < diffMinutes <= int(anniePingTimer):
+                                if str(dbEvent) == "Prelude to Annihilation" and anniePingTimer: # Checking for all annie's with a ping timer
+                                    try:
+                                        timerMinutes = int(anniePingTimer)
+                                    except (TypeError, ValueError):
+                                        continue
+                                    if 0 < diffMinutes <= timerMinutes:
                                         pingKey = (serverID, "Prelude to Annihilation", annieTime.isoformat(), anniePingTimer)
 
                                         if pingKey in self.anniePings:
@@ -308,20 +325,24 @@ class Detector(commands.GroupCog, name="detector"):
 
                                         self.anniePings.add(pingKey)
                                         #logger.info(f"DETECTION: World Event {entry['event']} is starting!")
-                                        files, view = await asyncio.to_thread(sendWorldEventMessage, dbEvent, weNewData)
+                                        try:
+                                            files, view = await asyncio.to_thread(sendWorldEventMessage, dbEvent, weNewData)
 
-                                        guild = await self.bot.fetch_guild(serverID)
-                                        channel = await guild.fetch_channel(channelForMessages)
-                                        
-                                        await channel.send(view=view, files=files)
-                                        if entry["pingRoleID"]:
-                                            await channel.send(f"<@&{entry['pingRoleID']}>")
+                                            guild = await self.bot.fetch_guild(serverID)
+                                            channel = await guild.fetch_channel(channelForMessages)
+
+                                            await channel.send(view=view, files=files)
+                                            if entry["pingRoleID"]:
+                                                await channel.send(f"<@&{entry['pingRoleID']}>")
+                                        except Exception:
+                                            pass
 
         except Exception:
             logger.exception(f"Unhandled exception in World Event Detector.")
         
         finally: # even if it errors, we still update old data.
-            self.weOldData = weNewData
+            if weNewData is not None:
+                self.weOldData = weNewData
 
         try: # Lootpool Tracking
             # On startup, set a variable to next friday 1pm and 2pm est for lootpool changes
@@ -365,23 +386,29 @@ class Detector(commands.GroupCog, name="detector"):
 
         if success:
             serverID = str(interaction.guild.id)
+            if serverID not in self.guildsBeingTracked:
+                self.guildsBeingTracked[serverID] = []
+            existing = [cfg for cfg in self.guildsBeingTracked[serverID] if cfg['guildPrefix'] == guild_prefix]
             new_config = {
                 'channelForMessages': channel.id,
                 'guildPrefix': guild_prefix,
                 'pingRoleID': str(role.id) if role else "",
-                'intervalForPing': interval if interval else ""
+                'intervalForPing': interval if interval else "",
+                'lastPing': existing[0].get('lastPing', "") if existing else "" # carry the cooldown over so re-running this doesn't reset it
             }
-            if serverID not in self.guildsBeingTracked:
-                self.guildsBeingTracked[serverID] = []
-            existing = [cfg for cfg in self.guildsBeingTracked[serverID] if cfg['guildPrefix'] == guild_prefix]
             if existing: # We check if prefix is already there, if it is we replace
                 self.guildsBeingTracked[serverID] = [cfg for cfg in self.guildsBeingTracked[serverID] if cfg['guildPrefix'] != guild_prefix]
             self.guildsBeingTracked[serverID].append(new_config) # append
             logger.info(self.guildsBeingTracked)
             conn = self.connectDetectorDB()
             cur = conn.cursor()
-            cur.execute(
-                "INSERT OR REPLACE INTO wars (serverID, channelForMessages, guildPrefix, pingRoleID, intervalForPing) VALUES (?, ?, ?, ?, ?)",
+            cur.execute( # upsert rather than INSERT OR REPLACE, which would null out lastPing
+                """INSERT INTO wars (serverID, channelForMessages, guildPrefix, pingRoleID, intervalForPing)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(serverID, guildPrefix) DO UPDATE SET
+                       channelForMessages = excluded.channelForMessages,
+                       pingRoleID = excluded.pingRoleID,
+                       intervalForPing = excluded.intervalForPing""",
                 (int(serverID), channel.id, guild_prefix, str(role.id) if role else None, interval if interval else None)
             )
             conn.close()
@@ -417,6 +444,7 @@ class Detector(commands.GroupCog, name="detector"):
         )
         conn.commit()
         conn.close()
+        self.weConfigDirty = True
 
         message = f'<#{channel.id}> now set for world event "{event}".'
         if role:
@@ -519,6 +547,7 @@ class Detector(commands.GroupCog, name="detector"):
 
         cur.execute("DELETE FROM world_events WHERE serverID = ? AND event = ?", (serverID, event))
         conn.close()
+        self.weConfigDirty = True
         await interaction.response.send_message(f'World event "{event}" is no longer being detected.')
 
     # @detectorRemoveCommands.command(name="lootpools", description="Remove a lootpool from being detected.")

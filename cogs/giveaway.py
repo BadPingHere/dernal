@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import time
-from lib.utils import rollGiveaway
+from lib.utils import rollGiveaway, connectActivityDB
 from lib.makeRequest import makeRequest
 import sqlite3
 import logging
@@ -50,7 +50,7 @@ class GuildSelect(discord.ui.Select):
                 view=self.view
             )
         except Exception as e:
-            logger.error(f"Error in GuildSelect callback: {str(e)}")
+            logger.exception("Error in GuildSelect callback")
             try:
                 # Attempt to send an error message if we haven't responded yet
                 await interaction.response.send_message("An error occurred while processing your selection. Please try again.", ephemeral=True)
@@ -204,7 +204,7 @@ class giveaway(commands.Cog):
         logger.info(f"Command /giveaway configure was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter prefix is: {prefix}.")
         
         # Check if guild exists in database
-        conn = sqlite3.connect('database/activity.db')
+        conn = connectActivityDB()
         cursor = conn.cursor()
 
         cursor.execute("SELECT guild_uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (prefix,))

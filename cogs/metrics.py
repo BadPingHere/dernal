@@ -99,6 +99,8 @@ class Metrics(commands.Cog):
             start = end - 59
 
             conn = sqlite3.connect("database/metrics.db")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT route, SUM(count) 
@@ -124,6 +126,9 @@ class Metrics(commands.Cog):
     async def update_unique_users(self):
         try:
             conn = sqlite3.connect("database/metrics.db")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute("PRAGMA synchronous=NORMAL")
             cursor = conn.cursor()
             # Ensure tables exist
             cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
@@ -173,6 +178,9 @@ class Metrics(commands.Cog):
 
             # Record in DB
             conn = sqlite3.connect("database/metrics.db")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")
+            conn.execute("PRAGMA synchronous=NORMAL")
             cursor = conn.cursor()
             cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
             cursor.execute("INSERT INTO user_activity (user_id, timestamp) VALUES (?, ?)", (user_id, int(time.time())))

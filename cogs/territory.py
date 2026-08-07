@@ -28,9 +28,9 @@ class Territory(commands.GroupCog, name="territory"):
 
         await interaction.response.defer()
 
-        file, embed = await asyncio.to_thread(mapCreator, map_type.value)
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        file, view = await asyncio.to_thread(mapCreator, map_type.value)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send("An error occured while getting the territory map.")
 
@@ -41,9 +41,9 @@ class Territory(commands.GroupCog, name="territory"):
 
         await interaction.response.defer()
 
-        file, embed = await asyncio.to_thread(heatmapCreator, timeframe)
-        if file and embed:
-            await interaction.followup.send(file=file, embed=embed)
+        file, view = await asyncio.to_thread(heatmapCreator, timeframe)
+        if file and view:
+            await interaction.followup.send(file=file, view=view)
         else:
             await interaction.followup.send("An error occured while getting the territory heatmap.")
 

@@ -75,8 +75,6 @@ TERRITORIESDBPATH = Path(__file__).resolve().parents[1] / "database" / "territor
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#TODO: Consider having internal API be a wrapper first-choice for wynncraft api, should save requests maybe.
-
 def mapCreator(type, focusTerritory = None):
     FOCUS_CROP_RADIUS = 200  # half-width/height of the crop box for type="test"
     map_img = Image.open("lib/documents/main-map.png").convert("RGBA")
@@ -280,6 +278,9 @@ def heatmapCreator(timeframe):
     activityCount = defaultdict(int)
 
     conn = sqlite3.connect(TERRITORIESDBPATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA query_only=ON")
     cur = conn.cursor()
 
     if timeframe == "Everything":
@@ -363,6 +364,9 @@ async def searchMaster(field, value):
 def connectDB():
     conn = sqlite3.connect(ACTIVITYDBPATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 def getTimeframe(timeframe, type="leaderboard"):
@@ -458,7 +462,7 @@ def loadCache():
         return True
 
     except Exception as e:
-        logger.error("Cache corrupted:", e)
+        logger.exception("Cache corrupted")
         return False
 
 def findIngCoords(ingToMobs, mobCoords, ingRarity):
@@ -516,7 +520,7 @@ def findIngCoords(ingToMobs, mobCoords, ingRarity):
                 mobCoords.setdefault(mobName, [])
                 mobCoords[mobName].extend(processed)
     except Exception as e: # we hit end of pages
-        logger.info(f"findIngCoords ran, hit end of pages. or errored. Potential error: {e}")
+        logger.exception("findIngCoords ran, hit end of pages or errored")
 
 def ingredientMap(ingToMobs, mobCoords, ingSearch, price, priceCache, updatePriceCache, tier):
     #font = ImageFont.truetype("lib/documents/arial.ttf", 30)
@@ -826,9 +830,6 @@ async def search_username(username: str):
     conn.close()
     return data
 
-#TODO: Make sure leaderboard and activity does NOT rely on the 'users' table, and instead relies on 'user_history' as its never purged
-#TODO: Test every leaderboard command to make sure it works with new timeframes
-#TODO: Fix embeds having line wrap
 @leaderboardRouter.get("/{leaderboardType}")
 @cache_route(ttl=600) #10m cache
 async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: str | None = None):
@@ -1150,7 +1151,7 @@ async def leaderboard(leaderboardType: str, timeframe: str | None = None, uuid: 
                 LIMIT 100;
                 """
                 dbCursor.execute(query)
-            else: #TODO: Make sure that playtime CANNOT take 0 because i think it is currently
+            else:
                 query = """
                 WITH playtime_diff AS (
                     SELECT player_uuid, (MAX(playtime) - MIN(playtime)) AS playtime_gained
@@ -2224,14 +2225,15 @@ async def heat_map(timeframe: str):
 async def ingredient_map(ingredient: str | None = None, price: int | None = None, tier: int | None = None):
     updateIngCache = False
     updatePriceCache = False
-    ingRandomSeed = random.randint(0, 100) # ings rarely change so no need to update
+    ingRandomSeed = random.randint(0, 20) # ings rarely change so no need to update
     priceRandomSeed = random.randint(0, 20) #prices change sometimes so update a bit more
-    if ingRandomSeed == 6:
+    if ingRandomSeed == ingRandomSeed:
         updateIngCache = True
     if priceRandomSeed == 6:
         updatePriceCache = True
      
     cacheLoaded = loadCache()
+    #TODO: if its only 1 ing, just search the ing to get most-updated shit.
     if updateIngCache or not cacheLoaded:
         findIngCoords(ingToMobs, mobCoords, ingRarity)
         saveCache()

@@ -33,10 +33,54 @@ ratelimitDict = {
 }
 
 rateLock = Lock()
+cache = {}
+cacheLock = Lock()
+
+class CachedResponse:
+    def __init__(self, data):
+        self._data = data
+        self.status_code = 200
+        self.headers = {}
+        self.text = ""
+
+    def json(self):
+        return self._data
+
+    @property
+    def ok(self):
+        return self.status_code < 400
+def cacheGet(url):
+    with cacheLock:
+        entry = cache.get(url)
+        if entry and time.time() < entry["expires_at"]:
+            return entry["data"]
+    return None
+
+def cacheStore(url, response):
+    try:
+        cacheControl = response.headers.get("Cache-Control", "")
+        maxAge = None
+        for part in cacheControl.split(","):
+            part = part.strip()
+            if part.startswith("max-age="):
+                maxAge = int(part.split("=")[1])
+        if maxAge is None:
+            return
+        remaining = maxAge - int(response.headers.get("Age", 0)) # if its new, age wont be a response
+        if remaining <= 0:
+            return
+        data = response.json()
+        with cacheLock:
+            cache[url] = {"data": data, "expires_at": time.time() + remaining}
+    except Exception:
+        logger.exception(f"Failed to cache wynnAPI response for {url}")
 
 def trackUsage(route):
     try:
         conn = sqlite3.connect(DBPATH)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS api_usage (
@@ -55,7 +99,7 @@ def trackUsage(route):
         conn.commit()
         conn.close()
     except Exception as e:
-        logger.warning(f"Failed to track API usage for {route}: {e}")
+        logger.exception(f"Failed to track API usage for {route}")
 
 def getRoute(url):
     if "/player" in url:
@@ -90,7 +134,7 @@ def updateHeaders(key, route, headers): #save what we have
                 "reset": reset
             }
     except Exception as e:
-        logger.error(f"Could not update ratelimit headers for {route}: {e}")
+        logger.exception(f"Could not update ratelimit headers for {route}")
 
 def pickKey(route): # return the first key with ratelimit remaining for that route left
     refreshRatelimit(route)
@@ -124,6 +168,10 @@ def ratelimitCheck(route): # Do our self-ratelimiting
         time.sleep(0.1)
 
 def makeRequest(url): # For wynnAPI use only
+    cached = cacheGet(url)
+    if cached is not None:
+        return True, CachedResponse(cached)
+
     session = requests.Session()
     session.trust_env = False
     retries = 0
@@ -183,6 +231,7 @@ def makeRequest(url): # For wynnAPI use only
                 r.raise_for_status() # bad requests send to hell
 
             ratelimitCheck(route)
+            cacheStore(url, r)
             return True, r
         except requests.exceptions.RequestException as err: # hell
             status = getattr(err.response, 'status_code', None)
@@ -205,12 +254,12 @@ def makeRequest(url): # For wynnAPI use only
                     
                     #logger.warning(f"Key {keyName} rate limited on {route}. Reset in {retry_after}s")
                 else:
-                    logger.warning(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
+                    logger.exception(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
                 retries += 1
                 time.sleep(1)
                 continue
             else:
-                logger.error(f"Request error {status}: {err}")
+                logger.exception(f"Request error {status}")
                 return False, {}
 
     logger.error(f"Failed after {maxRetries} retries for {url}")
@@ -234,12 +283,12 @@ def internalMakeRequest(url): # Used for non-wynncraft api usage
             status = getattr(err.response, 'status_code', None)
             retryable = [408, 425, 500, 502, 503, 504, 429]
             if status in retryable:
-                logger.warning(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
+                logger.exception(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
                 retries += 1
                 time.sleep(1)
                 continue
             else:
-                logger.error(f"Request error {status}: {err}")
+                logger.exception(f"Request error {status}")
                 return False, r
 
     logger.error(f"Failed after {maxRetries} retries for {url}")

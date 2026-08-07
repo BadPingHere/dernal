@@ -20,6 +20,16 @@ import pytz
   
 logger = logging.getLogger('discord')
 
+DBPATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "activity.db")
+
+def connectActivityDB(readonly=True):
+    conn = sqlite3.connect(DBPATH)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    if readonly:
+        conn.execute("PRAGMA query_only=ON")
+    return conn
+
 cooldownHolder = {}
 last_xp = {}  # {(guild_prefix, username): contributed}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -225,7 +235,8 @@ def getTerritoryNames(untainteddata, guildPrefix):
     logger.info(f"Ran HQ lookup successfully for {guildPrefix if guildPrefix else 'global map'}.")
     return listy
 
-def inactivityCheck(r):
+def inactivityCheck(r, inputRank=None):
+    logger.info(f"inputRank: {inputRank}")
     inactivityDict = {
         "Four Week Inactive Users": [],
         "Three Week Inactive Users": [],
@@ -240,6 +251,8 @@ def inactivityCheck(r):
     for rank in jsonData["members"]: # this iterates through every rank like chief, owner, etc
         if isinstance(jsonData["members"][rank], dict): # checks if it has a rank i think so it knows people from non arrrays??
             for member, value in jsonData["members"][rank].items():
+                if inputRank is not None and rank.lower() != inputRank.lower(): # Checks if its set, then checks if rank is correct; if not to both, skips
+                    continue
                 lastJoinDate = value.get("lastJoin")
                 username = member
                 if not jsonData or lastJoinDate is None:
@@ -421,7 +434,7 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, timefra
 def rollGiveaway(weeklyNames, rollcount):
     logger.info(f"Starting rollGiveaway with {len(weeklyNames)} players and {rollcount} rolls")
     
-    conn = sqlite3.connect('database/activity.db')
+    conn = connectActivityDB()
     cursor = conn.cursor()
     weeklyNames = list(weeklyNames)
 
@@ -1021,7 +1034,7 @@ def getHelp(arg):
             return message, False
 
 def playerGuildHistory(playerUUID, username):
-    conn = sqlite3.connect('database/activity.db')
+    conn = connectActivityDB()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
@@ -1244,8 +1257,9 @@ def sendWorldEventMessage(dbEventName, worldEventJSON):
                     reqQuest.append(requirment["value"])
             #logger.info(f"For event {dbEventName} the reqQuest is {reqQuest}")
         
+            imageName = dbEventName.strip()
             files = [
-                discord.File(f"lib/documents/world events/{dbEventName}.jpg", filename=f"{dbEventName}.jpg"),
+                discord.File(f"lib/documents/world events/{imageName}.jpg", filename=f"{imageName}.jpg"),
                 discord.File("lib/documents/CBWorldEventIcon.png", filename="CBWorldEventIcon.png")
             ]
             container = discord.ui.Container(

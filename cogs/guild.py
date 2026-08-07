@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
-from typing import Optional
+from typing import Literal, Optional
 import time
 from lib.utils import activityBuilder, leaderboardBuilder, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap
 from lib.makeRequest import makeRequest
@@ -13,9 +13,11 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger('discord')
 class InactivityView(View):
-    def __init__(self, inactivityDict):
+    def __init__(self, inactivityDict, guildPrefix, rank):
         super().__init__(timeout=None)
         self.inactivityDict = inactivityDict
+        self.guildPrefix = guildPrefix
+        self.rank = rank
         self.category_keys = list(inactivityDict.keys())
         self.current_category_index = 0
         self.update_buttons()
@@ -35,7 +37,7 @@ class InactivityView(View):
         # Create and send the updated embed based on the current category
         current_category = self.category_keys[self.current_category_index]
         embed = discord.Embed(
-            title=f"{current_category}",
+            title=f'{current_category} - {self.guildPrefix} {self.rank if self.rank else ""}',
             description=self.get_description(current_category),
             color=discord.Color.blue()
         )
@@ -452,8 +454,9 @@ class Guild(commands.GroupCog, name="guild"):
             await interaction.response.send_message(f"'{name}' is an unknown prefix or guild name.", ephemeral=True)
 
     @app_commands.command(description="Shows and sorts the player inactivity of a selected guild")
-    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',) 
-    async def inactivity(self, interaction: discord.Interaction, name: str):
+    @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish. (Case Sensitive)',)
+    @app_commands.describe(rank='Specific guild rank you wish to ONLY check inactivity for.',) 
+    async def inactivity(self, interaction: discord.Interaction, name: str, rank: Optional[Literal['Owner', 'Chief', 'Strategist', 'Captain', 'Recruiter', 'Recruit']] = None):
         logger.info(f"Command /guild inactivity was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
 
         await interaction.response.defer()
@@ -475,17 +478,18 @@ class Guild(commands.GroupCog, name="guild"):
         guildPrefix = guildData.get("prefix")
 
         try:
-            inactivityDict = await asyncio.to_thread(inactivityCheck, r)
+            logger.info(f"Rank: {rank}")
+            inactivityDict = await asyncio.to_thread(inactivityCheck, r, rank)
             
-            view = InactivityView(inactivityDict)
+            view = InactivityView(inactivityDict, guildPrefix, rank)
             embed = discord.Embed(
-                title=f"{view.category_keys[view.current_category_index]} - {guildPrefix}",
+                title=f'{view.category_keys[view.current_category_index]} - {guildPrefix} {rank if rank else ""}',
                 description=view.get_description(view.category_keys[view.current_category_index]),
                 color=discord.Color.blue()
             )
             embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-            logger.info(view)
-            logger.info(embed)
+            #logger.info(view)
+            #logger.info(embed)
             await interaction.followup.send(embed=embed, view=view)
             
         except Exception as e:
