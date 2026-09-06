@@ -5,7 +5,6 @@ import os
 import time
 from lib.utils import rollGiveaway, connectActivityDB
 from lib.makeRequest import makeRequest
-import sqlite3
 import logging
 import math
 import shelve
@@ -207,7 +206,7 @@ class giveaway(commands.Cog):
         conn = connectActivityDB()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT guild_uuid FROM guilds WHERE prefix = ? COLLATE NOCASE", (prefix,))
+        cursor.execute("SELECT guild_uuid::text FROM core.guilds WHERE lower(prefix) = lower(%s)", (prefix,))
         result = cursor.fetchone()
 
         if not result:

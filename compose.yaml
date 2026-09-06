@@ -1,0 +1,39 @@
+#`docker compose up -d` probably works.
+
+name: dernal
+services:
+  timescale:
+    image: timescale/timescaledb:2.29.2-pg16
+    container_name: ${TIMESCALE_CONTAINER:-dernal-timescale}
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${PG_DB:-dernal}
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?PG_PASSWORD is not set, see .env.example}
+
+    ports:
+      # Allows for local and lan access, if configured so in .env
+      - "${PG_BIND:-0.0.0.0}:${PG_PORT:-5433}:5432"
+
+    volumes:
+      - dernal_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres.conf:/etc/postgresql/postgresql.conf:ro
+
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-postgres} -d ${PG_DB:-dernal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # Shouldnt need more than 1gb of ram, but configurable
+    shm_size: 1gb
+
+volumes:
+  dernal_pgdata:

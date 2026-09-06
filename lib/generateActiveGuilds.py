@@ -78,7 +78,7 @@ def search(): # helper function to figure out who to collect from
             count_1["suitable"] += 1
             count_1["totalPlayers"] += int(guildData["totalMembers"])
         
-        if guildData["level"] >= 25 and int(guildData["totalMembers"]) >= 7: # Low Level, High Player Req
+        if guildData["level"] >= 25 and int(guildData["totalMembers"]) >= 1: # Low Level, High Player Req
             count_2["suitable"] += 1
             count_2["totalPlayers"] += int(guildData["totalMembers"])
         
@@ -98,5 +98,5 @@ def search(): # helper function to figure out who to collect from
             Suitable guilds - 4: {count_4["suitable"]} | Average Players: {round(count_4["totalPlayers"] / count_4["suitable"], 2)} | Total Players: {count_4["totalPlayers"]}
     """)
     
-main(collect=True, write=True)
-#search()
+#main(collect=True, write=True)
+search()

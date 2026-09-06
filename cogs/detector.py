@@ -6,14 +6,14 @@ import logging
 import os
 from dotenv import load_dotenv
 from lib.utils import warComponentBuilder, checkWorldEventDiff, sendWorldEventMessage, human_time_duration
-from lib.api import connectDB
+from lib.config import DSN
 from lib.makeRequest import makeRequest
 import asyncio
-from datetime import datetime, timezone, timedelta
-import sqlite3
+from datetime import datetime, timezone
+import psycopg
+from psycopg.rows import dict_row
 import time
 import math
-from pathlib import Path
 
 logger = logging.getLogger('discord')
 load_dotenv()
@@ -27,8 +27,6 @@ class Detector(commands.GroupCog, name="detector"):
         # War detector data
         self.guildsBeingTracked = {}
         self.lastAcquiredTime = None
-        self.ACTIVITYDBPATH = Path(__file__).resolve().parents[1] / "database" / "activity.db"
-
         # World Event data
         self.weOldData = None
         self.weBeingTracked = {}
@@ -36,15 +34,11 @@ class Detector(commands.GroupCog, name="detector"):
         self.anniePings = set()
 
         self.serverID = int(os.getenv("SERVER_ID") or 0)
-        rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.detectorDBPath = os.path.join(rootDir, 'database', 'detector.db')
-        self.territoryDBPath = os.path.join(rootDir, "database", "territories.db")
-        self.initDetectorDB()
         self.loadTrackedGuilds()
         try:
-            conn = connectDB()
+            conn = self.connectDetectorDB()
             cur = conn.cursor()
-            cur.execute("SELECT acquired FROM territory_changes ORDER BY acquired DESC LIMIT 1")
+            cur.execute("SELECT acquired FROM ts.territory_ownership ORDER BY acquired DESC LIMIT 1")
             row = cur.fetchone()
             conn.close()
             if row:
@@ -55,37 +49,26 @@ class Detector(commands.GroupCog, name="detector"):
         self.backgroundDetector.start()
 
     def connectDetectorDB(self):
-        os.makedirs(os.path.dirname(self.detectorDBPath), exist_ok=True)
-        conn = sqlite3.connect(self.detectorDBPath, isolation_level=None)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA synchronous=FULL")
-        return conn
-
-    def initDetectorDB(self):
-        conn = self.connectDetectorDB()
-        schema_path = os.path.join(os.path.dirname(self.detectorDBPath), "detector_schema.sql")
-        with open(schema_path, "r") as f:
-            conn.executescript(f.read())
-        conn.close()
+        return psycopg.connect(DSN, autocommit=True, row_factory=dict_row)
 
     def loadTrackedGuilds(self):
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute("SELECT serverID, channelForMessages, guildPrefix, pingRoleID, intervalForPing, lastPing FROM wars")
+        cur.execute("SELECT server_id, channel_id, guild_prefix, ping_role_id, ping_interval, last_ping FROM bot.war_subscriptions")
         rows = cur.fetchall()
         conn.close()
         self.guildsBeingTracked = {}
-        for serverID, channelForMessages, guildPrefix, pingRoleID, intervalForPing, lastPing in rows:
+        for row in rows:
+            serverID = row["server_id"]
             key = str(serverID)
             if key not in self.guildsBeingTracked:
                 self.guildsBeingTracked[key] = []
             self.guildsBeingTracked[key].append({
-                'channelForMessages': channelForMessages,
-                'guildPrefix': guildPrefix,
-                'pingRoleID': str(pingRoleID) if pingRoleID else "",
-                'intervalForPing': intervalForPing if intervalForPing else "",
-                'lastPing': lastPing if lastPing else ""
+                'channelForMessages': row["channel_id"],
+                'guildPrefix': row["guild_prefix"],
+                'pingRoleID': str(row["ping_role_id"]) if row["ping_role_id"] else "",
+                'intervalForPing': row["ping_interval"] if row["ping_interval"] else "",
+                'lastPing': int(row["last_ping"].timestamp()) if row["last_ping"] else ""
             })
 
     def shouldPing(self, data, currentEpochTime):
@@ -102,7 +85,7 @@ class Detector(commands.GroupCog, name="detector"):
         data["lastPing"] = currentEpochTime
         conn = self.connectDetectorDB()
         conn.execute(
-            "UPDATE wars SET lastPing = ? WHERE serverID = ? AND guildPrefix = ?",
+            "UPDATE bot.war_subscriptions SET last_ping = to_timestamp(%s) WHERE server_id = %s AND guild_prefix = %s",
             (currentEpochTime, int(serverID), data["guildPrefix"])
         )
         conn.close()
@@ -110,19 +93,20 @@ class Detector(commands.GroupCog, name="detector"):
     def loadTrackedWorldEvents(self):
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute("SELECT serverID, channelForMessages, event, pingRoleID, anniePingTimer FROM world_events")
+        cur.execute("SELECT server_id, channel_id, event, ping_role_id, annie_ping_timer FROM bot.world_event_subscriptions")
         rows = cur.fetchall()
         conn.close()
         self.weBeingTracked = {}
-        for serverID, channelForMessages, event, pingRoleID, anniePingTimer in rows:
+        for row in rows:
+            serverID = row["server_id"]
             key = str(serverID)
             if key not in self.weBeingTracked:
                 self.weBeingTracked[key] = []
             self.weBeingTracked[key].append({
-                'channelForMessages': channelForMessages,
-                'event': event,
-                'pingRoleID': str(pingRoleID) if pingRoleID else "",
-                'anniePingTimer': anniePingTimer if anniePingTimer else None
+                'channelForMessages': row["channel_id"],
+                'event': row["event"],
+                'pingRoleID': str(row["ping_role_id"]) if row["ping_role_id"] else "",
+                'anniePingTimer': row["annie_ping_timer"] if row["annie_ping_timer"] else None
             })
 
     @tasks.loop(seconds=5)
@@ -132,21 +116,25 @@ class Detector(commands.GroupCog, name="detector"):
             if not self.guildsBeingTracked:
                 return
 
-            conn = connectDB()
+            conn = self.connectDetectorDB()
             cur = conn.cursor()
-            cur.execute("SELECT acquired FROM territory_changes ORDER BY acquired DESC LIMIT 1")
+            cur.execute("SELECT acquired FROM ts.territory_ownership ORDER BY acquired DESC LIMIT 1")
             latestRow = cur.fetchone()
 
             if latestRow and latestRow["acquired"] != self.lastAcquiredTime:
                 newWars = {}
                 cur.execute(
-                    "SELECT * FROM territory_changes WHERE acquired > ? ORDER BY acquired ASC",
+                    """SELECT t.acquired, t.territory, t.guild_uuid::text AS guild_uuid,
+                              g.name AS guild_name, g.prefix AS guild_prefix
+                       FROM ts.territory_ownership t
+                       LEFT JOIN core.guilds g ON g.guild_uuid = t.guild_uuid
+                       WHERE t.acquired > %s ORDER BY t.acquired ASC""",
                     (self.lastAcquiredTime,)
                 )
                 rows = cur.fetchall()
 
                 for row in rows:
-                    acquiredDatetime = datetime.fromisoformat(row["acquired"].replace("Z", "+00:00"))
+                    acquiredDatetime = row["acquired"]
                     newWars[row["territory"]] = {
                         "Attacker": f"{row['guild_name']} ({row['guild_prefix']})",
                         "AttackerPrefix": row["guild_prefix"],
@@ -166,8 +154,13 @@ class Detector(commands.GroupCog, name="detector"):
                 for territoryName, warData in newWars.items():
                     cur.execute("""
                         SELECT *
-                        FROM territory_changes
-                        WHERE territory = ?
+                        FROM (
+                            SELECT t.acquired, t.territory, t.guild_uuid::text AS guild_uuid,
+                                   g.name AS guild_name, g.prefix AS guild_prefix
+                            FROM ts.territory_ownership t
+                            LEFT JOIN core.guilds g ON g.guild_uuid = t.guild_uuid
+                        ) territory_changes
+                        WHERE territory = %s
                         ORDER BY acquired DESC
                         LIMIT 1 OFFSET 1;
                     """, (territoryName,))
@@ -176,7 +169,7 @@ class Detector(commands.GroupCog, name="detector"):
                     newWars[territoryName]["DefenderUUID"] = row["guild_uuid"]
                     newWars[territoryName]["DefenderPrefix"] = row["guild_prefix"]
 
-                    lastAcquired = datetime.fromisoformat(row["acquired"].replace("Z", "+00:00"))
+                    lastAcquired = row["acquired"]
                     timeLastedSeconds = (newWars[territoryName]["TimeLasted"] - lastAcquired).total_seconds()
                     newWars[territoryName]["TimeLasted"] = await asyncio.to_thread(human_time_duration, timeLastedSeconds)
 
@@ -184,13 +177,12 @@ class Detector(commands.GroupCog, name="detector"):
                         SELECT
                             guild_uuid,
                             COUNT(*) AS matching_territories
-                        FROM territory_changes
-                        WHERE (territory, acquired) IN (
-                            SELECT territory, MAX(acquired)
-                            FROM territory_changes
-                            GROUP BY territory
-                        )
-                        AND guild_uuid IN (?, ?)
+                        FROM (
+                            SELECT DISTINCT ON (territory) territory, guild_uuid::text AS guild_uuid
+                            FROM ts.territory_ownership
+                            ORDER BY territory, acquired DESC
+                        ) current_owner
+                        WHERE guild_uuid IN (%s, %s)
                         GROUP BY guild_uuid;
                     """, (newWars[territoryName]["AttackerUUID"], newWars[territoryName]["DefenderUUID"],))
                     rows = cur.fetchall()
@@ -202,14 +194,13 @@ class Detector(commands.GroupCog, name="detector"):
                         SELECT
                             guild_uuid,
                             COUNT(*) AS matching_territories
-                        FROM territory_changes
-                        WHERE (territory, acquired) IN (
-                            SELECT territory, MAX(acquired)
-                            FROM territory_changes
-                            WHERE acquired <= ?
-                            GROUP BY territory
-                        )
-                        AND guild_uuid IN (?, ?)
+                        FROM (
+                            SELECT DISTINCT ON (territory) territory, guild_uuid::text AS guild_uuid
+                            FROM ts.territory_ownership
+                            WHERE acquired <= %s
+                            ORDER BY territory, acquired DESC
+                        ) prior_owner
+                        WHERE guild_uuid IN (%s, %s)
                         GROUP BY guild_uuid;
                     """, (self.lastAcquiredTime, newWars[territoryName]["AttackerUUID"], newWars[territoryName]["DefenderUUID"],))
                     rows = cur.fetchall()
@@ -403,13 +394,14 @@ class Detector(commands.GroupCog, name="detector"):
             conn = self.connectDetectorDB()
             cur = conn.cursor()
             cur.execute( # upsert rather than INSERT OR REPLACE, which would null out lastPing
-                """INSERT INTO wars (serverID, channelForMessages, guildPrefix, pingRoleID, intervalForPing)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(serverID, guildPrefix) DO UPDATE SET
-                       channelForMessages = excluded.channelForMessages,
-                       pingRoleID = excluded.pingRoleID,
-                       intervalForPing = excluded.intervalForPing""",
-                (int(serverID), channel.id, guild_prefix, str(role.id) if role else None, interval if interval else None)
+                """INSERT INTO bot.war_subscriptions
+                       (server_id, channel_id, guild_prefix, ping_role_id, ping_interval)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT(server_id, guild_prefix) DO UPDATE SET
+                       channel_id = excluded.channel_id,
+                       ping_role_id = excluded.ping_role_id,
+                       ping_interval = excluded.ping_interval""",
+                (int(serverID), channel.id, guild_prefix, role.id if role else None, interval if interval else None)
             )
             conn.close()
             logger.info(f"War detector now running in background for guild prefix {guild_prefix} for guild id {interaction.guild.id}")
@@ -438,11 +430,15 @@ class Detector(commands.GroupCog, name="detector"):
         serverID = int(interaction.guild.id)
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO world_events (serverID, channelForMessages, event, pingRoleID, anniePingTimer) VALUES (?, ?, ?, ?, ?)",
-            (serverID, channel.id, event, str(role.id) if role else None, annie_ping_timer if annie_ping_timer else None)
-        )
-        conn.commit()
+        cur.execute("""
+            INSERT INTO bot.world_event_subscriptions
+                (server_id, channel_id, event, ping_role_id, annie_ping_timer)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT(server_id, event) DO UPDATE SET
+                channel_id = excluded.channel_id,
+                ping_role_id = excluded.ping_role_id,
+                annie_ping_timer = excluded.annie_ping_timer
+        """, (serverID, channel.id, event, role.id if role else None, annie_ping_timer if annie_ping_timer else None))
         conn.close()
         self.weConfigDirty = True
 
@@ -518,7 +514,7 @@ class Detector(commands.GroupCog, name="detector"):
 
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute("DELETE FROM wars WHERE serverID = ? AND guildPrefix = ?", (int(serverID), prefix))
+        cur.execute("DELETE FROM bot.war_subscriptions WHERE server_id = %s AND guild_prefix = %s", (int(serverID), prefix))
         conn.close()
         await interaction.response.send_message(f"{prefix} is no longer being detected.")
 
@@ -538,14 +534,14 @@ class Detector(commands.GroupCog, name="detector"):
 
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM world_events WHERE serverID = ? AND event = ?", (serverID, event))
+        cur.execute("SELECT 1 FROM bot.world_event_subscriptions WHERE server_id = %s AND event = %s", (serverID, event))
         exists = cur.fetchone()
         if not exists:
             conn.close()
             await interaction.response.send_message(f'World event "{event}" not found for this server.', ephemeral=True)
             return
 
-        cur.execute("DELETE FROM world_events WHERE serverID = ? AND event = ?", (serverID, event))
+        cur.execute("DELETE FROM bot.world_event_subscriptions WHERE server_id = %s AND event = %s", (serverID, event))
         conn.close()
         self.weConfigDirty = True
         await interaction.response.send_message(f'World event "{event}" is no longer being detected.')
@@ -633,14 +629,15 @@ class Detector(commands.GroupCog, name="detector"):
         serverID = int(interaction.guild.id)
         conn = self.connectDetectorDB()
         cur = conn.cursor()
-        cur.execute("SELECT event, channelForMessages, pingRoleID FROM world_events WHERE serverID = ?", (serverID,))
+        cur.execute("SELECT event, channel_id, ping_role_id FROM bot.world_event_subscriptions WHERE server_id = %s", (serverID,))
         rows = cur.fetchall()
         conn.close()
 
         def truncate(text: str, max_length: int = 15) -> str:
             return text if len(text) <= max_length else text[:12] + "..."
 
-        for event, channelID, roleID in rows:
+        for row in rows:
+            event, channelID, roleID = row["event"], row["channel_id"], row["ping_role_id"]
             if current.lower() in event.lower():
                 roleName = "No Role"
                 if roleID:

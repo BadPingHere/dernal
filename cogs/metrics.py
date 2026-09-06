@@ -4,11 +4,13 @@ from discord import Interaction
 from prometheus_client import start_http_server, Gauge, Counter, Histogram
 import psutil
 import sqlite3
+import psycopg
 import time
 import logging
 import asyncio
 import os
 from collections import deque
+from lib.config import DSN
 logger = logging.getLogger('discord')
 
 
@@ -94,24 +96,21 @@ class Metrics(commands.Cog):
 
     async def update_api_metrics(self):
         try:
-            now = int(time.time())
-            end = now - (now % 60) - 1
-            start = end - 59
+            end = int(time.time() // 60 * 60)
+            start = end - 60
 
-            conn = sqlite3.connect("database/metrics.db")
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=30000")
+            conn = psycopg.connect(DSN)
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT route, SUM(count) 
-                FROM api_usage 
-                WHERE timestamp BETWEEN ? AND ? 
+                SELECT route, SUM(count)
+                FROM ts.api_usage
+                WHERE ts >= to_timestamp(%s) AND ts < to_timestamp(%s)
                 GROUP BY route
             """, (start, end))
 
             results = dict(cursor.fetchall())
 
-            cursor.execute("SELECT DISTINCT route FROM api_usage")
+            cursor.execute("SELECT DISTINCT route FROM ts.api_usage")
             all_routes = [r[0] for r in cursor.fetchall()]
             conn.close()
             

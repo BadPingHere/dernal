@@ -3,15 +3,13 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 from typing import Literal, Optional
-import time
-from lib.utils import activityBuilder, leaderboardBuilder, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap
+from lib.utils import runLeaderboard, activityBuilder, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap, runActivity
 from lib.makeRequest import makeRequest
-import sqlite3
 import logging
 import asyncio
 from datetime import datetime, timezone
-
 logger = logging.getLogger('discord')
+
 class InactivityView(View):
     def __init__(self, inactivityDict, guildPrefix, rank):
         super().__init__(timeout=None)
@@ -134,7 +132,6 @@ class LeaderboardPaginator(View):
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
 
-
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)  
 class Guild(commands.GroupCog, name="guild"):
@@ -155,127 +152,43 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)   
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityXP(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityXP", uuid=guildUUID[0], name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityXP", args)
     
     @activityCommands.command(name="territories", description="Shows a graph displaying the amount of territories a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityTerritories(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity territories was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        await interaction.response.defer()
-            
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityTerritories", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityTerritories", args)
 
     @activityCommands.command(name="wars", description="Shows a graph displaying the total amount of wars a guild has done.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityWars(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-        
-        await interaction.response.defer()
-            
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityWars", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityWars", args)
 
     @activityCommands.command(name="members", description="Shows a graph displaying the amount of members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',) 
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityTotal_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityTotalMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityTotalMembers", args)
     
     @activityCommands.command(name="online_members", description="Shows a graph displaying the average amount of online members a guild has.")
     @app_commands.describe(name='Prefix or Name of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityOnline_members(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityOnlineMembers", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityOnlineMembers", args)
 
     @activityCommands.command(name="guild_raids", description="Shows a graph displaying the amount of guild raids completed.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityGRaids(self, interaction: discord.Interaction, name: str, timeframe: str,  theme: Optional[str]):
-        logger.info(f"Command /guild activity guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {name}.")
-
-        await interaction.response.defer()
-
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityGraids", uuid=guildUUID, name=name, theme=theme or "light", timeframe=timeframe)
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send(f"No data available for the {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "theme": theme}
+        await runActivity(interaction, "guildActivityGraids", args)
 
     @activityCommands.command(name="graids_pie", description="Shows a pie chart displaying the different graid's a guild has done.")
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
@@ -303,106 +216,44 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardOnline_members(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
-        logger.info(f"Command /guild leaderboard online_members was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-
-        await interaction.response.defer()
-        
-        if not name: # Normal guild shit
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineMembers", timeframe=timeframe)
-            view = LeaderboardPaginator(data, f"Top 100 Guilds by Online Member Average - {timeframe}", "Online Average")
-        else:
-            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-            if not success:
-                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-                return
-            guildUUID = jsonData["guild_uuid"]
-
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardOnlineButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
-            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Playtime Average- {timeframe}", "Hours")
-
-        if data:
-            await interaction.followup.send(embed=view.get_embed(), view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        commandName = "guildLeaderboardOnlineButGuildSpecific" if name else "guildLeaderboardOnlineMembers"
+        title = ("Top {count} Players in {name} by Playtime - {timeframe}" if name
+                 else "Top {count} Guilds by Online Member Average - {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "paginator": LeaderboardPaginator,
+                "title": title, "unit": "Hours" if name else "Online Average"}
+        await runLeaderboard(interaction, commandName, args)
     
     @leaderboardCommands.command(name="guild_raids", description="Shows a leaderboard of the level 80+ guild's guild raids.")
     @app_commands.describe(name='Prefix of the guild Ex: TAq, SEQ.',)
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardGraids(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
-        logger.info(f"Command /guild leaderboard guild_raids was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-        
-        if name:
-            await interaction.response.defer()
-            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-            if not success:
-                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-                return
-            guildUUID = jsonData["guild_uuid"]
-
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraidsButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
-            num = len(data)
-            view = LeaderboardPaginator(data, f"Top {num} Players in {name} by Guild Raids - {timeframe}", "Guild Raids")
-        else:
-            await interaction.response.defer()
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardGraids", timeframe=timeframe)
-            num = len(data)
-            view = LeaderboardPaginator(data, f"Top {num} Guilds by Guild Raids - {timeframe}", "Guild Raids")
-
-        if data:
-            await interaction.followup.send(embed=view.get_embed(), view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        commandName = "guildLeaderboardGraidsButGuildSpecific" if name else "guildLeaderboardGraids"
+        title = ("Top {count} Players in {name} by Guild Raids - {timeframe}" if name
+                 else "Top {count} Guilds by Guild Raids - {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "paginator": LeaderboardPaginator,
+                "title": title, "unit": "Guild Raids" if name else "Guild Raids"}
+        await runLeaderboard(interaction, commandName, args)
 
     @leaderboardCommands.command(name="wars", description="Shows a leaderboard of the top 100 guild's war amount.")
     @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish.',)
     @app_commands.describe(timeframe='The timeframe you want to see. ',)
     async def leaderboardWars(self, interaction: discord.Interaction, timeframe: str,  name: Optional[str]):
-        logger.info(f"Command /guild leaderboard wars was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-
-        await interaction.response.defer()
-
-        if not name: # Normal guild shit
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWars", timeframe=timeframe)
-            view = LeaderboardPaginator(data, f"Top 100 Guilds by Wars Won - {timeframe}", "Wars Won")
-        else:
-            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-            if not success:
-                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-                return
-            guildUUID = jsonData["guild_uuid"]
-
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardWarsButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
-            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by Wars Won - {timeframe}", "Wars Won")
-
-        if data:
-            await interaction.followup.send(embed=view.get_embed(), view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        commandName = "guildLeaderboardWarsButGuildSpecific" if name else "guildLeaderboardWars"
+        title = ("Top {count} Players in {name} by Wars Won - {timeframe}" if name
+                 else "Top {count} Guilds by Wars Won - {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "paginator": LeaderboardPaginator,
+                "title": title, "unit": "Wars Won" if name else "Wars Won"}
+        await runLeaderboard(interaction, commandName, args)
 
     @leaderboardCommands.command(name="xp", description="Shows a leaderboard of the top 100 guild's xp gained over the past 24 hours.")
     @app_commands.describe(name='Prefix or Name of the guild Ex: TAq, Calvish. Shows data for the past 7 days.',)
     async def leaderboardXP(self, interaction: discord.Interaction, timeframe: str, name: Optional[str]):
-        logger.info(f"Command /guild leaderboard xp was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). The name is {name}. The timeframe is {timeframe}.")
-
-        await interaction.response.defer()
-
-        if not name: # Normal guild shit
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXP", timeframe=timeframe)
-            view = LeaderboardPaginator(data, f"Top 100 Guilds by XP Gain - {timeframe}", "XP")
-        else:
-            success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-            if not success:
-                await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-                return
-            guildUUID = jsonData["guild_uuid"]
-
-            data = await asyncio.to_thread(leaderboardBuilder, "guildLeaderboardXPButGuildSpecific", timeframe=timeframe, uuid=guildUUID)
-            view = LeaderboardPaginator(data, f"Top 100 Players in {name} by XP Gain - {timeframe}", "XP")
-
-        if data:
-            await interaction.followup.send(embed=view.get_embed(), view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        commandName = "guildLeaderboardXPButGuildSpecific" if name else "guildLeaderboardXP"
+        title = ("Top {count} Players in {name} by XP Gain - {timeframe}" if name
+                 else "Top {count} Guilds by XP Gain - {timeframe}")
+        args = {"name": name, "timeframe": timeframe, "paginator": LeaderboardPaginator,
+                "title": title, "unit": "XP" if name else "XP"}
+        await runLeaderboard(interaction, commandName, args)
 
     @leaderboardCommands.command(name="season_rating", description="Shows a leaderboard of the top 100 season ratings for a given season")
     @app_commands.describe(season='Season number you want the leaderboard for Ex. 8, 30.',)
@@ -488,8 +339,6 @@ class Guild(commands.GroupCog, name="guild"):
                 color=discord.Color.blue()
             )
             embed.set_footer(text=f"https://github.com/badpinghere/dernal • {datetime.now(timezone.utc).strftime('%m/%d/%Y, %I:%M %p')}")
-            #logger.info(view)
-            #logger.info(embed)
             await interaction.followup.send(embed=embed, view=view)
             
         except Exception as e:

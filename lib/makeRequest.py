@@ -2,11 +2,11 @@ import requests, os, time, logging
 from dotenv import load_dotenv
 from threading import Lock
 from pathlib import Path
-import sqlite3
+import psycopg
 import uuid
 
 path = Path(__file__).resolve().parents[1] / '.env'
-DBPATH = Path(__file__).resolve().parents[1] / "database" / "metrics.db"
+from lib.config import DSN
 load_dotenv(path)
 logger = logging.getLogger("discord")
 
@@ -75,29 +75,13 @@ def cacheStore(url, response):
     except Exception:
         logger.exception(f"Failed to cache wynnAPI response for {url}")
 
-def trackUsage(route):
+def trackUsage(route, keyName):
     try:
-        conn = sqlite3.connect(DBPATH)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=30000")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS api_usage (
-                timestamp INTEGER,
-                route TEXT,
-                count INTEGER,
-                PRIMARY KEY (timestamp, route)
-            )
-        """)
-        timestamp = int(time.time() // 60 * 60)  # round to nearest mintue
-        cur.execute("""
-            INSERT INTO api_usage (timestamp, route, count)
-            VALUES (?, ?, 1)
-            ON CONFLICT(timestamp, route) DO UPDATE SET count = count + 1
-        """, (timestamp, route)) # either updates or puts in the right count
-        conn.commit()
-        conn.close()
+        with psycopg.connect(DSN) as conn:
+            conn.execute("""
+                INSERT INTO ts.api_usage (ts, route, key_name, count)
+                VALUES (date_trunc('minute', now()), %s, %s, 1)
+            """, (route, keyName))
     except Exception as e:
         logger.exception(f"Failed to track API usage for {route}")
 
@@ -188,7 +172,7 @@ def makeRequest(url): # For wynnAPI use only
             r = session.get(url, timeout=30, headers=headers)
             #print(r.headers)
             updateHeaders(keyName, route, r.headers)
-            trackUsage(route)
+            trackUsage(route, keyName)
             if r.status_code == 300:
                 jsonData = r.json()
                 if route == "/guild/":

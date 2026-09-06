@@ -1,10 +1,11 @@
+from urllib.parse import urlencode
 import discord
 from datetime import datetime, timezone, timedelta
 import json
 from collections import Counter
 import logging
 import time
-import sqlite3
+import psycopg
 import matplotlib as mpl
 from collections import defaultdict
 import seaborn as sns
@@ -17,17 +18,18 @@ from pathlib import Path
 from lib.makeRequest import makeRequest, internalMakeRequest
 import base64
 import pytz
+import asyncio
+from datetime import datetime, timezone, timedelta
+import dateparser
+import re
   
 logger = logging.getLogger('discord')
 
-DBPATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "activity.db")
+from lib.config import DSN
 
 def connectActivityDB(readonly=True):
-    conn = sqlite3.connect(DBPATH)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    if readonly:
-        conn.execute("PRAGMA query_only=ON")
+    conn = psycopg.connect(DSN)
+    conn.read_only = readonly
     return conn
 
 cooldownHolder = {}
@@ -35,7 +37,6 @@ last_xp = {}  # {(guild_prefix, username): contributed}
 rootDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 path = Path(__file__).resolve().parents[1] / '.env'
-CONFIGDBPATH = Path(__file__).resolve().parents[1] / "database" / "config.db"
 TERRITORIESPATH = Path(__file__).resolve().parents[1] / "lib" /  "documents" / "territories.json"
 API_URL = os.getenv("API_BASE_URL")
 
@@ -44,6 +45,7 @@ mpl.use('Agg') # Backend without any gui popping up
 blue, = sns.color_palette("muted", 1)
 
 activityTimeframeMap = [ # Used for activity commands
+    "Custom",
     "Last 14 Days", 
     "Last 7 Days", 
     "Last 3 Days", 
@@ -51,6 +53,7 @@ activityTimeframeMap = [ # Used for activity commands
     "Last 30 Days"] 
 
 leaderboardTimeframeMap = [ # Used for leaderboard data
+    "Custom",
     "Last 14 Days",
     "Last 7 Days",
     "Last 3 Days",
@@ -287,11 +290,9 @@ def inactivityCheck(r, inputRank=None):
         inactivityDict[key].sort(key=lambda x: x[1])  # Sort by timestamp, so we can go from oldest to newest
     return inactivityDict
 
-def leaderboardBuilder(commandType, uuid = None, timeframe = None):
-        
-    logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", timeframe: {timeframe}" if timeframe else ""))
-    # complicated code to create the url given the present parameters
-    url = (f"{API_URL}/api/leaderboard/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("timeframe", timeframe)) if v)if any((uuid, timeframe)) else ""))
+def leaderboardBuilder(commandType, uuid=None, start=None, end=None):
+    params = {"uuid": uuid, "start": start, "end": end}
+    url = f"{API_URL}/api/leaderboard/{commandType}?{urlencode({k: v for k, v in params.items() if v is not None})}"
     success, r = internalMakeRequest(url)
     jsonData = r.json()
     if not success:
@@ -304,12 +305,13 @@ def leaderboardBuilder(commandType, uuid = None, timeframe = None):
 
     return listy
 
-def activityBuilder(commandType, uuid = None, name = None, theme = None, timeframe = None):
+def activityBuilder(commandType, uuid, name, theme, start=None, end=None):
     logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", name: {name}" if name else "") + (f", theme: {theme}" if theme else ""))
-    url = (f"{API_URL}/api/activity/{commandType}"+ ("?" + "&".join(f"{k}={v}" for k, v in (("uuid", uuid), ("name", name), ("theme", theme), ("timeframe", timeframe),) if v)if any((uuid, name, theme, timeframe)) else ""))
+    params = {"uuid": uuid, "name": name, "theme": theme, "start": start, "end": end}
+    url = f"{API_URL}/api/activity/{commandType}?{urlencode({k: v for k, v in params.items() if v is not None})}"
     success, r = internalMakeRequest(url)
     if not success:
-        logger.error(f"Error for {commandType} in leaderboardBuilder, success is {success}, jsonData is {r.json()}")
+        logger.error(f"Error for {commandType} in activityBuilder, success is {success}, jsonData is {r.json()}")
         return None, None
     jsonData = r.json()
     buf = BytesIO(base64.b64decode(jsonData["image"]))
@@ -412,8 +414,11 @@ def activityBuilder(commandType, uuid = None, name = None, theme = None, timefra
             description= None
         
     file = discord.File(buf, filename=f'{commandType}.webp')
+    timeframe = f"{start:%m/%d/%Y %H:%M} to {end:%m/%d/%Y %H:%M} UTC"
     container = discord.ui.Container(
-        discord.ui.TextDisplay(f"## {title + f' - {timeframe}' if timeframe else title}\n{description}"),
+        discord.ui.TextDisplay(
+            f"## {title}{' - ' + str(timeframe) if timeframe else ''}\n{description}"
+        ),
         discord.ui.MediaGallery(
             discord.components.MediaGalleryItem(
                 media=f"attachment://{commandType}.webp",
@@ -438,19 +443,11 @@ def rollGiveaway(weeklyNames, rollcount):
     cursor = conn.cursor()
     weeklyNames = list(weeklyNames)
 
-    # Look up player_uuid for each name using latest run_id
-    placeholders = ','.join(['?' for _ in weeklyNames])
-    cursor.execute(f"""
-        SELECT u.username, u.player_uuid
-        FROM users u
-        JOIN (
-            SELECT player_uuid, MAX(run_id) AS max_run_id
-            FROM users
-            WHERE username IN ({placeholders})
-            GROUP BY player_uuid
-        ) latest ON u.player_uuid = latest.player_uuid AND u.run_id = latest.max_run_id
-        WHERE u.username IN ({placeholders})
-    """, weeklyNames + weeklyNames)
+    cursor.execute("""
+        SELECT username, player_uuid::text
+        FROM core.players
+        WHERE username = ANY(%s)
+    """, (weeklyNames,))
     uuid_map = {row[0]: row[1] for row in cursor.fetchall()}
 
     uuid_list = list(uuid_map.values())
@@ -459,14 +456,13 @@ def rollGiveaway(weeklyNames, rollcount):
         conn.close()
         return {}, []
 
-    placeholders = ','.join(['?' for _ in uuid_list])
-    cursor.execute(f"""
-        SELECT player_uuid, timestamp, playtime, contribution
-        FROM player_snapshots
-        WHERE player_uuid IN ({placeholders})
-        AND timestamp >= datetime('now', '-7 days')
-        ORDER BY player_uuid, timestamp
-    """, uuid_list)
+    cursor.execute("""
+        SELECT player_uuid::text, ts, d_playtime, d_contribution
+        FROM ts.player_snapshots
+        WHERE player_uuid = ANY(%s::uuid[])
+          AND ts >= now() - INTERVAL '7 days'
+        ORDER BY player_uuid, ts
+    """, (uuid_list,))
 
     player_snapshots = defaultdict(list)
     for row in cursor.fetchall():
@@ -489,15 +485,11 @@ def rollGiveaway(weeklyNames, rollcount):
             tickets[player_name] = 1 # they still get their completion tickets
             continue
 
-        # Calculate playtime from direct playtime field (hours → minutes per day)
+        # Timescale stores change-only rows with explicit deltas.
         playtimeMinutes = defaultdict(float)
-        for i in range(1, len(snapshots)):
-            curr_time = datetime.strptime(snapshots[i][1], '%Y-%m-%d %H:%M:%S')
-            prev_playtime = snapshots[i-1][2]
-            curr_playtime = snapshots[i][2]
-            if prev_playtime is not None and curr_playtime is not None and curr_playtime > prev_playtime:
-                gained_hours = curr_playtime - prev_playtime
-                playtimeMinutes[curr_time.date()] += gained_hours * 60
+        for snapshot in snapshots:
+            if snapshot[2] is not None and snapshot[2] > 0:
+                playtimeMinutes[snapshot[1].date()] += snapshot[2] * 60
 
         avgDailyPlaytime = sum(playtimeMinutes.values()) / 7 if playtimeMinutes else 0
 
@@ -512,7 +504,7 @@ def rollGiveaway(weeklyNames, rollcount):
                 playtimeTickets = ticket
                 break
 
-        weeklyXP = snapshots[-1][3] - snapshots[0][3] if len(snapshots) > 1 else 0
+        weeklyXP = sum(snapshot[3] for snapshot in snapshots if snapshot[3] is not None and snapshot[3] > 0)
 
         xp_thresholds = [ # Tickets per xp ex. 50m xp contri the week is 1, 1.25m is 0.5
             (50_000_000, 1.0), (25_000_000, 0.9), (15_000_000, 0.8),
@@ -534,9 +526,6 @@ def rollGiveaway(weeklyNames, rollcount):
         tickets[player_name] = total_player_tickets
         #logger.info(f"tickets[player_name]: {tickets[player_name]}")
         
-        #logger.info(f"Player {player_name} processing completed")
-        #logger.info(f"Player Stats - "f"Average Daily Playtime: {avgDailyPlaytime:.1f} minutes, "f"Weekly XP: {weeklyXP:,}")
-        #logger.info(f"Tickets breakdown - "f"Completion: {completion_tickets}, "f"Playtime: {playtimeTickets} (from {avgDailyPlaytime:.1f} min/day), "f"XP: {xpTickets} (from {weeklyXP:,} XP)")
     
     if total_tickets > 0: # redardancy and whjatnot
         chances = {name: (tickets[name]/total_tickets) * 100 for name in chances}
@@ -1038,13 +1027,14 @@ def playerGuildHistory(playerUUID, username):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT
-            guild_uuid,
-            guild_name,
-            guild_prefix,
-            timestamp AS joined
-        FROM user_history
-        WHERE player_uuid = ?
-        ORDER BY timestamp ASC;
+            h.guild_uuid::text,
+            g.name,
+            g.prefix,
+            h.joined_at
+        FROM core.player_guild_history h
+        LEFT JOIN core.guilds g ON g.guild_uuid = h.guild_uuid
+        WHERE h.player_uuid = %s
+        ORDER BY h.joined_at ASC;
     """, (playerUUID,))
     rows = cursor.fetchall()
     
@@ -1070,16 +1060,16 @@ def playerGuildHistory(playerUUID, username):
                 leaveDate = "Unknown, has left guild" if hasLeft else "Has not left" # mr coder
                 
         def convert(isoTime):
-            if not isoTime or not isinstance(isoTime, str) or "T" not in isoTime:
+            if not isoTime:
                 return None
             try:
-                dt = datetime.fromisoformat(isoTime.replace("Z", "+00:00"))
+                dt = isoTime if isinstance(isoTime, datetime) else datetime.fromisoformat(isoTime.replace("Z", "+00:00"))
                 return int(dt.timestamp())
             except Exception:
                 return None
             
         joinEpoch = convert(joinDate)
-        leaveEpoch = convert(leaveDate if isinstance(leaveDate, str) and "T" in leaveDate else None)
+        leaveEpoch = convert(leaveDate)
 
         join = f"<t:{joinEpoch}:D>" if joinEpoch else joinDate
         if isinstance(leaveDate, str) and "T" not in leaveDate:
@@ -1140,9 +1130,6 @@ def extractValues(row): # we use this for our internal api so we dont have to kn
     return None
 
 def checkNameValidity(name, type):
-    # Valid types:
-    # Guild - check prefix then name, i would search uuid but i refuse to accept uuid.
-    # user - Check username
     try:
         if type.lower() == "guild":
             success, r = internalMakeRequest(f"{API_URL}/api/search/prefix/{name}")
@@ -1495,3 +1482,152 @@ def getRaidComponent(camp=None):
     view = discord.ui.LayoutView()
     view.add_item(container)
     return view
+
+class TimeframeModal(discord.ui.Modal, title="Timeframe (UTC)"): # made this to put in a cog but midway i wanted shit outside of cogs so here we are
+    def __init__(self, commandName, args, runner=None):
+        super().__init__(timeout=300)
+        self.runner = runner or runActivity
+        self.commandName = commandName
+        self.args = args
+
+    @staticmethod
+    def parseTimeframeInput(value, relativeBase):
+        relativeTimeframePattern = re.compile(
+            r"^(?:last|past)\s+(\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?))$",
+            re.IGNORECASE
+        )
+        value = value.strip()
+        relativeMatch = relativeTimeframePattern.fullmatch(value)
+        if relativeMatch:
+            value = f"{relativeMatch.group(1)} ago"
+
+        parsedDate = dateparser.parse(
+            value,
+            languages=["en"],
+            settings={
+                "RELATIVE_BASE": relativeBase,
+                "DATE_ORDER": "MDY",
+                "TIMEZONE": "UTC",
+                "TO_TIMEZONE": "UTC",
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "past",
+            }
+        )
+
+        if parsedDate is None:
+            return None
+        return parsedDate.astimezone(timezone.utc)
+
+    startInput = discord.ui.TextInput(
+        label="Start",
+        placeholder="Last 18 days, 8/28, yesterday at 3 PM",
+        required=True,
+        max_length=100
+    )
+
+    endInput = discord.ui.TextInput(
+        label="End",
+        placeholder="9/3, 2 hours ago, September 3 at noon, leave blank for now",
+        required=False,
+        max_length=100
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        dateOnlyPattern = re.compile(r"^\d{1,2}/\d{1,2}(?:/\d{2,4})?$")
+        now = datetime.now(timezone.utc)
+        startText = self.startInput.value.strip()
+        endText = self.endInput.value.strip()
+
+        startDate = self.parseTimeframeInput(startText, now)
+        if startDate is None:
+            await interaction.response.send_message(f"Unknown start time `{startText}`.", ephemeral=True)
+            return
+
+        if endText:
+            endDate = self.parseTimeframeInput(endText, now)
+            if endDate is None:
+                await interaction.response.send_message(f"Unknown end time `{endText}`.", ephemeral=True)
+                return
+
+            if dateOnlyPattern.fullmatch(endText):
+                endDate = min(endDate + timedelta(days=1), now)
+        else:
+            endDate = now
+
+        if startDate >= endDate:
+            await interaction.response.send_message("The start time must be earlier than the end time.", ephemeral=True)
+            return
+
+        await self.runner(interaction, self.commandName, self.args, startDate, endDate)
+
+async def runActivity(interaction, commandName, args, start=None, end=None):
+    if args["timeframe"].lower() == "custom":
+        if start is None or end is None: # Get start and end data from custom timeframe
+            await interaction.response.send_modal(TimeframeModal(commandName, args))
+            return
+    else: # Get start and end data from regular timeframe
+        end = datetime.now(timezone.utc)
+        start = TimeframeModal.parseTimeframeInput(args["timeframe"], end)
+        if start is None:
+            await interaction.response.send_message(f"Unknown timeframe `{args['timeframe']}`.", ephemeral=True)
+            return
+
+    logger.info(f"Command {commandName} was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {args['name']}.")
+
+    await interaction.response.defer()
+    
+    entity = "user" if commandName.startswith("playerActivity") else "guild"
+    success, jsonData = await asyncio.to_thread(checkNameValidity, args["name"], entity)
+    if not success:
+        await interaction.followup.send(f"No data found for {entity}: {args['name']}. Check the name and whether Dernal has tracked it.", ephemeral=True)
+        return
+    entityUUID = jsonData["player_uuid" if entity == "user" else "guild_uuid"]
+
+    file, view = await asyncio.to_thread(activityBuilder, commandName, uuid=entityUUID, name=args["name"], theme=args["theme"] or "light", start=start, end=end)
+    
+    if file and view:
+        await interaction.followup.send(file=file, view=view)
+    else:
+        await interaction.followup.send(f"No data available for the {args['timeframe']}")
+
+
+async def runLeaderboard(interaction, commandName, args, start=None, end=None):
+    timeframe = args["timeframe"].strip()
+    if timeframe.lower() == "custom":
+        if start is None or end is None:
+            await interaction.response.send_modal(TimeframeModal(commandName, args, runner=runLeaderboard))
+            return
+    elif timeframe.lower() == "all time":
+        start, end = None, None
+        if commandName == "guildLeaderboardOnlineMembers":
+            timeframe = "Last 30 Days"
+            end = datetime.now(timezone.utc)
+            start = end - timedelta(hours=720)
+    else:
+        end = datetime.now(timezone.utc)
+        start = TimeframeModal.parseTimeframeInput(timeframe, end)
+        if start is None:
+            await interaction.response.send_message(f"Unknown timeframe `{timeframe}`.", ephemeral=True)
+            return
+    if start is not None and end is not None and start >= end:
+        await interaction.response.send_message("The start time must be earlier than the end time.", ephemeral=True)
+        return
+    logger.info(f"Command {commandName} was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter guild is: {args['name']}.")
+    await interaction.response.defer()
+    uuid = None
+    name = args.get("name")
+    if name:
+        success, data = await asyncio.to_thread(checkNameValidity, name, "guild")
+        if not success:
+            await interaction.followup.send(f"No data found for guild: {name}.", ephemeral=True)
+            return
+        uuid = data["guild_uuid"]
+    data = await asyncio.to_thread(leaderboardBuilder, commandName, uuid=uuid, start=start, end=end)
+    if not data:
+        await interaction.followup.send("No data available.")
+        return
+    if timeframe.lower() == "custom":
+        timeframe = f"{start:%m/%d/%Y %H:%M} to {end:%m/%d/%Y %H:%M} UTC"
+    title = args["title"].format(count=len(data), name=name, timeframe=timeframe)
+    view = args["paginator"](data, title, args["unit"])
+    await interaction.followup.send(embed=view.get_embed(), view=view)
