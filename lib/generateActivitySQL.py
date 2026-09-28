@@ -615,6 +615,41 @@ def vacuumDatabase(conn):
     except Exception as e:
         logger.exception(f"Error during ANALYZE: {e}")
 
+def storeTerritoryData(conn, jsonData):
+    previous = {row["territory"]: row for row in conn.execute("""
+        SELECT DISTINCT ON (territory) territory, acquired,
+            guild_uuid::text AS guild_uuid, is_hq, defense
+        FROM ts.territory_ownership ORDER BY territory, observed_at DESC, acquired DESC
+    """).fetchall()}
+    now = get_utc_now()
+    rows, guilds = [], set()
+    for territory, data in jsonData.items():
+        guild = data.get("guild") or {}
+        uuid = guild.get("uuid")
+        acquired = data.get("acquired")
+        if not acquired:
+            continue
+        acquired = datetime.fromisoformat(acquired.replace("Z", "+00:00"))
+        hq = data.get("hq", data.get("isHQ"))
+        defense = data.get("defences")
+        if isinstance(defense, str):
+            defense = defense.upper()
+        old = previous.get(territory)
+        capture = old is None or old["acquired"] != acquired or old["guild_uuid"] != uuid
+        if not capture and old["is_hq"] == hq and old["defense"] == defense:
+            continue
+        if uuid:
+            guilds.add((uuid, guild.get("name"), guild.get("prefix")))
+        rows.append((acquired, territory, uuid, now, hq, defense, capture))
+    ensureGuilds(conn, guilds)
+    if rows:
+        with conn.cursor() as cur:
+            cur.executemany("""
+                INSERT INTO ts.territory_ownership
+                    (acquired, territory, guild_uuid, observed_at, is_hq, defense, is_capture)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, rows)
+
 def storeTerritories(stop_event=None):
     conn = connectDB()
     while True:
@@ -628,30 +663,7 @@ def storeTerritories(stop_event=None):
         else:
             try:
                 jsonData = r.json()
-                rows = []
-                guilds = set()
-                for territory, data in jsonData.items():
-                    guild = data.get("guild") or {}
-                    guild_uuid   = guild.get("uuid")
-                    guild_name   = guild.get("name")
-                    guild_prefix = guild.get("prefix")
-                    acquired     = data.get("acquired")
-                    if guild_uuid:
-                        guilds.add((guild_uuid, guild_name, guild_prefix))
-                    rows.append((acquired, territory, guild_uuid, get_utc_now(), territory, acquired))
-
-                ensureGuilds(conn, guilds)
-
-                with conn.cursor() as cur:
-                    cur.executemany("""
-                        INSERT INTO ts.territory_ownership (acquired, territory, guild_uuid, observed_at)
-                        SELECT %s, %s, %s, %s
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM ts.territory_ownership
-                            WHERE territory = %s
-                            AND acquired = %s
-                        )
-                    """, rows)
+                storeTerritoryData(conn, jsonData)
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -685,7 +697,6 @@ async def scheduledMainScript():
         logger.info(f"Waiting {wait_time:.2f} seconds until next run")
         await asyncio.sleep(wait_time)
 
-#TODO: Add "isHQ" to territory takes
 if __name__ == "__main__":
     logger.info("Starting production collector...")
 

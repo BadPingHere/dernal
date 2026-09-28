@@ -78,7 +78,7 @@ def search(): # helper function to figure out who to collect from
             count_1["suitable"] += 1
             count_1["totalPlayers"] += int(guildData["totalMembers"])
         
-        if guildData["level"] >= 25 and int(guildData["totalMembers"]) >= 1: # Low Level, High Player Req
+        if guildData["level"] >= 50 and int(guildData["totalMembers"]) >= 1: # Low Level, High Player Req
             count_2["suitable"] += 1
             count_2["totalPlayers"] += int(guildData["totalMembers"])
         

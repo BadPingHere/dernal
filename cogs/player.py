@@ -1,12 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from lib.utils import runLeaderboard, runActivity, playerGuildHistory, activityBuilder, checkNameValidity, leaderboardTimeframeMap, themeMap, activityTimeframeMap
+from lib.utils import runLeaderboard, runActivity, playerGuildHistory, checkNameValidity, leaderboardTimeframeMap, themeMap, activityTimeframeMap
 import logging
 import asyncio
 from discord.ui import View, Button
 from datetime import datetime, timezone
-import os
 from typing import Optional
 
 logger = logging.getLogger('discord')
@@ -118,21 +117,7 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityDungeonsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
-        logger.info(f"Command /player activity dungeons_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "user")
-        if not success:
-            await interaction.followup.send(f"No data found for username: {name}. Are you in a tracked guild, or been online during the timeframe?", ephemeral=True)
-            return
-        playerUUID = jsonData["player_uuid"] 
-            
-        file, view = await asyncio.to_thread(activityBuilder,"playerActivityTotalDungeons", uuid=playerUUID, name=name, theme=theme or "light")
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        await runActivity(interaction, "playerActivityTotalDungeons", {"name": name, "theme": theme})
 
     @activityCommands.command(name="raids", description="Shows a graph displaying the amount of raids completed total every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
@@ -145,41 +130,13 @@ class Player(commands.GroupCog, name="player"):
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityRaidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
-        logger.info(f"Command /player activity raids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "user")
-        if not success:
-            await interaction.followup.send(f"No data found for username: {name}. Are you in a tracked guild, or been online during the timeframe?", ephemeral=True)
-            return
-        playerUUID = jsonData["player_uuid"] 
-        
-        file, view = await asyncio.to_thread(activityBuilder,"playerActivityTotalRaids", uuid=playerUUID, name=name, theme=theme or "light")
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        await runActivity(interaction, "playerActivityTotalRaids", {"name": name, "theme": theme})
 
     @activityCommands.command(name="graids_pie", description="Shows a pie chart displaying the different graid's you have done.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityGraidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
-        logger.info(f"Command /player activity graids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "user")
-        if not success:
-            await interaction.followup.send(f"No data found for username: {name}. Are you in a tracked guild, or been online during the timeframe?", ephemeral=True)
-            return
-        playerUUID = jsonData["player_uuid"] 
-            
-        file, view = await asyncio.to_thread(activityBuilder,"playerActivityGraidPie", uuid=playerUUID, name=name, theme=theme or "light")
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        await runActivity(interaction, "playerActivityGraidPie", {"name": name, "theme": theme})
 
     @activityCommands.command(name="mobs_killed", description="Shows a graph displaying the amount of total mobs killed every day.")
     @app_commands.describe(name='Username of the player search Ex: BadPingHere, Salted.',)

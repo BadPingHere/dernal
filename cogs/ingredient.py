@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from lib.utils import ingredientMapCreator
+from lib.utils import API_URL, ingredientMapCreator
+from lib.server.server import send_map_result
 import logging
 import asyncio
 from typing import Optional, Annotated
@@ -27,7 +28,7 @@ class Territory(commands.GroupCog, name="ingredient"):
 
         file, view = await asyncio.to_thread(ingredientMapCreator, ingredient, price, tier)
         if file and view:
-            await interaction.followup.send(file=file, view=view)
+            await send_map_result(interaction, file, view, API_URL, "ingredient", ingredient=ingredient, price=price, tier=tier)
         else:
             await interaction.followup.send("An error occured while getting the ingredient map.")
             

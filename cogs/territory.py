@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from lib.utils import mapCreator, heatmapCreator, timeframeMap
+from lib.utils import API_URL, mapCreator, heatmapCreator, timeframeMap
+from lib.server.server import send_map_result
 import logging
 import asyncio
 
@@ -14,7 +15,12 @@ class Territory(commands.GroupCog, name="territory"):
         self.bot = bot
         
     async def timeframeAutocomplete(self, interaction: discord.Interaction, current: str):
-        return [app_commands.Choice(name=k, value=k)for k in timeframeMap() if current.lower() in k.lower()][:25]
+        choices = {"Last 7 Days": None, "Everything": None}
+        try:
+            choices.update(await asyncio.wait_for(asyncio.to_thread(timeframeMap), timeout=2))
+        except Exception:
+            logger.warning("Could not load heatmap seasons for autocomplete", exc_info=True) # TS keeps fucking up a bit too many times.. i blame wynntils.
+        return [app_commands.Choice(name=k, value=k) for k in choices if current.lower() in k.lower()][:25]
     
     @app_commands.command(description="Generates the current Wynncraft Territory Map.")
     @app_commands.describe(map_type='The type of map you wish to see:',)
@@ -30,7 +36,7 @@ class Territory(commands.GroupCog, name="territory"):
 
         file, view = await asyncio.to_thread(mapCreator, map_type.value)
         if file and view:
-            await interaction.followup.send(file=file, view=view)
+            await send_map_result(interaction, file, view, API_URL, "current")
         else:
             await interaction.followup.send("An error occured while getting the territory map.")
 
@@ -43,7 +49,7 @@ class Territory(commands.GroupCog, name="territory"):
 
         file, view = await asyncio.to_thread(heatmapCreator, timeframe)
         if file and view:
-            await interaction.followup.send(file=file, view=view)
+            await send_map_result(interaction, file, view, API_URL, "heat", timeframe=timeframe)
         else:
             await interaction.followup.send("An error occured while getting the territory heatmap.")
 

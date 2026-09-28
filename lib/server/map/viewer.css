@@ -1,0 +1,807 @@
+@font-face {
+  font-family: Minecraft;
+  src: url('/map/assets/ascii.woff') format('woff');
+  font-display: swap;
+}
+
+#map-viewer {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 20;
+  background: #000;
+  color: #fff;
+  font: 13px Minecraft, monospace;
+  text-shadow:
+    1.5px 0 #000,
+    -1.5px 0 #000,
+    0 1.5px #000,
+    0 -1.5px #000,
+    1px 1px #000,
+    -1px -1px #000;
+}
+
+#map-viewer * {
+  box-sizing: border-box;
+}
+
+#map-viewer [hidden] {
+  display: none !important;
+}
+
+#map-viewer .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+
+#map-viewer canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  outline: none;
+}
+
+#map-viewer .map-border {
+  position: absolute;
+  inset: 0;
+  border: 16px solid transparent;
+  border-image: url('/map/assets/textures/full_map_border.png') 8 stretch;
+  pointer-events: none;
+  z-index: 30;
+  image-rendering: pixelated;
+}
+
+#map-viewer button,
+#map-viewer input,
+#map-viewer select {
+  font: inherit;
+  color: inherit;
+  text-shadow: inherit;
+  border-radius: 0;
+}
+
+#map-viewer button {
+  cursor: pointer;
+}
+
+#map-viewer button:focus-visible {
+  outline: 2px solid #55ffff;
+  outline-offset: -2px;
+}
+
+#map-viewer .mc-panel {
+  background: rgba(12, 6, 18, .94);
+  border: 2px solid #1c0d2e;
+  outline: 2px solid rgba(48, 10, 96, .9);
+}
+
+#map-viewer .map-status {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  font-size: 11px;
+  color: #aaaaaa;
+  max-width: calc(100% - 300px);
+  pointer-events: none;
+}
+
+#map-viewer .status-error {
+  color: #ff5555;
+}
+
+#map-viewer .gold {
+  color: #ffaa00;
+}
+
+#map-viewer .muted {
+  color: #aaaaaa;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+#map-viewer .toggle-panel {
+  position: absolute;
+  top: 20px;
+  right: 160px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+#map-viewer .guild-toggle {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+#map-viewer:has(#map-guild-toggle[hidden]) .toggle-panel {
+  right: 24px;
+}
+
+#map-viewer aside {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: calc(100vw - 64px);
+  max-height: calc(100% - 164px);
+  overflow: auto;
+  scrollbar-width: thin;
+  padding: 10px;
+  z-index: 18;
+  font-size: 12px;
+}
+
+#map-viewer .drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #ffaa00;
+  margin-bottom: 8px;
+}
+
+#map-viewer #map-close {
+  background: none;
+  border: none;
+  color: #aaaaaa;
+  padding: 0 4px;
+}
+
+#map-viewer input,
+#map-viewer select {
+  width: 100%;
+  background: #14161b;
+  color: #e8e6e3;
+  border: 1px solid #3a3f4a;
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+#map-viewer input:focus,
+#map-viewer select:focus {
+  border-color: #55ffff;
+}
+
+#map-viewer label {
+  display: block;
+  color: #aaaaaa;
+  font-size: 11px;
+  margin: 8px 0 4px;
+}
+
+#map-viewer .row {
+  display: flex;
+  gap: 8px;
+}
+
+#map-viewer .row > div {
+  flex: 1;
+  min-width: 0;
+}
+
+#map-viewer #map-summary {
+  margin: 12px 0 6px;
+  color: #55ffff;
+}
+
+#map-viewer .entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 5px 6px;
+  color: #cfd2d8;
+  line-height: 1.5;
+}
+
+#map-viewer .entry:hover,
+#map-viewer .entry:focus {
+  background: rgba(85, 255, 255, .12);
+}
+
+#map-viewer .entry small {
+  display: block;
+  font-size: 10px;
+  color: #8b8e96;
+}
+
+#map-viewer .empty {
+  color: #aaaaaa;
+  padding: 8px;
+}
+
+#map-viewer .guild-list {
+  position: absolute;
+  top: 54px;
+  right: 24px;
+  width: 260px;
+  max-height: calc(100% - 150px);
+  overflow: auto;
+  scrollbar-width: thin;
+  padding: 6px 8px;
+  z-index: 13;
+}
+
+#map-viewer .guild-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+}
+
+#map-viewer .guild-row:hover {
+  background: rgba(85, 255, 255, .12);
+}
+
+#map-viewer .rank {
+  width: 24px;
+  color: #8b8e96;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+#map-viewer .swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid #ffffff80;
+  flex-shrink: 0;
+}
+
+#map-viewer .guild-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#map-viewer .count {
+  color: #55ffff;
+}
+
+#map-viewer .clear {
+  color: #55ffff;
+  border: 1px solid #2a5c5c;
+  background: #55ffff14;
+  margin-bottom: 4px;
+}
+
+#map-viewer .tooltip-anchor {
+  position: absolute;
+  top: 58px;
+  right: 24px;
+  width: 320px;
+  max-height: calc(100% - 155px);
+  overflow-y: auto;
+  scrollbar-width: none;
+  z-index: 10;
+  font-size: 13px;
+  line-height: 1.35;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+#map-viewer:has(#map-guild-list:not([hidden])) .tooltip-anchor {
+  right: 296px;
+}
+
+#map-viewer .tooltip-top {
+  height: 16px;
+  background: url('/map/assets/textures/map_info_tooltip_top.png');
+  background-size: 100% 100%;
+}
+
+#map-viewer .tooltip-center {
+  padding: 0 14px 8px;
+  background: #282018 url('/map/assets/textures/map_info_tooltip_center.png');
+  background-size: 100% 100%;
+}
+
+#map-viewer .tooltip-name {
+  min-height: 32px;
+  background: #78644d url('/map/assets/textures/map_info_name_box.png');
+  background-size: 100% 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+#map-viewer .spacer {
+  height: 12px;
+}
+
+#map-viewer .detail-line {
+  overflow-wrap: anywhere;
+}
+
+#map-viewer .res-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  margin-right: 4px;
+  image-rendering: pixelated;
+}
+
+#map-viewer .unpin {
+  pointer-events: auto;
+  background: none;
+  border: 0;
+  color: #aaaaaa;
+  padding: 0 2px;
+}
+
+#map-viewer .tooltip-anchor:has(.tower-calculator) {
+  pointer-events: auto;
+}
+
+#map-viewer .tower-calculator {
+  margin-top: 10px;
+  pointer-events: auto;
+  user-select: none;
+}
+
+#map-viewer .tower-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+#map-viewer .tower-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#map-viewer .tower-stepper button,
+#map-viewer .tower-hq {
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  background: rgba(20, 22, 27, .85);
+  color: #cfd2d8;
+  border: 1px solid #3a3f4a;
+  font: 12px Minecraft, monospace;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#map-viewer .tower-stepper button:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+#map-viewer .tower-level {
+  min-width: 18px;
+  text-align: center;
+}
+
+#map-viewer .tower-hq {
+  width: 46px;
+  color: #ff5555;
+}
+
+#map-viewer .tower-hq[aria-pressed=true] {
+  color: #55ff55;
+  border-color: #2e5c3c;
+}
+
+#map-viewer .tower-results {
+  margin: 10px 0;
+}
+
+#map-viewer .hotbar-wrap {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 15;
+}
+
+#map-viewer .hotbar {
+  display: flex;
+  height: 52px;
+  filter: drop-shadow(0 3px 6px #0009);
+  image-rendering: pixelated;
+}
+
+#map-viewer .cap {
+  width: 4px;
+  height: 52px;
+  background-size: 100% 100%;
+}
+
+#map-viewer .cap.left {
+  background-image: url('/map/assets/textures/map_buttons_background_left.png');
+}
+
+#map-viewer .cap.right {
+  background-image: url('/map/assets/textures/map_buttons_background_right.png');
+}
+
+#map-viewer .cell {
+  width: 40px;
+  height: 52px;
+  background: url('/map/assets/textures/map_buttons_background_middle.png');
+  background-size: 100% 100%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  image-rendering: pixelated;
+}
+
+#map-viewer .cell .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  transition: transform 60ms ease-out;
+  opacity: .85;
+}
+
+#map-viewer .cell:hover .icon {
+  transform: scale(1.15);
+}
+
+#map-viewer .cell .icon img {
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
+#map-viewer .cell[aria-pressed=true] .icon {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px #ffdc78e6);
+}
+
+#map-viewer .badge {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ffff55;
+  font-size: 9px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+#map-viewer .bar-tooltip {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: calc(100vw - 48px);
+  text-align: left;
+}
+
+#map-viewer .coords {
+  position: absolute;
+  bottom: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  pointer-events: none;
+}
+
+#map-viewer .zoom-buttons {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+  display: flex;
+  gap: 8px;
+}
+
+#map-viewer .zoom-buttons button {
+  background: none;
+  border: 0;
+  font-size: 20px;
+  color: #aaa;
+  padding: 4px;
+}
+
+#map-viewer .guide {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.65;
+  max-width: calc(100% - 48px);
+  z-index: 19;
+}
+
+#map-viewer .heat-key {
+  position: absolute;
+  top: 52px;
+  left: 24px;
+  width: 224px;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  image-rendering: pixelated;
+}
+
+#map-viewer .heat-title {
+  color: #ffff55;
+  margin-bottom: 10px;
+}
+
+#map-viewer .heat-key .tooltip-name {
+  font-size: 13px;
+  color: #ffaa00;
+}
+
+#map-viewer .legend {
+  display: flex;
+  height: 14px;
+  border: 2px solid #120e0a;
+  outline: 1px solid #94764e;
+}
+
+#map-viewer .legend span {
+  flex: 1;
+  border-right: 1px solid #0005;
+}
+
+#map-viewer .legend span:last-child {
+  border-right: 0;
+}
+
+#map-viewer .heat-range {
+  display: flex;
+  justify-content: space-between;
+  color: #fff;
+  margin: 4px 0 6px;
+}
+
+body:has(#map-viewer) #status {
+  z-index: 40;
+}
+
+@media (max-width: 680px) {
+  #map-viewer .map-border {
+    border-width: 12px;
+  }
+
+  #map-viewer .cell {
+    width: 32px;
+    height: 42px;
+  }
+
+  #map-viewer .cap {
+    height: 42px;
+  }
+
+  #map-viewer .hotbar {
+    height: 42px;
+  }
+
+  #map-viewer .hotbar-wrap {
+    bottom: 18px;
+  }
+
+  #map-viewer .coords {
+    bottom: 66px;
+    font-size: 12px;
+  }
+
+  #map-viewer .zoom-buttons {
+    display: none;
+  }
+
+  #map-viewer .map-status {
+    top: 18px;
+    left: 18px;
+    max-width: 130px;
+    font-size: 9px;
+  }
+
+  #map-viewer .toggle-panel {
+    top: 42px;
+    right: 18px;
+    font-size: 10px;
+  }
+
+  #map-viewer .guild-toggle {
+    top: 18px;
+    right: 18px;
+    font-size: 10px;
+  }
+
+  #map-viewer .tooltip-anchor {
+    top: 78px;
+    right: 18px;
+    width: min(320px, calc(100vw - 36px));
+    max-height: calc(100% - 160px);
+  }
+
+  #map-viewer:has(#map-guild-list:not([hidden])) .tooltip-anchor {
+    display: none;
+  }
+
+  #map-viewer .guild-list {
+    top: 76px;
+    right: 18px;
+    max-width: calc(100% - 36px);
+  }
+
+  #map-viewer .heat-key {
+    top: 44px;
+    left: 18px;
+    width: 172px;
+    font-size: 10px;
+  }
+
+  #map-viewer aside {
+    top: 76px;
+    max-width: calc(100vw - 36px);
+  }
+
+  #map-viewer .guide {
+    bottom: 85px;
+    font-size: 10px;
+  }
+
+}
+
+#map-viewer .timeline-panel {
+  position: absolute;
+  bottom: 18px;
+  left: 24px;
+  right: 24px;
+  z-index: 24;
+  padding: 10px 12px;
+  font: 12px 'Segoe UI', sans-serif;
+  text-shadow: none;
+}
+
+#map-viewer .timeline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#map-viewer .timeline-time {
+  color: #ffffaa;
+  font-variant-numeric: tabular-nums;
+}
+
+#map-viewer .timeline-range {
+  padding: 0;
+  width: 100%;
+  accent-color: #a78bfa;
+  margin: 9px 0 4px;
+}
+
+#map-viewer .timeline-bounds {
+  color: #aaa;
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+
+#map-viewer .timeline-controls {
+  justify-content: flex-start;
+}
+
+#map-viewer .timeline-controls button {
+  background: #24202f;
+  border: 1px solid #66577e;
+  padding: 6px 9px;
+  min-height: 32px;
+}
+
+#map-viewer .timeline-controls select,
+#map-viewer .timeline-controls input {
+  width: auto;
+  max-width: 100%;
+  min-height: 32px;
+  color-scheme: dark;
+}
+
+#map-viewer .timeline-feedback {
+  color: #c4c5c9;
+  margin-top: 8px;
+  min-height: 17px;
+}
+
+#map-viewer .timeline-panel details {
+  color: #aaa;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+#map-viewer .timeline-panel summary {
+  cursor: pointer;
+}
+
+#map-viewer .timeline-panel details p {
+  margin: 5px 0;
+  max-height: 65px;
+  overflow: auto;
+}
+
+#map-viewer.timeline-map .hotbar-wrap {
+  bottom: 220px;
+}
+
+#map-viewer.timeline-map .coords {
+  bottom: 278px;
+}
+
+#map-viewer.timeline-map .zoom-buttons {
+  bottom: 226px;
+}
+
+#map-viewer.timeline-map .guide {
+  bottom: 285px;
+}
+
+#map-viewer.timeline-map aside {
+  max-height: calc(100% - 315px);
+}
+
+@media (max-width: 680px) {
+  #map-viewer .timeline-panel {
+    left: 16px;
+    right: 16px;
+    bottom: 14px;
+    padding: 8px;
+  }
+
+  #map-viewer .timeline-time {
+    font-size: 11px;
+  }
+
+  #map-viewer .timeline-controls {
+    gap: 4px;
+  }
+
+  #map-viewer .timeline-controls button {
+    padding: 5px 7px;
+  }
+
+  #map-viewer.timeline-map .hotbar-wrap {
+    bottom: 275px;
+  }
+
+  #map-viewer.timeline-map .coords {
+    bottom: 325px;
+  }
+
+  #map-viewer.timeline-map .zoom-buttons {
+    bottom: 280px;
+  }
+
+  #map-viewer.timeline-map .guide {
+    bottom: 330px;
+  }
+
+  #map-viewer.timeline-map aside {
+    max-height: calc(100% - 365px);
+  }
+
+}

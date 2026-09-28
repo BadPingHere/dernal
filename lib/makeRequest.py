@@ -4,6 +4,7 @@ from threading import Lock
 from pathlib import Path
 import psycopg
 import uuid
+import math
 
 path = Path(__file__).resolve().parents[1] / '.env'
 from lib.config import DSN
@@ -99,18 +100,31 @@ def getRoute(url):
     return "/unknown/"  # fallback
 
 def refreshRatelimit(route):
-    now = int(time.time())
+    now = time.time()
     with rateLock:
         for key in ratelimitDict:
             if now >= ratelimitDict[key][route]["reset"]:
                 ratelimitDict[key][route]["remaining"] = ratelimitDict[key][route]["limit"]
                 ratelimitDict[key][route]["reset"] = now + 60  # fallback if unknown
 
+def rateResetAt(headers):
+    now = time.time()
+    try:
+        delay = float(headers.get("ratelimit-reset", 60))
+        if not math.isfinite(delay) or delay < 0:
+            raise ValueError("Invalid reset")
+
+        if delay >= 1_000_000_000:
+            delay = max(0, delay - now)
+    except (TypeError, ValueError):
+        delay = 60
+    return now + max(1, delay)
+
 def updateHeaders(key, route, headers): #save what we have
     try:
         remaining = int(headers.get("ratelimit-remaining", ratelimitDict[key][route]["remaining"]))
         limit = int(headers.get("ratelimit-limit", ratelimitDict[key][route]["limit"]))
-        reset = int(headers.get("ratelimit-reset", time.time() + 60))
+        reset = rateResetAt(headers)
         with rateLock:
             ratelimitDict[key][route] = {
                 "remaining": remaining,
@@ -121,19 +135,17 @@ def updateHeaders(key, route, headers): #save what we have
         logger.exception(f"Could not update ratelimit headers for {route}")
 
 def pickKey(route): # return the first key with ratelimit remaining for that route left
-    refreshRatelimit(route)
-    with rateLock:
-        for key in KEYS:
-            if ratelimitDict[key][route]["remaining"] > 0:
-                ratelimitDict[key][route]["remaining"] -= 1
-                return key
-            
-    # we are out of requests somehow, now we wait until we arent
-    soonest = min(ratelimitDict[k][route]["reset"] for k in KEYS)
-    sleepNum = max(soonest - time.time(), 0)
-    logger.warning(f"All keys ratelimited for {route}. Sleeping for {sleepNum:.2f}s...")
-    time.sleep(sleepNum)
-    return pickKey(route)
+    while True:
+        refreshRatelimit(route)
+        with rateLock:
+            for key in KEYS:
+                if ratelimitDict[key][route]["remaining"] > 0:
+                    ratelimitDict[key][route]["remaining"] -= 1
+                    return key
+            soonest = min(ratelimitDict[k][route]["reset"] for k in KEYS)
+        sleepNum = max(soonest - time.time(), 0.01)
+        logger.warning(f"All keys ratelimited for {route}. Sleeping for {sleepNum:.2f}s...")
+        time.sleep(sleepNum)
 
 def getTotalRatelimitRemaining(route): # Check total ratelimit we have left
     with rateLock:
@@ -222,21 +234,10 @@ def makeRequest(url): # For wynnAPI use only
             retryable = [408, 425, 500, 502, 503, 504, 429]
             if status in retryable:
                 if status == 429:  # Specifically handle rate limits
-                    retry = 60  # Default fallback
-                    if hasattr(err, 'response') and err.response is not None:
-                        # Try to get Retry-After header
-                        #print(err.response.headers)
-                        retry = err.response.headers.get('ratelimit-reset')
-                        if retry:
-                            try:
-                                retry_after = float(retry)
-                            except ValueError:
-                                pass
+                    reset = rateResetAt(err.response.headers if err.response is not None else {})
                     with rateLock:
                         ratelimitDict[keyName][route]["remaining"] = 0
-                        ratelimitDict[keyName][route]["reset"] = time.time() + retry_after
-                    
-                    #logger.warning(f"Key {keyName} rate limited on {route}. Reset in {retry_after}s")
+                        ratelimitDict[keyName][route]["reset"] = reset
                 else:
                     logger.exception(f"{url} failed with {status}. Retry {retries + 1}/{maxRetries}")
                 retries += 1
@@ -249,15 +250,15 @@ def makeRequest(url): # For wynnAPI use only
     logger.error(f"Failed after {maxRetries} retries for {url}")
     return False, {}
 
-def internalMakeRequest(url): # Used for non-wynncraft api usage
+def internalMakeRequest(url, timeout=900, maxRetries=5): # Used for non-wynncraft api usage
     session = requests.Session()
     session.trust_env = False
     retries = 0
-    maxRetries = 5
+    r = None
 
     while retries < maxRetries:
         try:
-            r = session.get(url, timeout=900) # I dont wanna deal with timeouts.
+            r = session.get(url, timeout=timeout)
             #print(r.headers)
             if r.status_code >= 400:
                 r.raise_for_status() # bad requests send to hell

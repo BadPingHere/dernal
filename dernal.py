@@ -9,6 +9,7 @@ import requests
 import json
 from discord.ext.prometheus import PrometheusLoggingHandler
 from dotenv import load_dotenv
+from lib.server.server import start_activity_worker, close_activity_worker
 
 load_dotenv()
 
@@ -84,7 +85,7 @@ async def on_ready():
     logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
     logger.info('Syncing bot commands, this may take some time.')
 
-    await bot.tree.sync(guild=None)
+    await sync_global_commands()
     logger.info("Command Tree is synced to global!")
     guild_id = os.getenv("SERVER_ID")
     if guild_id: # if server_id is present, faster syncs. mainly for development, but end user can use it too ig.
@@ -106,6 +107,41 @@ async def on_ready():
     logger.info(f"Running on: {platform.system()} {platform.release()} ({os.name})")
     logger.info("-------------------")
 
+async def sync_global_commands():
+    app_id = bot.application_id
+    existing_commands = await bot.http.get_global_commands(app_id)
+    
+    entry_points = [
+        command
+        for command in existing_commands
+        if command.get("type") == 4
+    ]
+    
+    commands = bot.tree._get_all_commands(guild=None)
+    payload = [
+        command.to_dict(bot.tree)
+        for command in commands
+    ]
+
+    for entry in entry_points:
+        entry_payload = {
+            "id": entry["id"],
+            "name": entry["name"],
+            "description": entry.get("description", ""),
+            "type": 4,
+            "handler": entry.get("handler", 2),
+        }
+
+        if "integration_types" in entry:
+            entry_payload["integration_types"] = entry["integration_types"]
+        if "contexts" in entry:
+            entry_payload["contexts"] = entry["contexts"]
+        payload.append(entry_payload)
+    await bot.http.bulk_upsert_global_commands(
+        app_id,
+        payload=payload
+    )
+
 async def load_cogs():
     logger.info("Loading bot cogs:")
     dashboardEnabled = os.getenv("DASHBOARD", "0") == "1"
@@ -122,8 +158,12 @@ async def load_cogs():
 
 async def main(): # idk why i couldnt explain it? maybe it was my past code but like this is not unexplainable
     async with bot:
-        await load_cogs()
-        await bot.start(os.getenv("TOKEN"))
+        await start_activity_worker(bot)
+        try:
+            await load_cogs()
+            await bot.start(os.getenv("TOKEN"))
+        finally:
+            await close_activity_worker(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())

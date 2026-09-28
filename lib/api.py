@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from lib.makeRequest import makeRequest, internalMakeRequest
 from lib.utils import timeframeMap
+from lib.server.server import plot_data
 import os
 import matplotlib.cm as cm
 import seaborn as sns
@@ -75,7 +76,22 @@ if sys.platform == "win32":
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_FILE = os.path.join(BASE_DIR, "api.log")
+CACHE_FILE = Path(__file__).resolve().parents[1] / "database" / "ing_cache.json"
 logger = logging.getLogger('api')
+logger.setLevel(logging.DEBUG)
+handler = logging.handlers.RotatingFileHandler(
+    filename=LOG_FILE,
+    encoding='utf-8',
+    maxBytes=256 * 1024 * 1024,  # 256 Mib
+)
+dt_fmt = '%Y-%m-%d %H:%M:%S'
+formatter = logging.Formatter('{asctime} - {levelname:<8} - {name}: {message}', dt_fmt, style='{')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_FILE = Path(__file__).resolve().parents[1] / "database" / "ing_cache.json"
@@ -827,19 +843,29 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
     subDay = startDate is not None and (endDate - startDate).total_seconds() <= 86400
     match leaderboardType:
         case "guildLeaderboardOnlineMembers":
-            query = """
+            if startDate and endDate:
+                source = "ts.guild_snapshots"
+                online = "gs.online_members"
+                dateFilter = "WHERE gs.ts >= %s AND gs.ts < %s"
+                params = [startDate, endDate]
+            else:
+                # Daily aggregates retain history beyond raw snapshot retention.
+                source = "ts.guild_daily"
+                online = "gs.avg_online"
+                dateFilter = ""
+                params = []
+            query = f"""
             SELECT
                 g.name || ' (' || g.prefix || ')' AS guild_display_name,
-                ROUND(AVG(gs.online_members)::numeric, 2) AS avg_online_members
+                ROUND(AVG({online})::numeric, 2) AS avg_online_members
             FROM core.guilds g
-            JOIN ts.guild_snapshots gs USING (guild_uuid)
-            WHERE gs.ts >= %s AND gs.ts < %s
+            JOIN {source} gs USING (guild_uuid)
+            {dateFilter}
             GROUP BY g.guild_uuid, g.name, g.prefix
             HAVING COUNT(*) >= 1
             ORDER BY avg_online_members DESC, guild_display_name ASC
             LIMIT 100;
             """
-            params = [startDate, endDate]
             data = await fetch(query, params)
 
         case "guildLeaderboardWars":
@@ -920,9 +946,7 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
                     SELECT DISTINCT ON (pd.player_uuid)
                         pd.player_uuid, pd.guild_uuid, pd.contribution
                     FROM ts.player_daily pd
-                    JOIN core.players p USING (player_uuid)
-                    WHERE p.last_seen >= now() - INTERVAL '3 days'
-                    AND pd.contribution > 0
+                    WHERE pd.contribution > 0
                     ORDER BY pd.player_uuid, pd.day DESC
                 )
                 SELECT
@@ -971,8 +995,7 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
                     latest.total_raids
                 FROM latest
                 JOIN core.players p USING (player_uuid)
-                WHERE p.last_seen >= now() - INTERVAL '3 days'
-                AND latest.total_raids > 0
+                WHERE latest.total_raids > 0
                 ORDER BY latest.total_raids DESC, p.username ASC
                 LIMIT 100;
                 """
@@ -1012,8 +1035,7 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
                     latest.total_dungeons
                 FROM latest
                 JOIN core.players p USING (player_uuid)
-                WHERE p.last_seen >= now() - INTERVAL '3 days'
-                AND latest.total_dungeons > 0
+                WHERE latest.total_dungeons > 0
                 ORDER BY latest.total_dungeons DESC, p.username ASC
                 LIMIT 100;
                 """
@@ -1052,8 +1074,7 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
                     latest.playtime
                 FROM latest
                 JOIN core.players p USING (player_uuid)
-                WHERE p.last_seen >= now() - INTERVAL '3 days'
-                AND latest.playtime > 0
+                WHERE latest.playtime > 0
                 ORDER BY latest.playtime DESC, p.username ASC
                 LIMIT 100;
                 """
@@ -1316,8 +1337,7 @@ async def leaderboard(leaderboardType: str, uuid: str | None = None, start: str 
                     latest.total_graids AS graids_done
                 FROM latest
                 JOIN core.players p USING (player_uuid)
-                WHERE p.last_seen >= now() - INTERVAL '3 days'
-                AND latest.total_graids > 0
+                WHERE latest.total_graids > 0
                 ORDER BY latest.total_graids DESC, p.username ASC
                 LIMIT 100;
                 """
@@ -1398,9 +1418,28 @@ async def activityGains(uuid, start, end, guild=False):
 
 @activityRouter.get("/{activityType}")
 @cache_route(ttl=600) #10m cache
-async def activity(activityType: str, uuid: str | None = None, name: str | None = None, theme: str | None = None, start: datetime | None = None, end: datetime | None = None ,): # Name can be either prefix or gname or player username
+async def activity(activityType: str, uuid: str | None = None, name: str | None = None, theme: str | None = None, start: datetime | None = None, end: datetime | None = None, interactive: bool = False): # Name can be either prefix or gname or player username
     if not activityType:
         return JSONResponse(status_code=400, content={"error": "Please provide a valid leaderboard type."})
+
+    graph = None
+    def render_plot(x, y, graph_type, plot_color, title, xlabel, ylabel, time_color, *, slice_labels=None, **options):
+        nonlocal graph
+        if interactive:
+            try:
+                graph = plot_data(
+                    x, y, graph_type, title, ylabel or options.get("legendName"),
+                    name=name, theme=theme, start=options.get("start"),
+                    end=options.get("end"), slice_labels=slice_labels,
+                )
+            except (ValueError, TypeError, OverflowError):
+                logger.exception("Interactive graph unavailable; retaining the activity image.")
+        return createPlot(x, y, graph_type, plot_color, title, xlabel, ylabel, time_color, **options)
+
+    def activity_response(content):
+        if graph is not None:
+            content["graph"] = graph
+        return JSONResponse(content)
 
     mpl.rcParams.update(mpl.rcParamsDefault)
 
@@ -1473,8 +1512,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             max_daily_xp = max(xp_values) if xp_values else 0
             min_daily_xp = min(xp_values) if xp_values else 0
 
-            img = createPlot(dates, xp_values, "bar", blue, f'Daily Guild XP Contribution - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = avg_daily_xp, ahxlineLabel = f'Daily Average: {avg_daily_xp:,.0f} XP', start=start, end=end)
-            return JSONResponse({"total_xp": total_xp, "daily_average": avg_daily_xp, "highest_day": max_daily_xp, "lowest_day": min_daily_xp, "image": img})
+            img = render_plot(dates, xp_values, "bar", blue, f'Daily Guild XP Contribution - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = avg_daily_xp, ahxlineLabel = f'Daily Average: {avg_daily_xp:,.0f} XP', start=start, end=end)
+            return activity_response({"total_xp": total_xp, "daily_average": avg_daily_xp, "highest_day": max_daily_xp, "lowest_day": min_daily_xp, "image": img})
 
         case "guildActivityTerritories":
             snapshots = await fetch("""
@@ -1524,8 +1563,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             min_territories = min(filter(lambda x: x > 0, territory_counts)) if territory_counts else 0
             avg_territories = sum(filter(lambda x: x > 0, territory_counts)) / len(list(filter(lambda x: x > 0, territory_counts))) if territory_counts else 0
 
-            img = createPlot(times, territory_counts, "line", blue, f'Territory Count - {name}', 'Date (UTC)', 'Number of Territories', color, ahxlineY = avg_territories, ahxlineLabel = f'Average: {avg_territories:.1f}', fillBetween = True, legendName='Territory Count', start=start, end=end)
-            return JSONResponse({"current_territories": current_territories, "maximum_territories": max_territories, "minimum_territories": min_territories, "average_territories": avg_territories, "image": img})
+            img = render_plot(times, territory_counts, "line", blue, f'Territory Count - {name}', 'Date (UTC)', 'Number of Territories', color, ahxlineY = avg_territories, ahxlineLabel = f'Average: {avg_territories:.1f}', fillBetween = True, legendName='Territory Count', start=start, end=end)
+            return activity_response({"current_territories": current_territories, "maximum_territories": max_territories, "minimum_territories": min_territories, "average_territories": avg_territories, "image": img})
 
         case "guildActivityWars":
             snapshots = await fetch("""
@@ -1573,8 +1612,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             max_war = max(war_counts) if war_counts else 0
             min_war = min(filter(lambda x: x > 0, war_counts)) if war_counts else 0
 
-            img = createPlot(times, war_counts, "line", blue, f'War History - {name}', 'Date (UTC)', 'Number of Wars', color, legendName='War Count', start=start, end=end)
-            return JSONResponse({"current_war": current_war,  "image": img})
+            img = render_plot(times, war_counts, "line", blue, f'War History - {name}', 'Date (UTC)', 'Number of Wars', color, legendName='War Count', start=start, end=end)
+            return activity_response({"current_war": current_war,  "image": img})
 
         case "guildActivityOnlineMembers":
             snapshots = await fetch("""
@@ -1592,8 +1631,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             raw_numbers = [row["online_members"] for row in snapshots]
 
             overall_average = sum(raw_numbers) / len(raw_numbers) if raw_numbers else 0
-            img = createPlot(times, raw_numbers, "line", blue, f'Online Members - {name}', 'Date (UTC)', 'Players Online', color, ahxlineY = overall_average, ahxlineLabel = f'Average: {overall_average:.1f} players', fillBetween = True, legendName='Average Online Member Count', start=start, end=end)
-            return JSONResponse({"max_players": max(raw_numbers), "min_players": min(raw_numbers), "average": overall_average, "image": img})
+            img = render_plot(times, raw_numbers, "line", blue, f'Online Members - {name}', 'Date (UTC)', 'Players Online', color, ahxlineY = overall_average, ahxlineLabel = f'Average: {overall_average:.1f} players', fillBetween = True, legendName='Average Online Member Count', start=start, end=end)
+            return activity_response({"max_players": max(raw_numbers), "min_players": min(raw_numbers), "average": overall_average, "image": img})
 
         case "guildActivityTotalMembers":
             snapshots = await fetch("""
@@ -1609,8 +1648,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             times = [row["timestamp"] for row in snapshots]
             total_numbers = [row["total_members"] for row in snapshots]
             overall_total = sum(total_numbers) / len(total_numbers) if total_numbers else 0
-            img = createPlot(times, total_numbers, "line", blue, f'Member Count - {name}', 'Date (UTC)', 'Members', color, ahxlineY = overall_total, ahxlineLabel = f'Average: {overall_total:.1f} members', fillBetween = True, legendName='Total Members', start=start, end=end)
-            return JSONResponse({"max_players": max(total_numbers), "min_players": min(total_numbers), "average": overall_total, "image": img})
+            img = render_plot(times, total_numbers, "line", blue, f'Member Count - {name}', 'Date (UTC)', 'Members', color, ahxlineY = overall_total, ahxlineLabel = f'Average: {overall_total:.1f} members', fillBetween = True, legendName='Total Members', start=start, end=end)
+            return activity_response({"max_players": max(total_numbers), "min_players": min(total_numbers), "average": overall_total, "image": img})
 
         case "playerActivityPlaytime":
             daily_data = await activityGains(uuid, start, end)
@@ -1624,8 +1663,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             totalPlaytimeinMinutes = sum(playtimeValues)
             averageDailyPlaytime = totalPlaytimeinMinutes / len(dates) if dates else 0
 
-            img = createPlot(dates, playtimeValues, "bar", blue, f'Daily Playtime - {name}', 'Date (UTC)', 'Minutes Played', color, ahxlineY = averageDailyPlaytime, ahxlineLabel = f'Daily Average: {averageDailyPlaytime:.0f} minutes', start=start, end=end)
-            return JSONResponse({"daily_average": averageDailyPlaytime, "max_day": max(playtimeValues) if playtimeValues else 0, "min_day": min(playtimeValues) if playtimeValues else 0, "image": img})
+            img = render_plot(dates, playtimeValues, "bar", blue, f'Daily Playtime - {name}', 'Date (UTC)', 'Minutes Played', color, ahxlineY = averageDailyPlaytime, ahxlineLabel = f'Daily Average: {averageDailyPlaytime:.0f} minutes', start=start, end=end)
+            return activity_response({"daily_average": averageDailyPlaytime, "max_day": max(playtimeValues) if playtimeValues else 0, "min_day": min(playtimeValues) if playtimeValues else 0, "image": img})
 
         case "playerActivityContributions":
             snapshots = await activityGains(uuid, start, end)
@@ -1639,8 +1678,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             totalGained = sum(daily_gains)
             average = totalGained / len(daily_gains) if daily_gains else 0
 
-            img = createPlot(timestamps, daily_gains, "bar", blue, f'Daily XP Gain - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = average, ahxlineLabel = f'Daily Average: {average:,.0f} XP', start=start, end=end)
-            return JSONResponse({"total_xp": totalGained, "max_xp": max(daily_gains) if daily_gains else 0, "min_xp": min(daily_gains) if daily_gains else 0,  "image": img})
+            img = render_plot(timestamps, daily_gains, "bar", blue, f'Daily XP Gain - {name}', 'Date (UTC)', 'XP Gained', color, ahxlineY = average, ahxlineLabel = f'Daily Average: {average:,.0f} XP', start=start, end=end)
+            return activity_response({"total_xp": totalGained, "max_xp": max(daily_gains) if daily_gains else 0, "min_xp": min(daily_gains) if daily_gains else 0,  "image": img})
 
         case "playerActivityDungeons":
             snapshots = await fetch("""
@@ -1665,8 +1704,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
                 dungeons_by_day[dt.date()].append(count)
             dailyGain = [max(counts) - min(counts) for counts in dungeons_by_day.values() if len(counts) > 1]
             highestGain = max(dailyGain) if dailyGain else 0
-            img = createPlot(dates, total_dungeons, "line", blue, f'Dungeon History - {name}', 'Date (UTC)', 'Number of Dungeon\'s completed', color, legendName='Dungeon Count', start=start, end=end)
-            return JSONResponse({"total_dungeons": highestTotal, "highest_gain": highestGain, "image": img})
+            img = render_plot(dates, total_dungeons, "line", blue, f'Dungeon History - {name}', 'Date (UTC)', 'Number of Dungeon\'s completed', color, legendName='Dungeon Count', start=start, end=end)
+            return activity_response({"total_dungeons": highestTotal, "highest_gain": highestGain, "image": img})
 
         case "playerActivityTotalDungeons":
             snapshots = await fetchone("""
@@ -1689,8 +1728,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
 
-            img = createPlot(percent_labels, sizes, "pie", None, f"Dungeon Pie Chart - {name}", None, None, color, legendName="Dungeons")
-            return JSONResponse({"image": img}) # Technically we could just ship this out like how it is on other endpoints, just straight image, but all activity commands should and will b64 images for consistenty
+            img = render_plot(percent_labels, sizes, "pie", None, f"Dungeon Pie Chart - {name}", None, None, color, legendName="Dungeons", slice_labels=labels)
+            return activity_response({"image": img}) # Technically we could just ship this out like how it is on other endpoints, just straight image, but all activity commands should and will b64 images for consistenty
 
         case "playerActivityRaids":
             snapshots = await fetch("""
@@ -1716,8 +1755,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             dailyGain = [max(counts) - min(counts) for counts in raids_by_day.values() if len(counts) > 1]
             highestGain = max(dailyGain) if dailyGain else 0
 
-            img = createPlot(dates, totalRaids, "line", blue, f'Raid History - {name}', 'Date (UTC)', 'Number of Raid\'s completed', color, legendName='Raid Count', start=start, end=end)
-            return JSONResponse({"total": highestTotal, "highest_gain": highestGain, "image": img})
+            img = render_plot(dates, totalRaids, "line", blue, f'Raid History - {name}', 'Date (UTC)', 'Number of Raid\'s completed', color, legendName='Raid Count', start=start, end=end)
+            return activity_response({"total": highestTotal, "highest_gain": highestGain, "image": img})
 
         case "playerActivityTotalRaids":
             snapshots = await fetchone("""
@@ -1740,9 +1779,9 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
 
-            img = createPlot(percent_labels, sizes, "pie", None, f"Raid Pie Chart - {name}", None, None, color, legendName="Raids")
+            img = render_plot(percent_labels, sizes, "pie", None, f"Raid Pie Chart - {name}", None, None, color, legendName="Raids", slice_labels=labels)
 
-            return JSONResponse({"image": img})
+            return activity_response({"image": img})
 
         case "playerActivityMobsKilled":
             snapshots = await fetch("""
@@ -1766,8 +1805,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
 
             daily_gains = [max(counts) - min(counts) for counts in kills_by_day.values() if len(counts) > 1]
             highestGain = max(daily_gains) if daily_gains else 0
-            img = createPlot(dates, totalKills, "line", blue, f'Mob Kill History - {name}', 'Date (UTC)', 'Number of Kill\'s', color, legendName='Mob Kill Count', start=start, end=end)
-            return JSONResponse({"total_kills": highestTotal, "highest_gain": highestGain, "image": img})
+            img = render_plot(dates, totalKills, "line", blue, f'Mob Kill History - {name}', 'Date (UTC)', 'Number of Kill\'s', color, legendName='Mob Kill Count', start=start, end=end)
+            return activity_response({"total_kills": highestTotal, "highest_gain": highestGain, "image": img})
 
         case "playerActivityWars":
             snapshots = await fetch("""
@@ -1791,8 +1830,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             daily_gains = [max(counts) - min(counts) for counts in wars_by_day.values() if len(counts) > 1]
             highestGain = max(daily_gains) if daily_gains else 0
 
-            img = createPlot(dates, totalWars, "line", blue, f'War Count History - {name}', 'Date (UTC)', 'Number of War\'s', color, legendName='War Count', start=start, end=end)
-            return JSONResponse({"total_wars": highestTotal, "highest_gain": highestGain, "image": img})
+            img = render_plot(dates, totalWars, "line", blue, f'War Count History - {name}', 'Date (UTC)', 'Number of War\'s', color, legendName='War Count', start=start, end=end)
+            return activity_response({"total_wars": highestTotal, "highest_gain": highestGain, "image": img})
 
         case "guildActivityGraids":
             snapshots = await fetch("""
@@ -1817,8 +1856,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             highestGain = max(daily_gains) if daily_gains else 0
             avg_day = round(sum(daily_gains) / len(daily_gains), 2) if daily_gains else 0
 
-            img = createPlot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', start=start, end=end)
-            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avg_day, "image": img})
+            img = render_plot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', start=start, end=end)
+            return activity_response({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avg_day, "image": img})
 
         case "playerActivityGraids":
             snapshots = await fetch("""
@@ -1843,8 +1882,8 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             highestGain = max(dailyGain) if dailyGain else 0
 
             avgGain = round(sum(dailyGain) / len(dailyGain), 2) if dailyGain else 0
-            img = createPlot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', start=start, end=end)
-            return JSONResponse({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avgGain, "image": img})
+            img = render_plot(dates, totalGraids, "line", blue, f'Guild Raid Activity - {name}', 'Date (UTC)', 'Total Guild Raids', color, legendName='Guild Raids', start=start, end=end)
+            return activity_response({"total_graid": highestTotal, "max_graid": highestGain, "average_graid": avgGain, "image": img})
 
         case "playerActivityGraidPie":
             snapshots = await fetchone("""
@@ -1866,9 +1905,9 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
 
-            img = createPlot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids")
+            img = render_plot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids", slice_labels=labels)
 
-            return JSONResponse({"image": img})
+            return activity_response({"image": img})
 
         case "guildActivityGraidPie": #NOTE: Not exactly right, i think something is wrong but not sure yet, could be an issue of old data + raids // 4 its hard to tell
             rows = await fetch("""
@@ -1904,12 +1943,46 @@ async def activity(activityType: str, uuid: str | None = None, name: str | None 
             total = sum(sizes)
             percent_labels = [f"{label} — {size} ({(size / total * 100):.1f}%)" for label, size in zip(labels, sizes)]
 
-            img = createPlot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids")
+            img = render_plot(percent_labels, sizes, "pie", None, f"Graid Pie Chart - {name}", None, None, color, legendName="Graids", slice_labels=labels)
 
-            return JSONResponse({"image": img})
+            return activity_response({"image": img})
 
         case _: # Default case
             return JSONResponse(status_code=400, content={"error": "Please provide a correct activity type."})
+
+@mapRouter.get("/interactive")
+@cache_route(ttl=30)
+async def interactive_map(mode: str = "current", timeframe: str = "Last 7 Days"):
+    from lib.server.server import ingredient_data, heat_range
+    if mode not in {"current", "heat", "ingredient"}:
+        return JSONResponse(status_code=400, content={"error": "Unknown map mode."})
+    payload = {"chart_type": "map", "map_mode": mode, "name": "Wynncraft Map", "theme": "discord", "territories": {}, "guild_colors": {}, "ingredients": []}
+    if mode == "ingredient":
+        if not await asyncio.to_thread(loadCache):
+            await asyncio.to_thread(findIngCoords, ingToMobs, mobCoords, ingRarity)
+            await asyncio.to_thread(saveCache)
+        payload["ingredients"] = ingredient_data(ingToMobs, mobCoords, ingRarity, priceCache)
+        payload["price_note"] = "Cached average price, can be a tad outdated."
+        return payload
+    success, response = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/guild/list/territory")
+    if not success:
+        return JSONResponse(status_code=502, content={"error": "Territory data unavailable."})
+    payload["territories"] = response.json()
+    if mode == "heat":
+        try:
+            timeframes = {} if timeframe in {"Last 7 Days", "Everything"} else await asyncio.to_thread(timeframeMap)
+            start, end = heat_range(timeframe, timeframes)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        rows = await fetch("""
+            SELECT territory, count(*) AS captures FROM ts.territory_captures
+            WHERE acquired < %s AND (%s::timestamptz IS NULL OR acquired >= %s)
+            GROUP BY territory
+        """, (end, start, start))
+        payload.update(counts={r["territory"]: int(r["captures"]) for r in rows},
+                       timeframe=timeframe, start=start.isoformat() if start else None, end=end.isoformat())
+    return payload
+
 
 @mapRouter.get("/current") # Not a great name but its the current map
 @cache_route(ttl=30) #30s cache
@@ -1958,3 +2031,4 @@ app.include_router(leaderboardRouter)
 app.include_router(activityRouter)
 app.include_router(mapRouter)
 app.include_router(seasonRatingdRouter)
+app.include_router(seasonRouter)

@@ -22,6 +22,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 import dateparser
 import re
+from lib.server.server import activity_enabled, send_activity_result
   
 logger = logging.getLogger('discord')
 
@@ -100,17 +101,23 @@ def warComponentBuilder(territoryName, warData, targetPrefix):
         titleText = "🟢 **Gained Territory!**"
         containerColor = discord.Color.green()
         isAttacker = True
-    if targetPrefix in warData["DefenderPrefix"]: # The target is defender
+    if targetPrefix == warData["DefenderPrefix"]: # The target is defender
         titleText = "🔴 **Lost Territory!**"
         containerColor = discord.Color.red()
     if targetPrefix == "Global": # who knows man
         titleText = "⚪ **Territory Change**"
         containerColor = discord.Color.from_rgb(225, 255, 255)
 
-    success, r = internalMakeRequest(f"{API_URL}/api/map/current?type=test&focusTerritory={territoryName}")
-    mapBytes = BytesIO(r.content)
+    success, r = internalMakeRequest(
+        f"{API_URL}/api/map/current?{urlencode({'type': 'test', 'focusTerritory': territoryName})}",
+        timeout=(3, 10), maxRetries=1,
+    )
+    # A map outage must not discard the territory notification.
+    imageContent = r.content if success and r is not None else (Path(rootDir) / "lib/documents/war_icon.png").read_bytes()
+    imageName = "war_icon.webp" if success and r is not None else "war_icon.png"
+    mapBytes = BytesIO(imageContent)
     mapBytes.seek(0)
-    file = discord.File(mapBytes, filename="war_icon.webp")
+    file = discord.File(mapBytes, filename=imageName)
 
     container = discord.ui.Container(
         discord.ui.Section(
@@ -121,7 +128,7 @@ def warComponentBuilder(territoryName, warData, targetPrefix):
                 f"Defender: **{Defender}**   ({DefenderBefore} -> {DefenderAfter})\n"
                 f"This territory lasted for {TimeLasted}.\n"
             ),
-            accessory=discord.ui.Thumbnail(media="attachment://war_icon.webp")
+            accessory=discord.ui.Thumbnail(media=f"attachment://{imageName}")
         ),
         discord.ui.Separator(),
         discord.ui.TextDisplay(
@@ -305,9 +312,11 @@ def leaderboardBuilder(commandType, uuid=None, start=None, end=None):
 
     return listy
 
-def activityBuilder(commandType, uuid, name, theme, start=None, end=None):
+def activityBuilder(commandType, uuid, name, theme, start=None, end=None, interactive=False):
     logger.info(f"{commandType}" + (f", uuid: {uuid}" if uuid else "") + (f", name: {name}" if name else "") + (f", theme: {theme}" if theme else ""))
     params = {"uuid": uuid, "name": name, "theme": theme, "start": start, "end": end}
+    if interactive:
+        params["interactive"] = "true"
     url = f"{API_URL}/api/activity/{commandType}?{urlencode({k: v for k, v in params.items() if v is not None})}"
     success, r = internalMakeRequest(url)
     if not success:
@@ -414,10 +423,12 @@ def activityBuilder(commandType, uuid, name, theme, start=None, end=None):
             description= None
         
     file = discord.File(buf, filename=f'{commandType}.webp')
-    timeframe = f"{start:%m/%d/%Y %H:%M} to {end:%m/%d/%Y %H:%M} UTC"
+    timeframe = (f"{start:%m/%d/%Y %H:%M} to {end:%m/%d/%Y %H:%M} UTC"
+                 if start is not None and end is not None else None)
     container = discord.ui.Container(
         discord.ui.TextDisplay(
-            f"## {title}{' - ' + str(timeframe) if timeframe else ''}\n{description}"
+            f"## {title}{' - ' + str(timeframe) if timeframe else ''}"
+            + (f"\n{description}" if description else "")
         ),
         discord.ui.MediaGallery(
             discord.components.MediaGalleryItem(
@@ -434,6 +445,7 @@ def activityBuilder(commandType, uuid, name, theme, start=None, end=None):
 
     view = discord.ui.LayoutView()
     view.add_item(container)
+    view.activity_graph = jsonData.get("graph") if interactive else None
     return file, view
 
 def rollGiveaway(weeklyNames, rollcount):
@@ -1191,9 +1203,9 @@ def SRleaderboardBuilder(season = None, uuid = None, name = None):
         return embed
     
 def timeframeMap(): # used for heatmap data
-    success, r = internalMakeRequest(f"https://{API_URL}/api/season")
+    success, r = internalMakeRequest(f"{API_URL}/api/season")
     if not success:
-        return {}
+        return {"Last 7 Days": None, "Everything": None}
     
     timeframeMap = {}
     seasons = r.json()
@@ -1561,7 +1573,11 @@ class TimeframeModal(discord.ui.Modal, title="Timeframe (UTC)"): # made this to 
         await self.runner(interaction, self.commandName, self.args, startDate, endDate)
 
 async def runActivity(interaction, commandName, args, start=None, end=None):
-    if args["timeframe"].lower() == "custom":
+
+    timeframe = args.get("timeframe")
+    if timeframe is None: # Pie commands show tracked category totals, without a date range.
+        start, end = None, None
+    elif timeframe.strip().lower() == "custom":
         if start is None or end is None: # Get start and end data from custom timeframe
             await interaction.response.send_modal(TimeframeModal(commandName, args))
             return
@@ -1583,12 +1599,16 @@ async def runActivity(interaction, commandName, args, start=None, end=None):
         return
     entityUUID = jsonData["player_uuid" if entity == "user" else "guild_uuid"]
 
-    file, view = await asyncio.to_thread(activityBuilder, commandName, uuid=entityUUID, name=args["name"], theme=args["theme"] or "light", start=start, end=end)
+    file, view = await asyncio.to_thread(
+        activityBuilder, commandName, uuid=entityUUID, name=args["name"],
+        theme=(args.get("theme") or "light").lower(), start=start, end=end,
+        interactive=activity_enabled(interaction),
+    )
     
     if file and view:
-        await interaction.followup.send(file=file, view=view)
+        await send_activity_result(interaction, file, view, chart_type=args.get("chart_type"))
     else:
-        await interaction.followup.send(f"No data available for the {args['timeframe']}")
+        await interaction.followup.send(f"No data available for {timeframe or 'this activity'}.")
 
 
 async def runLeaderboard(interaction, commandName, args, start=None, end=None):
@@ -1599,10 +1619,6 @@ async def runLeaderboard(interaction, commandName, args, start=None, end=None):
             return
     elif timeframe.lower() == "all time":
         start, end = None, None
-        if commandName == "guildLeaderboardOnlineMembers":
-            timeframe = "Last 30 Days"
-            end = datetime.now(timezone.utc)
-            start = end - timedelta(hours=720)
     else:
         end = datetime.now(timezone.utc)
         start = TimeframeModal.parseTimeframeInput(timeframe, end)

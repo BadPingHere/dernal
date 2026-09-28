@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import View, Button
 from typing import Literal, Optional
-from lib.utils import runLeaderboard, activityBuilder, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap, runActivity
+from lib.utils import runLeaderboard, guildLookup, inactivityCheck, guildOnline, checkNameValidity, SRleaderboardBuilder, leaderboardTimeframeMap, activityTimeframeMap, themeMap, runActivity
 from lib.makeRequest import makeRequest
 import logging
 import asyncio
@@ -194,22 +194,7 @@ class Guild(commands.GroupCog, name="guild"):
     @app_commands.describe(name='Prefix of the guild search Ex: TAq, Calvish.',)
     @app_commands.describe(theme='The theme of the graphic (defaults to light mode)',)
     async def activityGraidsPie(self, interaction: discord.Interaction, name: str, theme: Optional[str]):
-        logger.info(f"Command /guild activity graids_pie was ran in server {interaction.guild_id} by user {interaction.user.name}({interaction.user.id}). Parameter username is: {name}.")
-
-        await interaction.response.defer()
-        
-        success, jsonData = await asyncio.to_thread(checkNameValidity, name, "guild")
-        if not success:
-            await interaction.followup.send(f"No data found for guild: {name}. Is this a valid prefix or guild name?", ephemeral=True)
-            return
-        guildUUID = jsonData["guild_uuid"]
-
-        file, view = await asyncio.to_thread(activityBuilder,"guildActivityGraidPie", uuid=guildUUID, name=name, theme=theme or "light")
-        
-        if file and view:
-            await interaction.followup.send(file=file, view=view)
-        else:
-            await interaction.followup.send("No data available.")
+        await runActivity(interaction, "guildActivityGraidPie", {"name": name, "theme": theme})
     
     leaderboardCommands = app_commands.Group(name="leaderboard",description="this is never seen, yet discord flips the x out if its not here.",)
     @leaderboardCommands.command(name="online_members", description="Shows a leaderboard of the top 100 guild's average amount of online players.")

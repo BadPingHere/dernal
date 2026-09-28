@@ -32,13 +32,14 @@ class Detector(commands.GroupCog, name="detector"):
         self.weBeingTracked = {}
         self.weConfigDirty = True
         self.anniePings = set()
+        self.deliveryErrors = {}
 
         self.serverID = int(os.getenv("SERVER_ID") or 0)
         self.loadTrackedGuilds()
         try:
             conn = self.connectDetectorDB()
             cur = conn.cursor()
-            cur.execute("SELECT acquired FROM ts.territory_ownership ORDER BY acquired DESC LIMIT 1")
+            cur.execute("SELECT acquired FROM ts.territory_captures ORDER BY acquired DESC LIMIT 1")
             row = cur.fetchone()
             conn.close()
             if row:
@@ -47,9 +48,10 @@ class Detector(commands.GroupCog, name="detector"):
             logger.exception("Failed to initialize lastAcquiredTime from DB.")
         #logger.info(f"self.guildsBeingTracked: {self.guildsBeingTracked}")
         self.backgroundDetector.start()
+        self.backgroundWorldEventDetector.start()
 
     def connectDetectorDB(self):
-        return psycopg.connect(DSN, autocommit=True, row_factory=dict_row)
+        return psycopg.connect(DSN, autocommit=True, row_factory=dict_row, connect_timeout=10, options="-c statement_timeout=15000")
 
     def loadTrackedGuilds(self):
         conn = self.connectDetectorDB()
@@ -109,24 +111,30 @@ class Detector(commands.GroupCog, name="detector"):
                 'anniePingTimer': row["annie_ping_timer"] if row["annie_ping_timer"] else None
             })
 
+    #TODO: Add auto-removal for dead channels/servers.
     @tasks.loop(seconds=5)
     async def backgroundDetector(self):
         latestRow = None
+        conn = None
+        processed = False
         try:
             if not self.guildsBeingTracked:
                 return
 
             conn = self.connectDetectorDB()
             cur = conn.cursor()
-            cur.execute("SELECT acquired FROM ts.territory_ownership ORDER BY acquired DESC LIMIT 1")
+            cur.execute("SELECT acquired FROM ts.territory_captures ORDER BY acquired DESC LIMIT 1")
             latestRow = cur.fetchone()
+
+            if latestRow and self.lastAcquiredTime is None:
+                self.lastAcquiredTime = latestRow["acquired"]
 
             if latestRow and latestRow["acquired"] != self.lastAcquiredTime:
                 newWars = {}
                 cur.execute(
                     """SELECT t.acquired, t.territory, t.guild_uuid::text AS guild_uuid,
                               g.name AS guild_name, g.prefix AS guild_prefix
-                       FROM ts.territory_ownership t
+                       FROM ts.territory_captures t
                        LEFT JOIN core.guilds g ON g.guild_uuid = t.guild_uuid
                        WHERE t.acquired > %s ORDER BY t.acquired ASC""",
                     (self.lastAcquiredTime,)
@@ -157,7 +165,7 @@ class Detector(commands.GroupCog, name="detector"):
                         FROM (
                             SELECT t.acquired, t.territory, t.guild_uuid::text AS guild_uuid,
                                    g.name AS guild_name, g.prefix AS guild_prefix
-                            FROM ts.territory_ownership t
+                            FROM ts.territory_captures t
                             LEFT JOIN core.guilds g ON g.guild_uuid = t.guild_uuid
                         ) territory_changes
                         WHERE territory = %s
@@ -165,6 +173,11 @@ class Detector(commands.GroupCog, name="detector"):
                         LIMIT 1 OFFSET 1;
                     """, (territoryName,))
                     row = cur.fetchone()
+                    if row is None:
+                        # IDK If the uhh season reset does ts, but JIC (just in case for the folks who just joined the stream)
+                        newWars[territoryName]["Defender"] = "Unknown"
+                        newWars[territoryName]["TimeLasted"] = "Unknown"
+                        continue
                     newWars[territoryName]["Defender"] = f"{row['guild_name']} ({row['guild_prefix']})"
                     newWars[territoryName]["DefenderUUID"] = row["guild_uuid"]
                     newWars[territoryName]["DefenderPrefix"] = row["guild_prefix"]
@@ -179,7 +192,7 @@ class Detector(commands.GroupCog, name="detector"):
                             COUNT(*) AS matching_territories
                         FROM (
                             SELECT DISTINCT ON (territory) territory, guild_uuid::text AS guild_uuid
-                            FROM ts.territory_ownership
+                            FROM ts.territory_captures
                             ORDER BY territory, acquired DESC
                         ) current_owner
                         WHERE guild_uuid IN (%s, %s)
@@ -196,7 +209,7 @@ class Detector(commands.GroupCog, name="detector"):
                             COUNT(*) AS matching_territories
                         FROM (
                             SELECT DISTINCT ON (territory) territory, guild_uuid::text AS guild_uuid
-                            FROM ts.territory_ownership
+                            FROM ts.territory_captures
                             WHERE acquired <= %s
                             ORDER BY territory, acquired DESC
                         ) prior_owner
@@ -214,11 +227,13 @@ class Detector(commands.GroupCog, name="detector"):
                     for data in guildList:
                         for territoryName, warData in newWars.items():
                             if data["guildPrefix"] == warData["AttackerPrefix"] or data["guildPrefix"] == warData["DefenderPrefix"] or data["guildPrefix"] == "Global":
+                                file = None
                                 try:
                                     view, file, isAttacker = await asyncio.to_thread(warComponentBuilder, territoryName, warData, data["guildPrefix"])
 
-                                    guild = await self.bot.fetch_guild(serverID)
-                                    channel = await guild.fetch_channel(data["channelForMessages"])
+                                    channel = self.bot.get_channel(int(data["channelForMessages"]))
+                                    if channel is None:
+                                        channel = await self.bot.fetch_channel(int(data["channelForMessages"]))
 
                                     await channel.send(view=view, file=file)
 
@@ -228,18 +243,29 @@ class Detector(commands.GroupCog, name="detector"):
                                             await channel.send(f"<@&{data['pingRoleID']}>")
                                             self.recordPing(serverID, data, currentEpochTime)
                                 except Exception:
-                                    #logger.exception(f"Failed to send war notification to server {serverID}, channel {data['channelForMessages']}.")
-                                    wcode=1 # we could log but like genuinely ts spams my shit because im too lazy to remove inactive channels
+                                    logger.error(f"War failed to send to {serverID} (Channel: {data["channelForMessages"]})")
+                                finally:
+                                    if file is not None:
+                                        file.close()
 
             else:
                 conn.close()
+            processed = True
 
         except Exception:
             logger.exception(f"Unhandled exception in War Detector.")
         finally:
-            if latestRow:
+            if conn is not None:
+                conn.close()
+            if processed and latestRow:
                 self.lastAcquiredTime = latestRow["acquired"]
-        
+
+    @backgroundDetector.before_loop
+    async def beforeWarDetector(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=5)
+    async def backgroundWorldEventDetector(self):
         weNewData = None
         try: # World Event tracking; THIS LOOKS LIKE NESTED DOGSHIT.
             success, r = await asyncio.to_thread(makeRequest, "https://api.wynncraft.com/v3/map/world-events")
@@ -275,17 +301,22 @@ class Detector(commands.GroupCog, name="detector"):
                                 continue
 
                             for apiName in matchedEvents: # apiName is the real, current API name so the file/schedule lookup lines up
+                                files = []
                                 try:
                                     files, view = await asyncio.to_thread(sendWorldEventMessage, apiName, weNewData)
 
-                                    guild = await self.bot.fetch_guild(serverID)
-                                    channel = await guild.fetch_channel(channelForMessages)
+                                    channel = self.bot.get_channel(int(channelForMessages))
+                                    if channel is None:
+                                        channel = await self.bot.fetch_channel(int(channelForMessages))
 
                                     await channel.send(view=view, files=files)
                                     if entry["pingRoleID"]:
                                         await channel.send(f"<@&{entry['pingRoleID']}>")
                                 except Exception:
-                                    logger.exception(f"Failed to send world event '{apiName}' to server {serverID}, channel {channelForMessages}.")
+                                    logger.error(f"World Event failed to send to {serverID} (Channel: {channelForMessages})")
+                                finally:
+                                    for file in files:
+                                        file.close()
 
                 # Now we need to check for annie ping timers
                 for eventJSON in weNewData:
@@ -314,19 +345,24 @@ class Detector(commands.GroupCog, name="detector"):
                                         if pingKey in self.anniePings:
                                             continue
 
-                                        self.anniePings.add(pingKey)
                                         #logger.info(f"DETECTION: World Event {entry['event']} is starting!")
+                                        files = []
                                         try:
                                             files, view = await asyncio.to_thread(sendWorldEventMessage, dbEvent, weNewData)
 
-                                            guild = await self.bot.fetch_guild(serverID)
-                                            channel = await guild.fetch_channel(channelForMessages)
+                                            channel = self.bot.get_channel(int(channelForMessages))
+                                            if channel is None:
+                                                channel = await self.bot.fetch_channel(int(channelForMessages))
 
                                             await channel.send(view=view, files=files)
                                             if entry["pingRoleID"]:
                                                 await channel.send(f"<@&{entry['pingRoleID']}>")
+                                            self.anniePings.add(pingKey)
                                         except Exception:
-                                            pass
+                                            logger.error(f"Annie Reminder failed to send to {serverID} (Channel: {channelForMessages})")
+                                        finally:
+                                            for file in files:
+                                                file.close()
 
         except Exception:
             logger.exception(f"Unhandled exception in World Event Detector.")
@@ -335,13 +371,9 @@ class Detector(commands.GroupCog, name="detector"):
             if weNewData is not None:
                 self.weOldData = weNewData
 
-        try: # Lootpool Tracking
-            # On startup, set a variable to next friday 1pm and 2pm est for lootpool changes
-            # Once we loop and we check that we passed that, send out the corresponding lootpools and then update to the next friday
-            if 1 == 0:
-                print(1) # bs code to keep this alive no errors
-        except Exception:
-            logger.exception(f"Unhandled exception in Lootpool Detector.")
+    @backgroundWorldEventDetector.before_loop
+    async def beforeWorldEventDetector(self):
+        await self.bot.wait_until_ready()
 
     detectorAddCommands = app_commands.Group(name="add", description="this is never seen, yet discord flips the x out if its not here.",)
     @detectorAddCommands.command(name="wars", description="Detect when a guild, or globally, loses or gains a territory.")
@@ -408,6 +440,7 @@ class Detector(commands.GroupCog, name="detector"):
 
         await interaction.response.send_message(message)
 
+    #TODO: Add set of world events to choose from, so people stop fucking it up.
     @detectorAddCommands.command(name="world_events",description="Get notified about upcoming World Events.")
     @app_commands.describe(
         channel='Channel to set for detection messages.',

@@ -39,6 +39,7 @@ This software was inspired or uses assets from:
 - [discord-ext-prometheus](https://github.com/Apollo-Roboto/discord.py-ext-prometheus)
 - [Wynnventory](https://www.wynnventory.com/)
 - Magbot
+- [Apache Echarts](https://echarts.apache.org)
 
 ## Bug Reporting
 

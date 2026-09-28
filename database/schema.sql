@@ -122,7 +122,10 @@ CREATE TABLE ts.territory_ownership (
     acquired    TIMESTAMPTZ NOT NULL,
     territory   TEXT        NOT NULL,
     guild_uuid  UUID        REFERENCES core.guilds,
-    observed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    is_hq BOOLEAN,
+    defense TEXT,
+    is_capture BOOLEAN NOT NULL DEFAULT true
 );
 
 SELECT create_hypertable('ts.territory_ownership', by_range('acquired', INTERVAL '30 days'));
@@ -242,6 +245,7 @@ SELECT time_bucket('1 day', acquired) AS day,
        territory,
        count(*)                       AS captures
 FROM ts.territory_ownership
+WHERE is_capture
 GROUP BY 1, 2;
 
 SELECT add_continuous_aggregate_policy('ts.player_daily',
@@ -359,3 +363,6 @@ ALTER MATERIALIZED VIEW ts.player_activity_daily SET (
     timescaledb.compress_orderby = 'player_uuid, day'
 );
 SELECT add_compression_policy('ts.player_activity_daily', compress_after => INTERVAL '30 days');
+
+CREATE OR REPLACE VIEW ts.territory_captures AS SELECT * FROM ts.territory_ownership WHERE is_capture;
+CREATE INDEX territory_observed_idx ON ts.territory_ownership (territory, observed_at DESC);
